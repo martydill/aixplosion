@@ -1,11 +1,12 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
-use log::{debug, info, error};
+use log::{info, error};
 
 use crate::config::Config;
 use crate::anthropic::{AnthropicClient, Message, ContentBlock, Usage};
 use crate::tools::{Tool, ToolResult, get_builtin_tools};
+use colored::*;
 
 #[derive(Debug, Clone)]
 pub struct TokenUsage {
@@ -233,5 +234,102 @@ impl Agent {
 
     pub fn reset_token_usage(&mut self) {
         self.token_usage.reset();
+    }
+
+    /// Display the current conversation context
+    pub fn display_context(&self) {
+        println!("{}", "📝 Current Conversation Context".cyan().bold());
+        println!("{}", "─".repeat(50).dimmed());
+        println!();
+
+        if self.conversation.is_empty() {
+            println!("{}", "No context yet. Start a conversation to see context here.".dimmed());
+            println!();
+            return;
+        }
+
+        for (i, message) in self.conversation.iter().enumerate() {
+            let role_color = match message.role.as_str() {
+                "user" => "blue",
+                "assistant" => "green",
+                _ => "yellow",
+            };
+
+            println!("{} {}: {}",
+                     format!("[{}]", i + 1).dimmed(),
+                     format!("{}", message.role.to_uppercase()).color(role_color),
+                     format!("({} content blocks)", message.content.len()).dimmed()
+            );
+            
+            for (j, block) in message.content.iter().enumerate() {
+                match block.block_type.as_str() {
+                    "text" => {
+                        if let Some(ref text) = block.text {
+                            // Show first 100 characters of text content
+                            let preview = if text.len() > 100 {
+                                format!("{}...", &text[..100])
+                            } else {
+                                text.clone()
+                            };
+                            println!("  {} {}: {}",
+                                     format!("└─ Block {}", j + 1).dimmed(),
+                                     "Text".green(),
+                                     preview.replace('\n', " ")
+                            );
+                        }
+                    },
+                    "tool_use" => {
+                        if let (Some(ref id), Some(ref name), Some(ref input)) = (&block.id, &block.name, &block.input) {
+                            println!("  {} {}: {} ({})",
+                                     format!("└─ Block {}", j + 1).dimmed(),
+                                     "Tool Use".yellow(),
+                                     name,
+                                     id
+                            );
+                            if let Some(input_str) = input.as_str() {
+                                let preview = if input_str.len() > 80 {
+                                    format!("{}...", &input_str[..80])
+                                } else {
+                                    input_str.to_string()
+                                };
+                                println!("    {} {}", "Input:".dimmed(), preview);
+                            }
+                        }
+                    },
+                    "tool_result" => {
+                        if let (Some(ref tool_use_id), Some(ref content), is_error) = (&block.tool_use_id, &block.content, block.is_error) {
+                            let result_type = if is_error.unwrap_or(false) { "Error".red() } else { "Result".green() };
+                            println!("  {} {}: {} ({})",
+                                     format!("└─ Block {}", j + 1).dimmed(),
+                                     result_type,
+                                     tool_use_id,
+                                     format!("{} chars", content.len()).dimmed()
+                            );
+                            let preview = if content.len() > 80 {
+                                format!("{}...", &content[..80])
+                            } else {
+                                content.clone()
+                            };
+                            println!("    {} {}", "Content:".dimmed(), preview.replace('\n', " "));
+                        }
+                    },
+                    _ => {
+                        println!("  {} {}",
+                                 format!("└─ Block {}", j + 1).dimmed(),
+                                 "Unknown".red()
+                        );
+                    }
+                }
+            }
+            println!();
+        }
+        
+        println!("{}", "─".repeat(50).dimmed());
+        println!("{}: {} messages, {} total content blocks", 
+                 "Summary".bold(),
+                 self.conversation.len(),
+                 self.conversation.iter().map(|m| m.content.len()).sum::<usize>()
+        );
+        println!();
     }
 }

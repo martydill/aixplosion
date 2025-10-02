@@ -137,7 +137,7 @@ impl AnthropicClient {
                 Ok(response) => {
                     return Ok(response);
                 }
-                Err(e) => {
+                Err(_) => {
                     // Continue to the next endpoint
                     continue;
                 }

@@ -3,7 +3,7 @@ use colored::*;
 use anyhow::Result;
 use std::io::{self, Read};
 use dialoguer::Input;
-use log::{info, error};
+use log::info;
 use env_logger::Builder;
 use std::path::Path;
 
@@ -49,6 +49,10 @@ fn handle_slash_command(command: &str, agent: &mut Agent) -> Result<bool> {
         }
         "/stats" | "/usage" => {
             print_usage_stats(agent);
+            Ok(true) // Command was handled
+        }
+        "/context" => {
+            agent.display_context();
             Ok(true) // Command was handled
         }
         "/reset-stats" => {
@@ -104,6 +108,7 @@ fn print_help() {
     println!("  /help         - Show this help message");
     println!("  /stats        - Show token usage statistics");
     println!("  /usage        - Show token usage statistics (alias for /stats)");
+    println!("  /context      - Show current conversation context");
     println!("  /reset-stats  - Reset token usage statistics");
     println!("  /exit         - Exit the program");
     println!("  /quit         - Exit the program");
