@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use reqwest::Client;
 use serde_json::Value;
-use log::{debug, info};
+use log::debug;
 
 use crate::tools::{Tool, ToolCall};
 
@@ -178,9 +178,9 @@ impl AnthropicClient {
         };
 
         // Log outgoing request
-        info!("Sending API request to endpoint: {}", endpoint);
+        debug!("Sending API request to endpoint: {}", endpoint);
         debug!("Request body: {}", serde_json::to_string_pretty(&request)?);
-        info!("Sending message to model: {}", model);
+        debug!("Sending message to model: {}", model);
 
         let response = self.client
             .post(endpoint)
@@ -201,15 +201,15 @@ impl AnthropicClient {
         let response_text = response.text().await?;
 
         // Log incoming response
-        info!("Received API response with status: {}", status);
-        info!("Response body: {}", response_text);
+        debug!("Received API response with status: {}", status);
+        debug!("Response body: {}", response_text);
 
         // Try to parse the response
         match serde_json::from_str::<AnthropicResponse>(&response_text) {
             Ok(anthropic_response) => {
-                info!("Successfully received response from API: {}", response_text);
+                debug!("Successfully received response from API");
                 if let Some(usage) = &anthropic_response.usage {
-                    info!("Token usage - Input: {}, Output: {}", usage.input_tokens, usage.output_tokens);
+                    debug!("Token usage - Input: {}, Output: {}", usage.input_tokens, usage.output_tokens);
                 }
                 Ok(anthropic_response)
             },

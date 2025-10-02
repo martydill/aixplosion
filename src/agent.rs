@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
-use log::{info, error};
+use log::{debug, error};
 use regex::Regex;
 
 use crate::config::Config;
@@ -89,7 +89,7 @@ impl Agent {
                     content: vec![ContentBlock::text(context_message)],
                 });
                 
-                info!("Added context file: {}", absolute_path.display());
+                debug!("Added context file: {}", absolute_path.display());
                 Ok(())
             }
             Err(e) => {
@@ -114,13 +114,13 @@ impl Agent {
 
     pub async fn process_message(&mut self, message: &str) -> Result<String> {
         // Log incoming user message
-        info!("Processing user message: {}", message);
-        info!("Current conversation length: {}", self.conversation.len());
+        debug!("Processing user message: {}", message);
+        debug!("Current conversation length: {}", self.conversation.len());
 
         // Extract and add context files from @ syntax
         let context_files = self.extract_context_files(message);
         for file_path in &context_files {
-            info!("Auto-adding context file from @ syntax: {}", file_path);
+            debug!("Auto-adding context file from @ syntax: {}", file_path);
             match self.add_context_file(file_path).await {
                 Ok(_) => println!("{} Added context file: {}", "✓".green(), file_path),
                 Err(e) => eprintln!("{} Failed to add context file '{}': {}", "✗".red(), file_path, e),
@@ -133,7 +133,7 @@ impl Agent {
         // If message is empty after cleaning (only contained @file references), 
         // return early without making an API call
         if cleaned_message.trim().is_empty() {
-            info!("Message only contained @file references, not making API call");
+            debug!("Message only contained @file references, not making API call");
             return Ok("".to_string());
         }
 
@@ -165,7 +165,7 @@ impl Agent {
             // Track token usage
             if let Some(usage) = &response.usage {
                 self.token_usage.add_usage(usage);
-                info!("Updated token usage - Total: {} (Input: {}, Output: {})", 
+                debug!("Updated token usage - Total: {} (Input: {}, Output: {})", 
                       self.token_usage.total_tokens(), 
                       self.token_usage.total_input_tokens, 
                       self.token_usage.total_output_tokens);
@@ -184,15 +184,15 @@ impl Agent {
             }
 
             // Execute tool calls
-            info!("Executing {} tool calls", tool_calls.len());
+            debug!("Executing {} tool calls", tool_calls.len());
             let tool_results: Vec<ToolResult> = {
                 let mut results = Vec::new();
                 for call in &tool_calls {
-                    info!("Executing tool: {} with ID: {}", call.name, call.id);
+                    debug!("Executing tool: {} with ID: {}", call.name, call.id);
                     if let Some(tool) = self.tools.get(&call.name) {
                         match (tool.handler)(call).await {
                             Ok(result) => {
-                                info!("Tool '{}' executed successfully", call.name);
+                                debug!("Tool '{}' executed successfully", call.name);
                                 results.push(result);
                             },
                             Err(e) => {
@@ -250,8 +250,7 @@ impl Agent {
                 content: vec![ContentBlock::text(final_response.clone())],
             });
         }
-        info!("Final response generated ({} chars)", final_response.len());
-        println!("Final response: {}", final_response);
+        debug!("Final response generated ({} chars)", final_response.len());
         Ok(final_response)
     }
 
@@ -377,13 +376,13 @@ impl Agent {
         let has_agents_md = agents_md_path.exists();
         
         if has_agents_md {
-            info!("Clearing conversation but keeping AGENTS.md context");
+            debug!("Clearing conversation but keeping AGENTS.md context");
             // Clear the conversation
             self.conversation.clear();
             // Re-add AGENTS.md
             self.add_context_file("AGENTS.md").await?;
         } else {
-            info!("Clearing conversation (no AGENTS.md found)");
+            debug!("Clearing conversation (no AGENTS.md found)");
             self.conversation.clear();
         }
         

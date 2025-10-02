@@ -3,7 +3,7 @@ use colored::*;
 use anyhow::Result;
 use std::io::{self, Read};
 use dialoguer::Input;
-use log::info;
+use log::{debug, info};
 use env_logger::Builder;
 use std::path::Path;
 
@@ -22,14 +22,14 @@ use formatter::create_code_formatter;
         if context_files.is_empty() {
             // Automatically add AGENTS.md if it exists
             if Path::new("AGENTS.md").exists() {
-                info!("Auto-adding AGENTS.md as context");
+                debug!("Auto-adding AGENTS.md as context");
                 agent.add_context_file("AGENTS.md").await?;
             }
             return Ok(());
         }
 
         for file_path in context_files {
-            info!("Adding context file: {}", file_path);
+            debug!("Adding context file: {}", file_path);
             match agent.add_context_file(file_path).await {
                 Ok(_) => println!("{} Added context file: {}", "✓".green(), file_path),
                 Err(e) => eprintln!("{} Failed to add context file '{}': {}", "✗".red(), file_path, e),
@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    info!("Starting AI Agent with model: {}", cli.model);
+    debug!("Starting AI Agent with model: {}", cli.model);
 
     // Load configuration
     let mut config = Config::load(cli.config.as_deref()).await?;
