@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::collections::HashMap;
+use log::{debug, info, error};
 
 use crate::config::Config;
 use crate::anthropic::{AnthropicClient, Message, ContentBlock};
@@ -29,6 +30,10 @@ impl Agent {
     }
 
     pub async fn process_message(&mut self, message: &str) -> Result<String> {
+        // Log incoming user message
+        info!("Processing user message: {}", message);
+        info!("Current conversation length: {}", self.conversation.len());
+
         // Add user message to conversation
         self.conversation.push(Message {
             role: "user".to_string(),
@@ -36,7 +41,7 @@ impl Agent {
         });
 
         let mut final_response = String::new();
-        let max_iterations = 10;
+        let max_iterations = 30;
         let mut iteration = 0;
 
         while iteration < max_iterations {
@@ -67,19 +72,28 @@ impl Agent {
             }
 
             // Execute tool calls
+            info!("Executing {} tool calls", tool_calls.len());
             let tool_results: Vec<ToolResult> = {
                 let mut results = Vec::new();
                 for call in &tool_calls {
+                    info!("Executing tool: {} with ID: {}", call.name, call.id);
                     if let Some(tool) = self.tools.get(&call.name) {
                         match (tool.handler)(call).await {
-                            Ok(result) => results.push(result),
-                            Err(e) => results.push(ToolResult {
-                                tool_use_id: call.id.clone(),
-                                content: format!("Error executing tool '{}': {}", call.name, e),
-                                is_error: true,
-                            }),
+                            Ok(result) => {
+                                info!("Tool '{}' executed successfully", call.name);
+                                results.push(result);
+                            },
+                            Err(e) => {
+                                error!("Error executing tool '{}': {}", call.name, e);
+                                results.push(ToolResult {
+                                    tool_use_id: call.id.clone(),
+                                    content: format!("Error executing tool '{}': {}", call.name, e),
+                                    is_error: true,
+                                });
+                            }
                         }
                     } else {
+                        error!("Unknown tool: {}", call.name);
                         results.push(ToolResult {
                             tool_use_id: call.id.clone(),
                             content: format!("Unknown tool: {}", call.name),
@@ -124,7 +138,8 @@ impl Agent {
                 content: vec![ContentBlock::text(final_response.clone())],
             });
         }
-
+        info!("Final response generated ({} chars)", final_response.len());
+        println!("Final response: {}", final_response);
         Ok(final_response)
     }
 

@@ -3,6 +3,8 @@ use colored::*;
 use anyhow::Result;
 use std::io::{self, Read};
 use dialoguer::Input;
+use log::{info, error};
+use env_logger::Builder;
 
 mod config;
 mod anthropic;
@@ -43,7 +45,13 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize logger
+    Builder::from_default_env()
+        .filter_level(log::LevelFilter::Info)
+        .init();
+
     let cli = Cli::parse();
+    info!("Starting AI Agent with model: {}", cli.model);
 
     // Load configuration
     let mut config = Config::load(cli.config.as_deref()).await?;

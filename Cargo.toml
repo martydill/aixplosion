@@ -20,3 +20,5 @@ uuid = { version = "1.0", features = ["v4"] }
 toml = "0.8"
 syntect = "5.0"
 console = "0.15"
+log = "0.4"
+env_logger = "0.10"

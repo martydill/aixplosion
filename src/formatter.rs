@@ -1,21 +1,17 @@
 use std::io::{self, Write};
-use console::Term;
 use colored::*;
 use anyhow::Result;
 use regex::Regex;
 
 pub struct CodeFormatter {
-    term: Term,
     code_block_regex: Regex,
 }
 
 impl CodeFormatter {
     pub fn new() -> Result<Self> {
         let code_block_regex = Regex::new(r"```(\w*)\n([\s\S]*?)```")?;
-        let term = Term::stdout();
 
         Ok(Self {
-            term,
             code_block_regex,
         })
     }
