@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::collections::HashMap;
+use std::path::Path;
 use log::{debug, info, error};
 
 use crate::config::Config;
@@ -61,6 +62,37 @@ impl Agent {
             tools,
             conversation: Vec::new(),
             token_usage: TokenUsage::new(),
+        }
+    }
+
+    /// Add a file as context to the conversation
+    pub async fn add_context_file(&mut self, file_path: &str) -> Result<()> {
+        use tokio::fs;
+        use path_absolutize::*;
+        use shellexpand;
+
+        let expanded_path = shellexpand::tilde(file_path);
+        let absolute_path = Path::new(&*expanded_path).absolutize()?;
+
+        match fs::read_to_string(&absolute_path).await {
+            Ok(content) => {
+                let context_message = format!(
+                    "Context from file '{}':\n\n```\n{}\n```",
+                    absolute_path.display(),
+                    content
+                );
+                
+                self.conversation.push(Message {
+                    role: "user".to_string(),
+                    content: vec![ContentBlock::text(context_message)],
+                });
+                
+                info!("Added context file: {}", absolute_path.display());
+                Ok(())
+            }
+            Err(e) => {
+                anyhow::bail!("Failed to read file '{}': {}", absolute_path.display(), e);
+            }
         }
     }
 

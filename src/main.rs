@@ -5,6 +5,7 @@ use std::io::{self, Read};
 use dialoguer::Input;
 use log::{info, error};
 use env_logger::Builder;
+use std::path::Path;
 
 mod config;
 mod anthropic;
@@ -16,7 +17,27 @@ use config::Config;
 use agent::Agent;
 use formatter::create_code_formatter;
 
-/// Handle slash commands
+/// Check for and add context files
+    async fn add_context_files(agent: &mut Agent, context_files: &[String]) -> Result<()> {
+        if context_files.is_empty() {
+            // Automatically add AGENTS.md if it exists
+            if Path::new("AGENTS.md").exists() {
+                info!("Auto-adding AGENTS.md as context");
+                agent.add_context_file("AGENTS.md").await?;
+            }
+            return Ok(());
+        }
+
+        for file_path in context_files {
+            info!("Adding context file: {}", file_path);
+            match agent.add_context_file(file_path).await {
+                Ok(_) => println!("{} Added context file: {}", "✓".green(), file_path),
+                Err(e) => eprintln!("{} Failed to add context file '{}': {}", "✗".red(), file_path, e),
+            }
+        }
+
+        Ok(())
+    }
 fn handle_slash_command(command: &str, agent: &mut Agent) -> Result<bool> {
     let parts: Vec<&str> = command.trim().splitn(2, ' ').collect();
     let cmd = parts[0];
@@ -87,6 +108,10 @@ fn print_help() {
     println!("  /exit         - Exit the program");
     println!("  /quit         - Exit the program");
     println!();
+    println!("{}", "Context Files:".green().bold());
+    println!("  Use -f or --file to include files as context");
+    println!("  AGENTS.md is automatically included if it exists");
+    println!();
     println!("{}", "Any other input will be sent to the AI agent for processing.".dimmed());
     println!();
 }
@@ -115,6 +140,10 @@ struct Cli {
     /// Run in non-interactive mode
     #[arg(short, long)]
     non_interactive: bool,
+
+    /// Files to include as context
+    #[arg(short = 'f', long = "file", value_name = "FILE")]
+    context_files: Vec<String>,
 
   }
 
@@ -149,6 +178,9 @@ async fn main() -> Result<()> {
 
     // Create and run agent
     let mut agent = Agent::new(config, cli.model);
+
+    // Add context files
+    add_context_files(&mut agent, &cli.context_files).await?;
 
     let is_interactive = cli.message.is_none() && !cli.non_interactive;
 
