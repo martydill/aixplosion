@@ -16,6 +16,40 @@ use config::Config;
 use agent::Agent;
 use formatter::create_code_formatter;
 
+/// Handle slash commands
+fn handle_slash_command(command: &str, agent: &Agent) -> Result<bool> {
+    let parts: Vec<&str> = command.trim().splitn(2, ' ').collect();
+    let cmd = parts[0];
+    
+    match cmd {
+        "/help" => {
+            print_help();
+            Ok(true) // Command was handled
+        }
+        "/exit" | "/quit" => {
+            println!("{}", "Goodbye! 👋".green());
+            std::process::exit(0);
+        }
+        _ => {
+            println!("{} Unknown command: {}. Type /help for available commands.", "⚠️".yellow(), cmd);
+            Ok(true) // Command was handled (as unknown)
+        }
+    }
+}
+
+/// Print help information
+fn print_help() {
+    println!("{}", "🤖 AI Agent - Slash Commands".cyan().bold());
+    println!();
+    println!("{}", "Available commands:".green().bold());
+    println!("  /help     - Show this help message");
+    println!("  /exit     - Exit the program");
+    println!("  /quit     - Exit the program");
+    println!();
+    println!("{}", "Any other input will be sent to the AI agent for processing.".dimmed());
+    println!();
+}
+
 #[derive(Parser)]
 #[command(name = "ai-agent")]
 #[command(about = "A CLI coding agent powered by Anthropic AI")]
@@ -88,7 +122,7 @@ async fn main() -> Result<()> {
     } else {
         // Interactive mode
         println!("{}", "🤖 AI Agent - Interactive Mode".green().bold());
-        println!("{}", "Type 'exit' or press Ctrl+C to quit".dimmed());
+        println!("{}", "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands.".dimmed());
         println!();
 
         loop {
@@ -97,6 +131,13 @@ async fn main() -> Result<()> {
                 .allow_empty(false)
                 .interact_text()?;
 
+            // Check for slash commands first
+            if input.starts_with('/') {
+                let _ = handle_slash_command(&input, &agent);
+                continue;
+            }
+
+            // Check for traditional exit commands
             if input == "exit" || input == "quit" {
                 println!("{}", "Goodbye! 👋".green());
                 break;
@@ -117,4 +158,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-
