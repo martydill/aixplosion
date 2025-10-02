@@ -73,6 +73,8 @@ pub async fn list_directory(call: &ToolCall) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .unwrap_or(".");
 
+    println!("🔧 TOOL CALL: list_directory('{}')", path);
+
     let tool_use_id = call.id.clone();
 
     let expanded_path = shellexpand::tilde(path);
@@ -124,6 +126,8 @@ pub async fn read_file(call: &ToolCall) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
 
+    println!("🔧 TOOL CALL: read_file('{}')", path);
+
     let tool_use_id = call.id.clone();
 
     let expanded_path = shellexpand::tilde(path);
@@ -164,6 +168,8 @@ pub async fn write_file(call: &ToolCall) -> Result<ToolResult> {
     let content = call.arguments.get("content")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'content' argument"))?;
+
+    println!("🔧 TOOL CALL: write_file('{}', {} bytes)", path, content.len());
 
     let tool_use_id = call.id.clone();
 
@@ -208,6 +214,8 @@ pub async fn edit_file(call: &ToolCall) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'new_text' argument"))?;
 
+    println!("🔧 TOOL CALL: edit_file('{}', {} -> {} bytes)", path, old_text.len(), new_text.len());
+
     let tool_use_id = call.id.clone();
 
     let expanded_path = shellexpand::tilde(path);
@@ -251,6 +259,8 @@ pub async fn delete_file(call: &ToolCall) -> Result<ToolResult> {
     let path = call.arguments.get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
+
+    println!("🔧 TOOL CALL: delete_file('{}')", path);
 
     let tool_use_id = call.id.clone();
 
@@ -299,6 +309,8 @@ pub async fn create_directory(call: &ToolCall) -> Result<ToolResult> {
     let path = call.arguments.get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
+
+    println!("🔧 TOOL CALL: create_directory('{}')", path);
 
     let tool_use_id = call.id.clone();
 
