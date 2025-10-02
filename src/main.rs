@@ -6,6 +6,7 @@ use dialoguer::Input;
 use log::{debug, info};
 use env_logger::Builder;
 use std::path::Path;
+use indicatif::{ProgressBar, ProgressStyle};
 
 mod config;
 mod anthropic;
@@ -18,26 +19,27 @@ use agent::Agent;
 use formatter::create_code_formatter;
 
 /// Check for and add context files
-    async fn add_context_files(agent: &mut Agent, context_files: &[String]) -> Result<()> {
-        if context_files.is_empty() {
-            // Automatically add AGENTS.md if it exists
-            if Path::new("AGENTS.md").exists() {
-                debug!("Auto-adding AGENTS.md as context");
-                agent.add_context_file("AGENTS.md").await?;
-            }
-            return Ok(());
+async fn add_context_files(agent: &mut Agent, context_files: &[String]) -> Result<()> {
+    if context_files.is_empty() {
+        // Automatically add AGENTS.md if it exists
+        if Path::new("AGENTS.md").exists() {
+            debug!("Auto-adding AGENTS.md as context");
+            agent.add_context_file("AGENTS.md").await?;
         }
-
-        for file_path in context_files {
-            debug!("Adding context file: {}", file_path);
-            match agent.add_context_file(file_path).await {
-                Ok(_) => println!("{} Added context file: {}", "✓".green(), file_path),
-                Err(e) => eprintln!("{} Failed to add context file '{}': {}", "✗".red(), file_path, e),
-            }
-        }
-
-        Ok(())
+        return Ok(());
     }
+
+    for file_path in context_files {
+        debug!("Adding context file: {}", file_path);
+        match agent.add_context_file(file_path).await {
+            Ok(_) => println!("{} Added context file: {}", "✓".green(), file_path),
+            Err(e) => eprintln!("{} Failed to add context file '{}': {}", "✗".red(), file_path, e),
+        }
+    }
+
+    Ok(())
+}
+
 async fn handle_slash_command(command: &str, agent: &mut Agent) -> Result<bool> {
     let parts: Vec<&str> = command.trim().splitn(2, ' ').collect();
     let cmd = parts[0];
@@ -111,6 +113,20 @@ fn print_usage_stats(agent: &Agent) {
     }
 }
 
+/// Create a progress spinner for API calls
+fn create_spinner() -> ProgressBar {
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+            .template("{spinner:.green} {msg}")
+            .unwrap()
+    );
+    spinner.set_message("Thinking...");
+    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+    spinner
+}
+
 /// Print help information
 fn print_help() {
     println!("{}", "🤖 AI Agent - Slash Commands".cyan().bold());
@@ -169,8 +185,7 @@ struct Cli {
     /// Files to include as context
     #[arg(short = 'f', long = "file", value_name = "FILE")]
     context_files: Vec<String>,
-
-  }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -211,7 +226,9 @@ async fn main() -> Result<()> {
 
     if let Some(message) = cli.message {
         // Single message mode
+        let spinner = create_spinner();
         let response = agent.process_message(&message).await?;
+        spinner.finish_and_clear();
         formatter.print_formatted(&response)?;
 
         // Print usage stats for single message mode
@@ -220,7 +237,9 @@ async fn main() -> Result<()> {
         // Read from stdin
         let mut input = String::new();
         io::stdin().read_to_string(&mut input)?;
+        let spinner = create_spinner();
         let response = agent.process_message(&input.trim()).await?;
+        spinner.finish_and_clear();
         formatter.print_formatted(&response)?;
 
         // Print usage stats for non-interactive mode
@@ -251,7 +270,12 @@ async fn main() -> Result<()> {
                 break;
             }
 
-            match agent.process_message(&input).await {
+            // Show spinner while processing
+            let spinner = create_spinner();
+            let result = agent.process_message(&input).await;
+            spinner.finish_and_clear();
+            
+            match result {
                 Ok(response) => {
                     // Only print response if it's not empty (i.e., not just @file references)
                     if !response.is_empty() {
@@ -267,7 +291,7 @@ async fn main() -> Result<()> {
         }
     }
 
-  // Print final usage stats before exiting (only for interactive mode)
+    // Print final usage stats before exiting (only for interactive mode)
     if is_interactive {
         print_usage_stats(&agent);
     }

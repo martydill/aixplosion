@@ -19,6 +19,7 @@ The AI agent supports the following features:
 4. **Tool Support**: Execute various tools for file operations, code analysis, etc.
 5. **Context Management**: Maintains conversation history
 6. **@file Syntax**: Auto-include files using @path-to-file syntax
+7. **Progress Spinner**: Visual feedback while waiting for LLM responses
 
 ### Available Tools
 
@@ -94,6 +95,20 @@ ai-agent "Explain the Rust code in @src/main.rs"
 # Only file references
 ai-agent "@file1.txt @file2.txt"
 ```
+
+### Progress Spinner
+
+The agent now includes a visual progress spinner that appears while waiting for LLM responses. The spinner provides immediate feedback that the system is processing your request:
+
+- **Spinner Characters**: Rotating Unicode characters (⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+- **Message**: Shows "Thinking..." while processing
+- **Color**: Green spinner with clear visibility
+- **Behavior**: Automatically clears when the response is ready
+
+The spinner appears in all modes:
+- Interactive mode (during conversation)
+- Single message mode
+- Non-interactive mode (stdin)
 
 ### Slash Commands
 
