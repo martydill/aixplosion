@@ -3,14 +3,48 @@ use std::collections::HashMap;
 use log::{debug, info, error};
 
 use crate::config::Config;
-use crate::anthropic::{AnthropicClient, Message, ContentBlock};
+use crate::anthropic::{AnthropicClient, Message, ContentBlock, Usage};
 use crate::tools::{Tool, ToolResult, get_builtin_tools};
+
+#[derive(Debug, Clone)]
+pub struct TokenUsage {
+    pub request_count: u32,
+    pub total_input_tokens: u32,
+    pub total_output_tokens: u32,
+}
+
+impl TokenUsage {
+    pub fn new() -> Self {
+        Self {
+            request_count: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+        }
+    }
+
+    pub fn add_usage(&mut self, usage: &Usage) {
+        self.request_count += 1;
+        self.total_input_tokens += usage.input_tokens;
+        self.total_output_tokens += usage.output_tokens;
+    }
+
+    pub fn total_tokens(&self) -> u32 {
+        self.total_input_tokens + self.total_output_tokens
+    }
+
+    pub fn reset(&mut self) {
+        self.request_count = 0;
+        self.total_input_tokens = 0;
+        self.total_output_tokens = 0;
+    }
+}
 
 pub struct Agent {
     client: AnthropicClient,
     model: String,
     tools: HashMap<String, Tool>,
     conversation: Vec<Message>,
+    token_usage: TokenUsage,
 }
 
 impl Agent {
@@ -26,6 +60,7 @@ impl Agent {
             model,
             tools,
             conversation: Vec::new(),
+            token_usage: TokenUsage::new(),
         }
     }
 
@@ -41,7 +76,7 @@ impl Agent {
         });
 
         let mut final_response = String::new();
-        let max_iterations = 30;
+        let max_iterations = 500;
         let mut iteration = 0;
 
         while iteration < max_iterations {
@@ -58,6 +93,15 @@ impl Agent {
                 4096,
                 0.7,
             ).await?;
+
+            // Track token usage
+            if let Some(usage) = &response.usage {
+                self.token_usage.add_usage(usage);
+                info!("Updated token usage - Total: {} (Input: {}, Output: {})", 
+                      self.token_usage.total_tokens(), 
+                      self.token_usage.total_input_tokens, 
+                      self.token_usage.total_output_tokens);
+            }
 
             // Check for tool calls
             let tool_calls = self.client.convert_tool_calls(&response.content);
@@ -149,5 +193,13 @@ impl Agent {
 
     pub fn get_conversation_length(&self) -> usize {
         self.conversation.len()
+    }
+
+    pub fn get_token_usage(&self) -> &TokenUsage {
+        &self.token_usage
+    }
+
+    pub fn reset_token_usage(&mut self) {
+        self.token_usage.reset();
     }
 }
