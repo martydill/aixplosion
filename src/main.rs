@@ -38,7 +38,7 @@ use formatter::create_code_formatter;
 
         Ok(())
     }
-fn handle_slash_command(command: &str, agent: &mut Agent) -> Result<bool> {
+async fn handle_slash_command(command: &str, agent: &mut Agent) -> Result<bool> {
     let parts: Vec<&str> = command.trim().splitn(2, ' ').collect();
     let cmd = parts[0];
     
@@ -53,6 +53,17 @@ fn handle_slash_command(command: &str, agent: &mut Agent) -> Result<bool> {
         }
         "/context" => {
             agent.display_context();
+            Ok(true) // Command was handled
+        }
+        "/clear" => {
+            match agent.clear_conversation_keep_agents_md().await {
+                Ok(_) => {
+                    println!("{}", "🧹 Conversation context cleared! (AGENTS.md preserved if it existed)".green());
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to clear context: {}", "✗".red(), e);
+                }
+            }
             Ok(true) // Command was handled
         }
         "/reset-stats" => {
@@ -109,6 +120,7 @@ fn print_help() {
     println!("  /stats        - Show token usage statistics");
     println!("  /usage        - Show token usage statistics (alias for /stats)");
     println!("  /context      - Show current conversation context");
+    println!("  /clear        - Clear all conversation context (keeps AGENTS.md if it exists)");
     println!("  /reset-stats  - Reset token usage statistics");
     println!("  /exit         - Exit the program");
     println!("  /quit         - Exit the program");
@@ -227,7 +239,7 @@ async fn main() -> Result<()> {
 
             // Check for slash commands first
             if input.starts_with('/') {
-                let _ = handle_slash_command(&input, &mut agent);
+                let _ = handle_slash_command(&input, &mut agent).await;
                 continue;
             }
 

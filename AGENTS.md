@@ -103,6 +103,7 @@ In interactive mode, you can use these commands:
 - `/stats` - Show token usage statistics
 - `/usage` - Show token usage statistics (alias for /stats)
 - `/context` - Show current conversation context
+- `/clear` - Clear all conversation context (keeps AGENTS.md if it exists)
 - `/reset-stats` - Reset token usage statistics
 - `/exit` or `/quit` - Exit the program
 

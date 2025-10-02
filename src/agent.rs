@@ -367,4 +367,26 @@ impl Agent {
         );
         println!();
     }
+
+    /// Clear conversation but keep AGENTS.md if it exists in context
+    pub async fn clear_conversation_keep_agents_md(&mut self) -> Result<()> {
+        use std::path::Path;
+        
+        // Check if AGENTS.md exists in the current directory
+        let agents_md_path = Path::new("AGENTS.md");
+        let has_agents_md = agents_md_path.exists();
+        
+        if has_agents_md {
+            info!("Clearing conversation but keeping AGENTS.md context");
+            // Clear the conversation
+            self.conversation.clear();
+            // Re-add AGENTS.md
+            self.add_context_file("AGENTS.md").await?;
+        } else {
+            info!("Clearing conversation (no AGENTS.md found)");
+            self.conversation.clear();
+        }
+        
+        Ok(())
+    }
 }
