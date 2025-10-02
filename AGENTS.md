@@ -18,6 +18,7 @@ The AI agent supports the following features:
 3. **Non-interactive Mode**: Read from stdin for scripting
 4. **Tool Support**: Execute various tools for file operations, code analysis, etc.
 5. **Context Management**: Maintains conversation history
+6. **@file Syntax**: Auto-include files using @path-to-file syntax
 
 ### Available Tools
 
@@ -42,6 +43,14 @@ echo "Help me understand this code" | ai-agent --non-interactive
 
 # With custom API key
 ai-agent -k "your-api-key" -m "Your message here"
+
+# With context files
+ai-agent -f config.toml -f Cargo.toml "Explain this project"
+
+# Using @file syntax (NEW!)
+ai-agent "What does @Cargo.toml contain?"
+ai-agent "Compare @src/main.rs and @src/lib.rs"
+ai-agent "@file1.txt @file2.txt"
 ```
 
 ### Configuration
@@ -63,11 +72,38 @@ max_tokens = 4096
 temperature = 0.7
 ```
 
+### Context Files
+
+The agent supports multiple ways to include files as context:
+
+1. **Command Line Flag**: Use `-f` or `--file` to specify files
+2. **@file Syntax**: Use `@path-to-file` directly in messages
+3. **Auto-inclusion**: AGENTS.md is automatically included if it exists
+
+#### @file Syntax Examples
+```bash
+# Single file
+ai-agent "What does @config.toml contain?"
+
+# Multiple files
+ai-agent "Compare @file1.rs and @file2.rs"
+
+# File with question
+ai-agent "Explain the Rust code in @src/main.rs"
+
+# Only file references
+ai-agent "@file1.txt @file2.txt"
+```
+
 ### Slash Commands
 
 In interactive mode, you can use these commands:
 
 - `/help` - Show help information
+- `/stats` - Show token usage statistics
+- `/usage` - Show token usage statistics (alias for /stats)
+- `/context` - Show current conversation context
+- `/reset-stats` - Reset token usage statistics
 - `/exit` or `/quit` - Exit the program
 
 ### Error Handling
@@ -77,5 +113,6 @@ The agent includes comprehensive error handling for:
 - Network connectivity issues
 - File operation errors
 - Tool execution failures
+- Invalid file references in @file syntax
 
 All errors are displayed with clear, actionable messages to help troubleshoot issues.

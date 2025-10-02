@@ -115,7 +115,15 @@ fn print_help() {
     println!();
     println!("{}", "Context Files:".green().bold());
     println!("  Use -f or --file to include files as context");
+    println!("  Use @path/to/file syntax in messages to auto-include files");
     println!("  AGENTS.md is automatically included if it exists");
+    println!("  Messages with only @file references will NOT make API calls");
+    println!();
+    println!("{}", "Examples:".green().bold());
+    println!("  ai-agent -f config.toml \"Explain this configuration\"");
+    println!("  ai-agent \"What does @Cargo.toml contain?\"");
+    println!("  ai-agent \"Compare @file1.rs and @file2.rs\"");
+    println!("  ai-agent \"@file1.txt @file2.txt\"  # Only adds context, no API call");
     println!();
     println!("{}", "Any other input will be sent to the AI agent for processing.".dimmed());
     println!();
@@ -233,7 +241,10 @@ async fn main() -> Result<()> {
 
             match agent.process_message(&input).await {
                 Ok(response) => {
-                    formatter.print_formatted(&response)?;
+                    // Only print response if it's not empty (i.e., not just @file references)
+                    if !response.is_empty() {
+                        formatter.print_formatted(&response)?;
+                    }
                     println!();
                 }
                 Err(e) => {

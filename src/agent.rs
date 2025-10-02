@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 use log::{info, error};
+use regex::Regex;
 
 use crate::config::Config;
 use crate::anthropic::{AnthropicClient, Message, ContentBlock, Usage};
@@ -97,15 +98,49 @@ impl Agent {
         }
     }
 
+    /// Extract file paths from message using @path syntax
+    pub fn extract_context_files(&self, message: &str) -> Vec<String> {
+        let re = Regex::new(r"@([^\s@]+)").unwrap();
+        re.captures_iter(message)
+            .map(|cap| cap[1].to_string())
+            .collect()
+    }
+
+    /// Remove @file syntax from message and return cleaned message
+    pub fn clean_message(&self, message: &str) -> String {
+        let re = Regex::new(r"@[^\s@]+").unwrap();
+        re.replace_all(message, "").trim().to_string()
+    }
+
     pub async fn process_message(&mut self, message: &str) -> Result<String> {
         // Log incoming user message
         info!("Processing user message: {}", message);
         info!("Current conversation length: {}", self.conversation.len());
 
-        // Add user message to conversation
+        // Extract and add context files from @ syntax
+        let context_files = self.extract_context_files(message);
+        for file_path in &context_files {
+            info!("Auto-adding context file from @ syntax: {}", file_path);
+            match self.add_context_file(file_path).await {
+                Ok(_) => println!("{} Added context file: {}", "✓".green(), file_path),
+                Err(e) => eprintln!("{} Failed to add context file '{}': {}", "✗".red(), file_path, e),
+            }
+        }
+
+        // Clean message by removing @file syntax
+        let cleaned_message = self.clean_message(message);
+
+        // If message is empty after cleaning (only contained @file references), 
+        // return early without making an API call
+        if cleaned_message.trim().is_empty() {
+            info!("Message only contained @file references, not making API call");
+            return Ok("".to_string());
+        }
+
+        // Add cleaned user message to conversation
         self.conversation.push(Message {
             role: "user".to_string(),
-            content: vec![ContentBlock::text(message.to_string())],
+            content: vec![ContentBlock::text(cleaned_message)],
         });
 
         let mut final_response = String::new();
