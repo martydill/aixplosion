@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use log::{debug, error};
 use regex::Regex;
+use serde_json::Value;
 
 use crate::config::Config;
 use crate::anthropic::{AnthropicClient, Message, ContentBlock, Usage};
@@ -320,18 +321,22 @@ impl Agent {
                                      name,
                                      id
                             );
-                            if let Some(input_str) = input.as_str() {
-                                let preview = if input_str.len() > 80 {
-                                    format!("{}...", &input_str[..80])
-                                } else {
-                                    input_str.to_string()
-                                };
-                                println!("    {} {}", "Input:".dimmed(), preview);
-                            }
+                            // Safely handle the input as a string
+                            let input_str = match input {
+                                Value::String(s) => s.clone(),
+                                _ => serde_json::to_string_pretty(input)
+                                    .unwrap_or_else(|_| "Invalid JSON".to_string()),
+                            };
+                            let preview = if input_str.len() > 80 {
+                                format!("{}...", &input_str[..80])
+                            } else {
+                                input_str
+                            };
+                            println!("    {} {}", "Input:".dimmed(), preview);
                         }
                     },
                     "tool_result" => {
-                        if let (Some(ref tool_use_id), Some(ref content), is_error) = (&block.tool_use_id, &block.content, block.is_error) {
+                        if let (Some(ref tool_use_id), Some(ref content), ref is_error) = (&block.tool_use_id, &block.content, &block.is_error) {
                             let result_type = if is_error.unwrap_or(false) { "Error".red() } else { "Result".green() };
                             println!("  {} {}: {} ({})",
                                      format!("└─ Block {}", j + 1).dimmed(),
