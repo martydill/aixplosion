@@ -2,12 +2,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use anyhow::Result;
 use std::path::Path;
+use std::process::Command;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
+use tokio::task;
 use path_absolutize::*;
 use shellexpand;
 
-pub type AsyncToolHandler = Box<dyn Fn(&ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send + '_>> + Send + Sync>;
+pub type AsyncToolHandler = Box<dyn Fn(ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> + Send + Sync>;
 
 pub struct Tool {
     pub name: String,
@@ -37,6 +39,7 @@ impl Tool {
             "edit_file" => Box::new(edit_file_sync),
             "delete_file" => Box::new(delete_file_sync),
             "create_directory" => Box::new(create_directory_sync),
+            "bash" => Box::new(bash_sync),
             _ => panic!("Unknown tool: {}", self.name),
         }
     }
@@ -331,29 +334,97 @@ pub async fn create_directory(call: &ToolCall) -> Result<ToolResult> {
     }
 }
 
+pub async fn bash(call: &ToolCall) -> Result<ToolResult> {
+    let command = call.arguments.get("command")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing 'command' argument"))?
+        .to_string();
+
+    println!("🔧 TOOL CALL: bash('{}')", command);
+
+    let tool_use_id = call.id.clone();
+
+    // Execute the command using tokio::task to spawn blocking operation
+    let command_clone = command.clone();
+    match task::spawn_blocking(move || {
+        Command::new("bash")
+            .arg("-c")
+            .arg(&command_clone)
+            .output()
+    }).await
+    {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            
+            let content = if !stderr.is_empty() {
+                format!("Exit code: {}\nStdout:\n{}\nStderr:\n{}", 
+                    output.status.code().unwrap_or(-1), stdout, stderr)
+            } else {
+                format!("Exit code: {}\nOutput:\n{}", 
+                    output.status.code().unwrap_or(-1), stdout)
+            };
+
+            Ok(ToolResult {
+                tool_use_id,
+                content,
+                is_error: !output.status.success(),
+            })
+        }
+        Ok(Err(e)) => Ok(ToolResult {
+            tool_use_id,
+            content: format!("Error executing command '{}': {}", command, e),
+            is_error: true,
+        }),
+        Err(e) => Ok(ToolResult {
+            tool_use_id,
+            content: format!("Task join error: {}", e),
+            is_error: true,
+        })
+    }
+}
+
 // Wrapper functions to convert async functions to the expected handler signature
-fn list_directory_sync(call: &ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send + '_>> {
-    Box::pin(list_directory(call))
+fn list_directory_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+    Box::pin(async move {
+        list_directory(&call).await
+    })
 }
 
-fn read_file_sync(call: &ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send + '_>> {
-    Box::pin(read_file(call))
+fn read_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+    Box::pin(async move {
+        read_file(&call).await
+    })
 }
 
-fn write_file_sync(call: &ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send + '_>> {
-    Box::pin(write_file(call))
+fn write_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+    Box::pin(async move {
+        write_file(&call).await
+    })
 }
 
-fn edit_file_sync(call: &ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send + '_>> {
-    Box::pin(edit_file(call))
+fn edit_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+    Box::pin(async move {
+        edit_file(&call).await
+    })
 }
 
-fn delete_file_sync(call: &ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send + '_>> {
-    Box::pin(delete_file(call))
+fn delete_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+    Box::pin(async move {
+        delete_file(&call).await
+    })
 }
 
-fn create_directory_sync(call: &ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send + '_>> {
-    Box::pin(create_directory(call))
+fn create_directory_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+    Box::pin(async move {
+        create_directory(&call).await
+    })
+}
+
+fn bash_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+    Box::pin(async move {
+        bash(&call).await
+    })
 }
 
 pub fn get_builtin_tools() -> Vec<Tool> {
@@ -458,6 +529,21 @@ pub fn get_builtin_tools() -> Vec<Tool> {
                 "required": ["path"]
             }),
             handler: Box::new(create_directory_sync),
+        },
+        Tool {
+            name: "bash".to_string(),
+            description: "Execute bash commands and return the output".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Bash command to execute"
+                    }
+                },
+                "required": ["command"]
+            }),
+            handler: Box::new(bash_sync),
         },
     ]
 }

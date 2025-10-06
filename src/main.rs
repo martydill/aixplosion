@@ -3,7 +3,7 @@ use colored::*;
 use anyhow::Result;
 use std::io::{self, Read};
 use dialoguer::Input;
-use log::{debug, info};
+use log::debug;
 use env_logger::Builder;
 use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};

@@ -16,7 +16,7 @@ The AI agent supports the following features:
 1. **Interactive Mode**: Chat with the AI in a terminal interface
 2. **Single Message Mode**: Send a single message and get a response
 3. **Non-interactive Mode**: Read from stdin for scripting
-4. **Tool Support**: Execute various tools for file operations, code analysis, etc.
+4. **Tool Support**: Execute various tools for file operations, code analysis, bash commands, etc.
 5. **Context Management**: Maintains conversation history
 6. **@file Syntax**: Auto-include files using @path-to-file syntax
 7. **Progress Spinner**: Visual feedback while waiting for LLM responses
@@ -29,6 +29,7 @@ The AI agent supports the following features:
 - **list_directory**: List contents of a directory
 - **create_directory**: Create a directory (and parent directories if needed)
 - **delete_file**: Delete a file or directory
+- **bash**: Execute bash commands and return the output
 
 ### Usage Examples
 
@@ -52,6 +53,31 @@ ai-agent -f config.toml -f Cargo.toml "Explain this project"
 ai-agent "What does @Cargo.toml contain?"
 ai-agent "Compare @src/main.rs and @src/lib.rs"
 ai-agent "@file1.txt @file2.txt"
+```
+
+### Bash Command Execution
+
+The agent can execute bash commands directly, allowing you to:
+
+- List directory contents
+- Check git status
+- Run tests and build processes
+- Execute any shell command
+- Get system information
+
+#### Bash Examples
+```bash
+# List files in current directory
+ai-agent "List the files in the current directory"
+
+# Check git status
+ai-agent "Check the git status"
+
+# Run tests
+ai-agent "Run tests and show me the results"
+
+# Execute multiple commands
+ai-agent "Check the current branch and run the build process"
 ```
 
 ### Configuration
@@ -129,6 +155,7 @@ The agent includes comprehensive error handling for:
 - Network connectivity issues
 - File operation errors
 - Tool execution failures
+- Bash command execution failures
 - Invalid file references in @file syntax
 
 All errors are displayed with clear, actionable messages to help troubleshoot issues.

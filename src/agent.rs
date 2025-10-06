@@ -191,7 +191,7 @@ impl Agent {
                 for call in &tool_calls {
                     debug!("Executing tool: {} with ID: {}", call.name, call.id);
                     if let Some(tool) = self.tools.get(&call.name) {
-                        match (tool.handler)(call).await {
+                        match (tool.handler)(call.clone()).await {
                             Ok(result) => {
                                 debug!("Tool '{}' executed successfully", call.name);
                                 results.push(result);
