@@ -20,6 +20,7 @@ The AI agent supports the following features:
 5. **Context Management**: Maintains conversation history
 6. **@file Syntax**: Auto-include files using @path-to-file syntax
 7. **Progress Spinner**: Visual feedback while waiting for LLM responses
+8. **System Prompts**: Set custom system prompts to control AI behavior and personality
 
 ### Available Tools
 
@@ -53,7 +54,40 @@ ai-agent -f config.toml -f Cargo.toml "Explain this project"
 ai-agent "What does @Cargo.toml contain?"
 ai-agent "Compare @src/main.rs and @src/lib.rs"
 ai-agent "@file1.txt @file2.txt"
+
+# With system prompts (NEW!)
+ai-agent -s "You are a Rust expert" "Help me with this code"
+ai-agent -s "Act as a code reviewer" -f main.rs "Review this code"
+ai-agent -s "You are a helpful assistant" "Explain this concept"
 ```
+
+### System Prompts
+
+System prompts allow you to control the AI's behavior, personality, and response style. They are set at the beginning of the conversation and influence all subsequent responses.
+
+#### System Prompt Examples
+
+```bash
+# Set the AI to act as a specific expert
+ai-agent -s "You are a senior Rust developer with 10 years of experience" "Review this code"
+
+# Set a specific response style
+ai-agent -s "Respond in a concise, technical manner" "Explain distributed systems"
+
+# Set a specific context or role
+ai-agent -s "You are a code reviewer. Focus on security, performance, and maintainability" -f app.rs "Review this file"
+
+# Multiple instructions
+ai-agent -s "You are a helpful coding assistant. Always provide code examples and explain your reasoning" "How do I implement a binary tree in Rust?"
+```
+
+#### When to Use System Prompts
+
+- **Code Review**: Set the AI to act as a senior developer reviewing code
+- **Learning**: Set the AI to act as a teacher explaining concepts
+- **Specific Domains**: Set the AI as an expert in a particular field
+- **Response Style**: Control how detailed, technical, or casual the responses should be
+- **Context Setting**: Provide background information that should influence all responses
 
 ### Bash Command Execution
 
@@ -143,7 +177,7 @@ In interactive mode, you can use these commands:
 - `/help` - Show help information
 - `/stats` - Show token usage statistics
 - `/usage` - Show token usage statistics (alias for /stats)
-- `/context` - Show current conversation context
+- `/context` - Show current conversation context (including system prompt)
 - `/clear` - Clear all conversation context (keeps AGENTS.md if it exists)
 - `/reset-stats` - Reset token usage statistics
 - `/exit` or `/quit` - Exit the program

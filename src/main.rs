@@ -147,11 +147,17 @@ fn print_help() {
     println!("  AGENTS.md is automatically included if it exists");
     println!("  Messages with only @file references will NOT make API calls");
     println!();
+    println!("{}", "System Prompts:".green().bold());
+    println!("  Use -s or --system to set a custom system prompt");
+    println!("  System prompts set the behavior and personality of the AI");
+    println!();
     println!("{}", "Examples:".green().bold());
     println!("  ai-agent -f config.toml \"Explain this configuration\"");
     println!("  ai-agent \"What does @Cargo.toml contain?\"");
     println!("  ai-agent \"Compare @file1.rs and @file2.rs\"");
     println!("  ai-agent \"@file1.txt @file2.txt\"  # Only adds context, no API call");
+    println!("  ai-agent -s \"You are a Rust expert\" \"Help me with this code\"");
+    println!("  ai-agent -s \"Act as a code reviewer\" -f main.rs \"Review this code\"");
     println!();
     println!("{}", "Any other input will be sent to the AI agent for processing.".dimmed());
     println!();
@@ -185,6 +191,10 @@ struct Cli {
     /// Files to include as context
     #[arg(short = 'f', long = "file", value_name = "FILE")]
     context_files: Vec<String>,
+
+    /// System prompt to use for the conversation
+    #[arg(short = 's', long = "system", value_name = "PROMPT")]
+    system_prompt: Option<String>,
 }
 
 #[tokio::main]
@@ -218,6 +228,12 @@ async fn main() -> Result<()> {
 
     // Create and run agent
     let mut agent = Agent::new(config, cli.model);
+
+    // Set system prompt if provided
+    if let Some(system_prompt) = &cli.system_prompt {
+        agent.set_system_prompt(system_prompt.clone());
+        println!("{} Using system prompt: {}", "✓".green(), system_prompt);
+    }
 
     // Add context files
     add_context_files(&mut agent, &cli.context_files).await?;

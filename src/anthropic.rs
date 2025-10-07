@@ -3,6 +3,7 @@ use anyhow::Result;
 use reqwest::Client;
 use serde_json::Value;
 use log::debug;
+use colored::Colorize;
 
 use crate::tools::{Tool, ToolCall};
 
@@ -75,6 +76,7 @@ struct AnthropicRequest {
     messages: Vec<Message>,
     tools: Option<Vec<ToolDefinition>>,
     stream: Option<bool>,
+    system: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,6 +126,7 @@ impl AnthropicClient {
         tools: &[Tool],
         max_tokens: u32,
         temperature: f32,
+        system_prompt: Option<&String>,
     ) -> Result<AnthropicResponse> {
         // Try the standard endpoint first, then fall back to alternatives if needed
         let endpoints = vec![
@@ -133,7 +136,7 @@ impl AnthropicClient {
         ];
 
         for endpoint in endpoints.iter() {
-            match self.try_endpoint(endpoint, model, &messages, tools, max_tokens, temperature).await {
+            match self.try_endpoint(endpoint, model, &messages, tools, max_tokens, temperature, system_prompt).await {
                 Ok(response) => {
                     return Ok(response);
                 }
@@ -146,7 +149,7 @@ impl AnthropicClient {
 
         // If all endpoints failed, return the error from the last attempt
         let last_endpoint = &endpoints[endpoints.len() - 1];
-        return self.try_endpoint(last_endpoint, model, &messages, tools, max_tokens, temperature).await;
+        return self.try_endpoint(last_endpoint, model, &messages, tools, max_tokens, temperature, system_prompt).await;
     }
 
     async fn try_endpoint(
@@ -157,6 +160,7 @@ impl AnthropicClient {
         tools: &[Tool],
         max_tokens: u32,
         temperature: f32,
+        system_prompt: Option<&String>,
     ) -> Result<AnthropicResponse> {
         let tool_definitions = if tools.is_empty() {
             None
@@ -175,12 +179,16 @@ impl AnthropicClient {
             messages: messages.to_vec(),
             tools: tool_definitions,
             stream: Some(false),
+            system: system_prompt.cloned(),
         };
 
         // Log outgoing request
         debug!("Sending API request to endpoint: {}", endpoint);
         debug!("Request body: {}", serde_json::to_string_pretty(&request)?);
         debug!("Sending message to model: {}", model);
+        if let Some(system_prompt) = system_prompt {
+            debug!("Using system prompt: {}", system_prompt);
+        }
 
         let response = self.client
             .post(endpoint)
@@ -203,6 +211,13 @@ impl AnthropicClient {
         // Log incoming response
         debug!("Received API response with status: {}", status);
         debug!("Response body: {}", response_text);
+
+        // Print raw server response to console for visibility
+        println!("{}", "=== RAW SERVER RESPONSE ===".bright_yellow().bold());
+        println!("{} {}", "Status:".bright_yellow(), status);
+        println!("{}", "Response:".bright_yellow());
+        println!("{}", response_text);
+        println!("{}", "==========================".bright_yellow().bold());
 
         // Try to parse the response
         match serde_json::from_str::<AnthropicResponse>(&response_text) {

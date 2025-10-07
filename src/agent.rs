@@ -49,6 +49,7 @@ pub struct Agent {
     tools: HashMap<String, Tool>,
     conversation: Vec<Message>,
     token_usage: TokenUsage,
+    system_prompt: Option<String>,
 }
 
 impl Agent {
@@ -65,7 +66,18 @@ impl Agent {
             tools,
             conversation: Vec::new(),
             token_usage: TokenUsage::new(),
+            system_prompt: None,
         }
+    }
+
+    /// Set the system prompt for the conversation
+    pub fn set_system_prompt(&mut self, system_prompt: String) {
+        self.system_prompt = Some(system_prompt);
+    }
+
+    /// Get the current system prompt
+    pub fn get_system_prompt(&self) -> Option<&String> {
+        self.system_prompt.as_ref()
     }
 
     /// Add a file as context to the conversation
@@ -161,15 +173,22 @@ impl Agent {
                 &available_tools,
                 4096,
                 0.7,
+                self.system_prompt.as_ref(),
             ).await?;
 
             // Track token usage
             if let Some(usage) = &response.usage {
                 self.token_usage.add_usage(usage);
-                debug!("Updated token usage - Total: {} (Input: {}, Output: {})", 
-                      self.token_usage.total_tokens(), 
-                      self.token_usage.total_input_tokens, 
+                debug!("Updated token usage - Total: {} (Input: {}, Output: {})",
+                      self.token_usage.total_tokens(),
+                      self.token_usage.total_input_tokens,
                       self.token_usage.total_output_tokens);
+            }
+
+            // Extract and output the text response from this API call
+            let response_content = self.client.create_response_content(&response.content);
+            if !response_content.is_empty() {
+                println!("{}", response_content);
             }
 
             // Check for tool calls
@@ -276,6 +295,13 @@ impl Agent {
         println!("{}", "📝 Current Conversation Context".cyan().bold());
         println!("{}", "─".repeat(50).dimmed());
         println!();
+
+        // Display system prompt if set
+        if let Some(system_prompt) = &self.system_prompt {
+            println!("{}", "System Prompt:".green().bold());
+            println!("  {}", system_prompt);
+            println!();
+        }
 
         if self.conversation.is_empty() {
             println!("{}", "No context yet. Start a conversation to see context here.".dimmed());
