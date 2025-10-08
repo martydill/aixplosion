@@ -21,6 +21,7 @@ The AI agent supports the following features:
 6. **@file Syntax**: Auto-include files using @path-to-file syntax
 7. **Progress Spinner**: Visual feedback while waiting for LLM responses
 8. **System Prompts**: Set custom system prompts to control AI behavior and personality
+9. **Streaming Support**: Real-time response streaming for immediate feedback
 
 ### Available Tools
 
@@ -59,6 +60,11 @@ ai-agent "@file1.txt @file2.txt"
 ai-agent -s "You are a Rust expert" "Help me with this code"
 ai-agent -s "Act as a code reviewer" -f main.rs "Review this code"
 ai-agent -s "You are a helpful assistant" "Explain this concept"
+
+# With streaming support (NEW!)
+ai-agent --stream -m "Tell me a story"
+ai-agent --stream --non-interactive < input.txt
+ai-agent --stream  # Interactive mode with streaming
 ```
 
 ### System Prompts
@@ -170,6 +176,43 @@ The spinner appears in all modes:
 - Single message mode
 - Non-interactive mode (stdin)
 
+### Streaming Support
+
+The agent now supports streaming responses for real-time feedback as the AI generates its response:
+
+- **Real-time Output**: See responses as they're being generated
+- **Reduced Perceived Latency**: No waiting for complete response
+- **Visual Feedback**: Immediate indication that the system is working
+- **Backward Compatible**: Existing functionality unchanged
+- **Optional**: Can be enabled via `--stream` flag
+
+#### Streaming Examples
+```bash
+# Enable streaming for single message
+ai-agent --stream -m "Tell me a story"
+
+# Enable streaming for stdin
+echo "Explain quantum computing" | ai-agent --stream --non-interactive
+
+# Enable streaming in interactive mode
+ai-agent --stream
+
+# Compare streaming vs non-streaming
+ai-agent -m "What's the weather like?"  # Shows spinner, then formatted response
+ai-agent --stream -m "What's the weather like?"  # Shows real-time response
+```
+
+#### When to Use Streaming
+- **Long Responses**: Better experience for detailed explanations
+- **Interactive Sessions**: More natural conversation flow
+- **Real-time Needs**: When you need immediate feedback
+- **Scripting**: Better for pipelines where you want immediate output
+
+#### When to Use Non-Streaming
+- **Short Responses**: Spinner provides better UX for quick responses
+- **Formatted Output**: Non-streaming mode applies syntax highlighting
+- **Debugging**: Easier to capture complete response for troubleshooting
+
 ### Slash Commands
 
 In interactive mode, you can use these commands:
@@ -191,5 +234,28 @@ The agent includes comprehensive error handling for:
 - Tool execution failures
 - Bash command execution failures
 - Invalid file references in @file syntax
+- Streaming connection failures (graceful fallback to non-streaming)
 
 All errors are displayed with clear, actionable messages to help troubleshoot issues.
+
+### Configuration for Streaming
+
+Streaming can be enabled via:
+1. **Command Line Flag**: Use `--stream` flag
+2. **Default Behavior**: Non-streaming remains the default for backward compatibility
+3. **Mode Support**: Available in all modes (single message, non-interactive, interactive)
+
+#### Streaming Configuration Examples
+```bash
+# Per-request streaming
+ai-agent --stream -m "Your message"
+
+# Interactive mode with streaming
+ai-agent --stream
+
+# Non-interactive with streaming
+cat input.txt | ai-agent --stream --non-interactive
+
+# Combine with other options
+ai-agent --stream -s "You are an expert" -f context.txt "Analyze this"
+```

@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::config::Config;
 use crate::anthropic::{AnthropicClient, Message, ContentBlock, Usage};
 use crate::tools::{Tool, ToolResult, get_builtin_tools};
+use crate::tool_display::{ToolCallDisplay, SimpleToolDisplay, should_use_pretty_output, ToolDisplay};
 use colored::*;
 
 #[derive(Debug, Clone)]
@@ -126,6 +127,17 @@ impl Agent {
     }
 
     pub async fn process_message(&mut self, message: &str) -> Result<String> {
+        self.process_message_with_stream(message, None::<fn(String)>).await
+    }
+
+    pub async fn process_message_with_stream<F>(
+        &mut self,
+        message: &str,
+        on_stream_content: Option<F>
+    ) -> Result<String>
+    where
+        F: Fn(String) + Send + Sync + 'static + Clone,
+    {
         // Log incoming user message
         debug!("Processing user message: {}", message);
         debug!("Current conversation length: {}", self.conversation.len());
@@ -166,15 +178,27 @@ impl Agent {
             // Get available tools
             let available_tools: Vec<Tool> = self.tools.values().cloned().collect();
 
-            // Call Anthropic API
-            let response = self.client.create_message(
-                &self.model,
-                self.conversation.clone(),
-                &available_tools,
-                4096,
-                0.7,
-                self.system_prompt.as_ref(),
-            ).await?;
+            // Call Anthropic API with streaming if callback provided
+            let response = if let Some(ref on_content) = on_stream_content {
+                self.client.create_message_stream(
+                    &self.model,
+                    self.conversation.clone(),
+                    &available_tools,
+                    4096,
+                    0.7,
+                    self.system_prompt.as_ref(),
+                    on_content.clone(),
+                ).await?
+            } else {
+                self.client.create_message(
+                    &self.model,
+                    self.conversation.clone(),
+                    &available_tools,
+                    4096,
+                    0.7,
+                    self.system_prompt.as_ref(),
+                ).await?
+            };
 
             // Track token usage
             if let Some(usage) = &response.usage {
@@ -188,7 +212,11 @@ impl Agent {
             // Extract and output the text response from this API call
             let response_content = self.client.create_response_content(&response.content);
             if !response_content.is_empty() {
-                println!("{}", response_content);
+                if on_stream_content.is_none() {
+                    // Only print if not streaming (streaming handles its own output)
+                    println!("{}", response_content);
+                }
+                // Note: Don't print here in streaming mode - it's handled by the stream callback
             }
 
             // Check for tool calls
@@ -200,41 +228,80 @@ impl Agent {
                 if final_response.is_empty() {
                     final_response = "(No response received from assistant)".to_string();
                 }
-                break;
+                  break;
             }
 
-            // Execute tool calls
-            debug!("Executing {} tool calls", tool_calls.len());
+  
+            // Execute tool calls with pretty output
             let tool_results: Vec<ToolResult> = {
                 let mut results = Vec::new();
                 for call in &tool_calls {
                     debug!("Executing tool: {} with ID: {}", call.name, call.id);
+                    
+                    // Create pretty display for this tool call
+                    let mut display: Box<dyn ToolDisplay> = if should_use_pretty_output() {
+                        Box::new(ToolCallDisplay::new(&call.name))
+                    } else {
+                        Box::new(SimpleToolDisplay::new(&call.name))
+                    };
+                    
+                    // Show tool call details
+                    if should_use_pretty_output() {
+                        display.show_call_details(&call.arguments);
+                    }
+                    
                     if let Some(tool) = self.tools.get(&call.name) {
                         match (tool.handler)(call.clone()).await {
                             Ok(result) => {
                                 debug!("Tool '{}' executed successfully", call.name);
+                                if result.is_error {
+                                    if should_use_pretty_output() {
+                                        display.complete_error(&result.content);
+                                    } else {
+                                        display.complete_error(&result.content);
+                                    }
+                                } else {
+                                    if should_use_pretty_output() {
+                                        display.complete_success(&result.content);
+                                    } else {
+                                        display.complete_success(&result.content);
+                                    }
+                                }
                                 results.push(result);
                             },
                             Err(e) => {
                                 error!("Error executing tool '{}': {}", call.name, e);
+                                let error_content = format!("Error executing tool '{}': {}", call.name, e);
+                                if should_use_pretty_output() {
+                                    display.complete_error(&error_content);
+                                } else {
+                                    display.complete_error(&error_content);
+                                }
                                 results.push(ToolResult {
                                     tool_use_id: call.id.clone(),
-                                    content: format!("Error executing tool '{}': {}", call.name, e),
+                                    content: error_content,
                                     is_error: true,
                                 });
                             }
                         }
                     } else {
                         error!("Unknown tool: {}", call.name);
+                        let error_content = format!("Unknown tool: {}", call.name);
+                        if should_use_pretty_output() {
+                            display.complete_error(&error_content);
+                        } else {
+                            display.complete_error(&error_content);
+                        }
                         results.push(ToolResult {
                             tool_use_id: call.id.clone(),
-                            content: format!("Unknown tool: {}", call.name),
+                            content: error_content,
                             is_error: true,
                         });
                     }
                 }
                 results
             };
+            let _tool_results_count = tool_results.len();
 
             // Add assistant's tool use message to conversation
             let assistant_content: Vec<ContentBlock> = response.content
@@ -257,7 +324,7 @@ impl Agent {
                     )],
                 });
             }
-        }
+            }
 
         if iteration >= max_iterations {
             final_response.push_str("\n\n(Note: Maximum tool iterations reached)");

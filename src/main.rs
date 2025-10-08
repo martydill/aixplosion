@@ -13,6 +13,7 @@ mod anthropic;
 mod tools;
 mod agent;
 mod formatter;
+mod tool_display;
 
 use config::Config;
 use agent::Agent;
@@ -151,6 +152,11 @@ fn print_help() {
     println!("  Use -s or --system to set a custom system prompt");
     println!("  System prompts set the behavior and personality of the AI");
     println!();
+    println!("{}", "Streaming:".green().bold());
+    println!("  Use --stream flag to enable streaming responses");
+    println!("  Streaming shows responses as they're generated (no spinner)");
+    println!("  Non-streaming shows a spinner and formats the complete response");
+    println!();
     println!("{}", "Examples:".green().bold());
     println!("  ai-agent -f config.toml \"Explain this configuration\"");
     println!("  ai-agent \"What does @Cargo.toml contain?\"");
@@ -158,6 +164,7 @@ fn print_help() {
     println!("  ai-agent \"@file1.txt @file2.txt\"  # Only adds context, no API call");
     println!("  ai-agent -s \"You are a Rust expert\" \"Help me with this code\"");
     println!("  ai-agent -s \"Act as a code reviewer\" -f main.rs \"Review this code\"");
+    println!("  ai-agent --stream \"Tell me a story\"  # Stream the response");
     println!();
     println!("{}", "Any other input will be sent to the AI agent for processing.".dimmed());
     println!();
@@ -195,6 +202,10 @@ struct Cli {
     /// System prompt to use for the conversation
     #[arg(short = 's', long = "system", value_name = "PROMPT")]
     system_prompt: Option<String>,
+
+    /// Enable streaming responses
+    #[arg(long)]
+    stream: bool,
 }
 
 #[tokio::main]
@@ -242,24 +253,37 @@ async fn main() -> Result<()> {
 
     if let Some(message) = cli.message {
         // Single message mode
-        let spinner = create_spinner();
-        let response = agent.process_message(&message).await?;
-        spinner.finish_and_clear();
-        formatter.print_formatted(&response)?;
-
-        // Print usage stats for single message mode
-        print_usage_stats(&agent);
+        if cli.stream {
+            let _response = agent.process_message_with_stream(&message, Some(|content| {
+                print!("{}", content);
+                std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            })).await?;
+            print_usage_stats(&agent);
+        } else {
+            let spinner = create_spinner();
+            let response = agent.process_message(&message).await?;
+            spinner.finish_and_clear();
+            formatter.print_formatted(&response)?;
+            print_usage_stats(&agent);
+        }
     } else if cli.non_interactive {
         // Read from stdin
         let mut input = String::new();
         io::stdin().read_to_string(&mut input)?;
-        let spinner = create_spinner();
-        let response = agent.process_message(&input.trim()).await?;
-        spinner.finish_and_clear();
-        formatter.print_formatted(&response)?;
-
-        // Print usage stats for non-interactive mode
-        print_usage_stats(&agent);
+        
+        if cli.stream {
+            let _response = agent.process_message_with_stream(&input.trim(), Some(|content| {
+                print!("{}", content);
+                std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            })).await?;
+            print_usage_stats(&agent);
+        } else {
+            let spinner = create_spinner();
+            let response = agent.process_message(&input.trim()).await?;
+            spinner.finish_and_clear();
+            formatter.print_formatted(&response)?;
+            print_usage_stats(&agent);
+        }
     } else {
         // Interactive mode
         println!("{}", "🤖 AI Agent - Interactive Mode".green().bold());
@@ -286,22 +310,39 @@ async fn main() -> Result<()> {
                 break;
             }
 
-            // Show spinner while processing
-            let spinner = create_spinner();
-            let result = agent.process_message(&input).await;
-            spinner.finish_and_clear();
-            
-            match result {
-                Ok(response) => {
-                    // Only print response if it's not empty (i.e., not just @file references)
-                    if !response.is_empty() {
-                        formatter.print_formatted(&response)?;
+            // Show spinner while processing (only for non-streaming)
+            if cli.stream {
+                let result = agent.process_message_with_stream(&input, Some(|content| {
+                    print!("{}", content);
+                    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                })).await;
+                
+                match result {
+                    Ok(response) => {
+                        println!();
                     }
-                    println!();
+                    Err(e) => {
+                        eprintln!("{}: {}", "Error".red(), e);
+                        println!();
+                    }
                 }
-                Err(e) => {
-                    eprintln!("{}: {}", "Error".red(), e);
-                    println!();
+            } else {
+                let spinner = create_spinner();
+                let result = agent.process_message(&input).await;
+                spinner.finish_and_clear();
+                
+                match result {
+                    Ok(response) => {
+                        // Only print response if it's not empty (i.e., not just @file references)
+                        if !response.is_empty() {
+                            formatter.print_formatted(&response)?;
+                        }
+                        println!();
+                    }
+                    Err(e) => {
+                        eprintln!("{}: {}", "Error".red(), e);
+                        println!();
+                    }
                 }
             }
         }

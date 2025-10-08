@@ -8,6 +8,7 @@ use tokio::io::AsyncReadExt;
 use tokio::task;
 use path_absolutize::*;
 use shellexpand;
+use log::debug;
 
 pub type AsyncToolHandler = Box<dyn Fn(ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> + Send + Sync>;
 
@@ -76,7 +77,7 @@ pub async fn list_directory(call: &ToolCall) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .unwrap_or(".");
 
-    println!("🔧 TOOL CALL: list_directory('{}')", path);
+    debug!("TOOL CALL: list_directory('{}')", path);
 
     let tool_use_id = call.id.clone();
 
@@ -129,7 +130,7 @@ pub async fn read_file(call: &ToolCall) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
 
-    println!("🔧 TOOL CALL: read_file('{}')", path);
+    debug!("TOOL CALL: read_file('{}')", path);
 
     let tool_use_id = call.id.clone();
 
@@ -172,7 +173,7 @@ pub async fn write_file(call: &ToolCall) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'content' argument"))?;
 
-    println!("🔧 TOOL CALL: write_file('{}', {} bytes)", path, content.len());
+    debug!("TOOL CALL: write_file('{}', {} bytes)", path, content.len());
 
     let tool_use_id = call.id.clone();
 
@@ -217,7 +218,7 @@ pub async fn edit_file(call: &ToolCall) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'new_text' argument"))?;
 
-    println!("🔧 TOOL CALL: edit_file('{}', {} -> {} bytes)", path, old_text.len(), new_text.len());
+    debug!("TOOL CALL: edit_file('{}', {} -> {} bytes)", path, old_text.len(), new_text.len());
 
     let tool_use_id = call.id.clone();
 
@@ -263,7 +264,7 @@ pub async fn delete_file(call: &ToolCall) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
 
-    println!("🔧 TOOL CALL: delete_file('{}')", path);
+    debug!("TOOL CALL: delete_file('{}')", path);
 
     let tool_use_id = call.id.clone();
 
@@ -313,7 +314,7 @@ pub async fn create_directory(call: &ToolCall) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
 
-    println!("🔧 TOOL CALL: create_directory('{}')", path);
+    debug!("TOOL CALL: create_directory('{}')", path);
 
     let tool_use_id = call.id.clone();
 
@@ -340,7 +341,7 @@ pub async fn bash(call: &ToolCall) -> Result<ToolResult> {
         .ok_or_else(|| anyhow::anyhow!("Missing 'command' argument"))?
         .to_string();
 
-    println!("🔧 TOOL CALL: bash('{}')", command);
+    debug!("TOOL CALL: bash('{}')", command);
 
     let tool_use_id = call.id.clone();
 
