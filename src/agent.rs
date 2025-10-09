@@ -1,7 +1,10 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
-use log::{debug, error};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use log::{debug, info, warn, error};
+use crate::mcp::McpManager;
 use regex::Regex;
 use serde_json::Value;
 
@@ -47,10 +50,12 @@ impl TokenUsage {
 pub struct Agent {
     client: AnthropicClient,
     model: String,
-    tools: HashMap<String, Tool>,
+    tools: Arc<RwLock<HashMap<String, Tool>>>,
     conversation: Vec<Message>,
     token_usage: TokenUsage,
     system_prompt: Option<String>,
+    mcp_manager: Option<Arc<McpManager>>,
+    last_mcp_tools_version: u64,
 }
 
 impl Agent {
@@ -64,10 +69,63 @@ impl Agent {
         Self {
             client,
             model,
-            tools,
+            tools: Arc::new(RwLock::new(tools)),
             conversation: Vec::new(),
             token_usage: TokenUsage::new(),
             system_prompt: None,
+            mcp_manager: None,
+            last_mcp_tools_version: 0,
+        }
+    }
+
+    pub fn with_mcp_manager(mut self, mcp_manager: Arc<McpManager>) -> Self {
+        self.mcp_manager = Some(mcp_manager);
+        self
+    }
+
+    /// Refresh MCP tools from connected servers (only if they have changed)
+    pub async fn refresh_mcp_tools(&mut self) -> Result<()> {
+        if let Some(mcp_manager) = &self.mcp_manager {
+            // Check if tools have changed since last refresh
+            let current_version = mcp_manager.get_tools_version().await;
+            
+            if current_version == self.last_mcp_tools_version {
+                debug!("MCP tools unchanged, skipping refresh");
+                return Ok(());
+            }
+            
+            debug!("MCP tools changed (version {} -> {}), refreshing", self.last_mcp_tools_version, current_version);
+            
+            // Clear existing MCP tools
+            let mut tools = self.tools.write().await;
+            tools.retain(|name, _| !name.starts_with("mcp_"));
+            
+            // Get all MCP tools
+            match mcp_manager.get_all_tools().await {
+                Ok(mcp_tools) => {
+                    for (server_name, mcp_tool) in mcp_tools {
+                        let tool = crate::tools::create_mcp_tool(&server_name, mcp_tool, mcp_manager.clone());
+                        tools.insert(tool.name.clone(), tool);
+                    }
+                    self.last_mcp_tools_version = current_version;
+                    info!("Refreshed {} MCP tools", tools.iter().filter(|(name, _)| name.starts_with("mcp_")).count());
+                }
+                Err(e) => {
+                    warn!("Failed to refresh MCP tools: {}", e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Force refresh MCP tools regardless of version
+    pub async fn force_refresh_mcp_tools(&mut self) -> Result<()> {
+        if let Some(mcp_manager) = &self.mcp_manager {
+            // Reset version to force refresh
+            self.last_mcp_tools_version = 0;
+            self.refresh_mcp_tools().await
+        } else {
+            Ok(())
         }
     }
 
@@ -168,6 +226,11 @@ impl Agent {
             content: vec![ContentBlock::text(cleaned_message)],
         });
 
+        // Refresh MCP tools before processing the message (only if they have changed)
+        if let Err(e) = self.refresh_mcp_tools().await {
+            warn!("Failed to refresh MCP tools: {}", e);
+            error!("MCP tools may not be available - some tool calls might fail");
+        }
         let mut final_response = String::new();
         let max_iterations = 500;
         let mut iteration = 0;
@@ -176,7 +239,11 @@ impl Agent {
             iteration += 1;
 
             // Get available tools
-            let available_tools: Vec<Tool> = self.tools.values().cloned().collect();
+            
+            let available_tools: Vec<Tool> = {
+                let tools = self.tools.read().await;
+                tools.values().cloned().collect()
+            };
 
             // Call Anthropic API with streaming if callback provided
             let response = if let Some(ref on_content) = on_stream_content {
@@ -216,15 +283,16 @@ impl Agent {
                     // Only print if not streaming (streaming handles its own output)
                     println!("{}", response_content);
                 }
-                // Note: Don't print here in streaming mode - it's handled by the stream callback
+                // Always accumulate response content, even in streaming mode
+                final_response = response_content.clone();
             }
 
             // Check for tool calls
             let tool_calls = self.client.convert_tool_calls(&response.content);
 
             if tool_calls.is_empty() {
-                // No tool calls, return the text response
-                final_response = self.client.create_response_content(&response.content);
+                // No tool calls, return the accumulated text response
+                // final_response was already set above during response processing
                 if final_response.is_empty() {
                     final_response = "(No response received from assistant)".to_string();
                 }
@@ -250,7 +318,98 @@ impl Agent {
                         display.show_call_details(&call.arguments);
                     }
                     
-                    if let Some(tool) = self.tools.get(&call.name) {
+                    // Special handling for MCP tools
+                    if call.name.starts_with("mcp_") {
+                        if let Some(mcp_manager) = &self.mcp_manager {
+                            // Extract server name and tool name from the call
+                            let parts: Vec<&str> = call.name.splitn(3, '_').collect();
+                            if parts.len() >= 3 {
+                                let server_name = parts[1];
+                                let tool_name = parts[2..].join("_");
+                                
+                                match mcp_manager.call_tool(server_name, &tool_name, Some(call.arguments.clone())).await {
+                                    Ok(result) => {
+                                        debug!("MCP tool '{}' executed successfully", call.name);
+                                        let result_content = serde_json::to_string_pretty(&result)
+                                            .unwrap_or_else(|_| "Invalid JSON result".to_string());
+                                        
+                                        if should_use_pretty_output() {
+                                            display.complete_success(&result_content);
+                                        } else {
+                                            display.complete_success(&result_content);
+                                        }
+                                        
+                                        results.push(ToolResult {
+                                            tool_use_id: call.id.clone(),
+                                            content: result_content,
+                                            is_error: false,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        error!("Error executing MCP tool '{}': {}", call.name, e);
+                                        error!("MCP server '{}' may have encountered an error or is unavailable", server_name);
+
+                                        // Provide detailed error information
+                                        let error_content = format!(
+                                            "MCP tool call failed: {}. \n\
+                                            Tool: {}\n\
+                                            Server: {}\n\
+                                            Arguments: {}\n\
+                                            Please check:\n\
+                                            1. MCP server '{}' is running\n\
+                                            2. Server is responsive\n\
+                                            3. Tool arguments are correct\n\
+                                            4. Server has proper permissions",
+                                            e, call.name, server_name,
+                                            serde_json::to_string_pretty(&call.arguments).unwrap_or_else(|_| "Invalid JSON".to_string()),
+                                            server_name
+                                        );
+
+                                        if should_use_pretty_output() {
+                                            display.complete_error(&error_content);
+                                        } else {
+                                            display.complete_error(&error_content);
+                                        }
+
+                                        results.push(ToolResult {
+                                            tool_use_id: call.id.clone(),
+                                            content: error_content,
+                                            is_error: true,
+                                        });
+                                    }
+                                }
+                            } else {
+                                let error_content = format!("Invalid MCP tool name format: {}", call.name);
+                                if should_use_pretty_output() {
+                                    display.complete_error(&error_content);
+                                } else {
+                                    display.complete_error(&error_content);
+                                }
+                                
+                                results.push(ToolResult {
+                                    tool_use_id: call.id.clone(),
+                                    content: error_content,
+                                    is_error: true,
+                                });
+                            }
+                        } else {
+                            let error_content = "MCP manager not available. MCP tools cannot be executed without proper initialization.";
+                            if should_use_pretty_output() {
+                                display.complete_error(error_content);
+                            } else {
+                                display.complete_error(error_content);
+                            }
+                            
+                            results.push(ToolResult {
+                                tool_use_id: call.id.clone(),
+                                content: error_content.to_string(),
+                                is_error: true,
+                            });
+                        }
+                    } else if let Some(tool) = {
+                        let tools = self.tools.read().await;
+                        tools.get(&call.name).cloned()
+                    } {
                         match (tool.handler)(call.clone()).await {
                             Ok(result) => {
                                 debug!("Tool '{}' executed successfully", call.name);
@@ -324,7 +483,7 @@ impl Agent {
                     )],
                 });
             }
-            }
+        }
 
         if iteration >= max_iterations {
             final_response.push_str("\n\n(Note: Maximum tool iterations reached)");

@@ -9,6 +9,8 @@ use tokio::task;
 use path_absolutize::*;
 use shellexpand;
 use log::debug;
+use std::sync::Arc;
+use crate::mcp::{McpManager, McpTool};
 
 pub type AsyncToolHandler = Box<dyn Fn(ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> + Send + Sync>;
 
@@ -41,6 +43,14 @@ impl Tool {
             "delete_file" => Box::new(delete_file_sync),
             "create_directory" => Box::new(create_directory_sync),
             "bash" => Box::new(bash_sync),
+            _ if self.name.starts_with("mcp_") => {
+                // This is an MCP tool - we need to handle this differently
+                // The issue is that we can't recreate MCP handlers without the MCP manager
+                // So we'll create a placeholder that indicates the issue
+                Box::new(|call| Box::pin(async move {
+                    Err(anyhow::anyhow!("MCP tool '{}' cannot be recreated without proper MCP manager context. This suggests there's an issue with how MCP tools are being cloned or moved.", call.name))
+                }))
+            }
             _ => panic!("Unknown tool: {}", self.name),
         }
     }
@@ -547,4 +557,57 @@ pub fn get_builtin_tools() -> Vec<Tool> {
             handler: Box::new(bash_sync),
         },
     ]
+}
+
+pub fn create_mcp_tool(server_name: &str, mcp_tool: McpTool, mcp_manager: Arc<McpManager>) -> Tool {
+    let tool_name = format!("mcp_{}_{}", server_name, mcp_tool.name);
+    let description = mcp_tool.description.unwrap_or_else(|| format!("MCP tool from server: {}", server_name));
+    let server_name_owned = server_name.to_string();
+    let mcp_manager_clone = mcp_manager.clone();
+    let tool_name_original = mcp_tool.name.clone();
+
+    // Ensure input_schema is a valid JSON object (not null)
+    let input_schema = if mcp_tool.input_schema.is_null() {
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        })
+    } else {
+        mcp_tool.input_schema
+    };
+
+    Tool {
+        name: tool_name.clone(),
+        description: format!("{} (MCP: {})", description, server_name),
+        input_schema,
+        handler: Box::new(move |call: ToolCall| {
+            let server_name = server_name_owned.clone();
+            let mcp_manager = mcp_manager_clone.clone();
+            let tool_name_original = tool_name_original.clone();
+
+            Box::pin(async move {
+                // Extract the actual tool name from the mcp_ prefix
+                let actual_tool_name = call.name.strip_prefix(&format!("mcp_{}_", server_name))
+                    .unwrap_or(&tool_name_original);
+
+                match mcp_manager.call_tool(&server_name, actual_tool_name, Some(call.arguments)).await {
+                    Ok(result) => {
+                        Ok(ToolResult {
+                            tool_use_id: call.id,
+                            content: serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Invalid JSON result".to_string()),
+                            is_error: false,
+                        })
+                    }
+                    Err(e) => {
+                        Ok(ToolResult {
+                            tool_use_id: call.id,
+                            content: format!("MCP tool call failed: {}", e),
+                            is_error: true,
+                        })
+                    }
+                }
+            })
+        }),
+    }
 }

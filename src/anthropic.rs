@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use reqwest::Client;
 use serde_json::Value;
-use log::debug;
+use log::{debug, error};
 use futures_util::StreamExt;
 
 use crate::tools::{Tool, ToolCall};
@@ -259,6 +259,12 @@ impl AnthropicClient {
         let status = response.status();
         if !status.is_success() {
             let error_text = response.text().await?;
+            error!("API Request Failed:");
+            error!("  Endpoint: {}", endpoint);
+            error!("  Status: {}", status);
+            error!("  Model: {}", model);
+            error!("  Error Response: {}", error_text);
+            error!("  Request headers: x-api-key=[REDACTED], anthropic-version=2023-06-01");
             return Err(anyhow::anyhow!("API error: {} - {}", status, error_text));
         }
 
@@ -356,6 +362,12 @@ impl AnthropicClient {
         let status = response.status();
         if !status.is_success() {
             let error_text = response.text().await?;
+            error!("API Request Failed:");
+            error!("  Endpoint: {}", endpoint);
+            error!("  Status: {}", status);
+            error!("  Model: {}", model);
+            error!("  Error Response: {}", error_text);
+            error!("  Request headers: x-api-key=[REDACTED], anthropic-version=2023-06-01");
             return Err(anyhow::anyhow!("API error: {} - {}", status, error_text));
         }
 

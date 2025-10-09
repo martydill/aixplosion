@@ -3,7 +3,7 @@ use colored::*;
 use anyhow::Result;
 use std::io::{self, Read};
 use dialoguer::Input;
-use log::debug;
+use log::{debug, info, warn, error};
 use env_logger::Builder;
 use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -14,10 +14,13 @@ mod tools;
 mod agent;
 mod formatter;
 mod tool_display;
+mod mcp;
 
 use config::Config;
 use agent::Agent;
 use formatter::create_code_formatter;
+use mcp::McpManager;
+use std::sync::Arc;
 
 /// Check for and add context files
 async fn add_context_files(agent: &mut Agent, context_files: &[String]) -> Result<()> {
@@ -41,8 +44,8 @@ async fn add_context_files(agent: &mut Agent, context_files: &[String]) -> Resul
     Ok(())
 }
 
-async fn handle_slash_command(command: &str, agent: &mut Agent) -> Result<bool> {
-    let parts: Vec<&str> = command.trim().splitn(2, ' ').collect();
+async fn handle_slash_command(command: &str, agent: &mut Agent, mcp_manager: &McpManager) -> Result<bool> {
+    let parts: Vec<&str> = command.trim().split(' ').collect();
     let cmd = parts[0];
     
     match cmd {
@@ -74,6 +77,14 @@ async fn handle_slash_command(command: &str, agent: &mut Agent) -> Result<bool> 
             println!("{}", "📊 Token usage statistics reset!".green());
             Ok(true) // Command was handled
         }
+        "/mcp" => {
+            handle_mcp_command(&parts[1..], mcp_manager).await?;
+            // Force refresh MCP tools after any MCP command
+            if let Err(e) = agent.force_refresh_mcp_tools().await {
+                warn!("Failed to refresh MCP tools: {}", e);
+            }
+            Ok(true) // Command was handled
+        }
         "/exit" | "/quit" => {
             // Print final stats before exiting
             print_usage_stats(agent);
@@ -85,6 +96,380 @@ async fn handle_slash_command(command: &str, agent: &mut Agent) -> Result<bool> 
             Ok(true) // Command was handled (as unknown)
         }
     }
+}
+
+/// Handle MCP commands
+async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<()> {
+    use log::{warn, error};
+    
+    if args.is_empty() {
+        print_mcp_help();
+        return Ok(());
+    }
+
+    match args[0] {
+        "list" => {
+            match mcp_manager.list_servers().await {
+                Ok(servers) => {
+                    println!("{}", "🔌 MCP Servers".cyan().bold());
+                    println!();
+                    if servers.is_empty() {
+                        println!("{}", "No MCP servers configured.".yellow());
+                        return Ok(());
+                    }
+                    
+                    for (name, config, connected) in servers {
+                        let status = if connected { 
+                            "✅ Connected".green().to_string() 
+                        } else if config.enabled { 
+                            "❌ Disconnected".red().to_string() 
+                        } else { 
+                            "⏸️ Disabled".yellow().to_string() 
+                        };
+                        
+                        println!("{} {} ({})", 
+                            "Server:".bold(), 
+                            name.cyan(), 
+                            status
+                        );
+                        
+                        if let Some(command) = &config.command {
+                            println!("  Command: {}", command);
+                        }
+                        if let Some(args) = &config.args {
+                            println!("  Args: {}", args.join(" "));
+                        }
+                        if let Some(url) = &config.url {
+                            println!("  URL: {}", url);
+                        }
+                        
+                        if connected {
+                            if let Ok(tools) = mcp_manager.get_all_tools().await {
+                                let server_tools: Vec<_> = tools.iter()
+                                    .filter(|(server_name, _)| server_name == &name)
+                                    .collect();
+                                println!("  Tools: {} available", server_tools.len());
+                            }
+                        }
+                        println!();
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to list MCP servers: {}", "✗".red(), e);
+                }
+            }
+        }
+        "connect" => {
+            if args.len() < 2 {
+                println!("{} Usage: /mcp connect <server_name>", "⚠️".yellow());
+                return Ok(());
+            }
+            
+            println!("{} Connecting to MCP server: {}", "🔌".blue(), args[1].cyan());
+            
+            match mcp_manager.connect_server(args[1]).await {
+                Ok(_) => {
+                    println!("{} Successfully connected to MCP server: {}", "✅".green(), args[1].cyan());
+                    
+                    // Try to list available tools
+                    match mcp_manager.get_all_tools().await {
+                        Ok(tools) => {
+                            let server_tools: Vec<_> = tools.iter()
+                                .filter(|(server_name, _)| server_name == args[1])
+                                .collect();
+                            if !server_tools.is_empty() {
+                                println!("{} Available tools: {}", "🛠️".blue(), server_tools.len());
+                                for (_, tool) in server_tools {
+                                    println!("  - {} {}", tool.name.bold(), 
+                                        tool.description.as_ref().unwrap_or(&"".to_string()).dimmed());
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            println!("{} Connected but failed to list tools", "⚠️".yellow());
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to connect to MCP server '{}': {}", "✗".red(), args[1], e);
+                    println!("{} Troubleshooting:", "💡".yellow());
+                    println!("  1. Check if the server is properly configured: /mcp list");
+                    println!("  2. Verify the command/URL is correct");
+                    println!("  3. Ensure all dependencies are installed");
+                    println!("  4. Check network connectivity for WebSocket servers");
+                    println!("  5. Try reconnecting: /mcp reconnect {}", args[1]);
+                }
+            }
+        }
+        "disconnect" => {
+            if args.len() < 2 {
+                println!("{} Usage: /mcp disconnect <server_name>", "⚠️".yellow());
+                return Ok(());
+            }
+            
+            match mcp_manager.disconnect_server(args[1]).await {
+                Ok(_) => {
+                    println!("{} Disconnected from MCP server: {}", "🔌".yellow(), args[1].cyan());
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to disconnect from MCP server '{}': {}", "✗".red(), args[1], e);
+                }
+            }
+        }
+        "reconnect" => {
+            if args.len() < 2 {
+                println!("{} Usage: /mcp reconnect <server_name>", "⚠️".yellow());
+                return Ok(());
+            }
+            
+            match mcp_manager.reconnect_server(args[1]).await {
+                Ok(_) => {
+                    println!("{} Reconnected to MCP server: {}", "🔄".blue(), args[1].cyan());
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to reconnect to MCP server '{}': {}", "✗".red(), args[1], e);
+                }
+            }
+        }
+        "tools" => {
+            match mcp_manager.get_all_tools().await {
+                Ok(tools) => {
+                    println!("{}", "🛠️  MCP Tools".cyan().bold());
+                    println!();
+                    
+                    if tools.is_empty() {
+                        println!("{}", "No MCP tools available. Connect to a server first.".yellow());
+                        return Ok(());
+                    }
+                    
+                    let mut by_server = std::collections::HashMap::new();
+                    for (server_name, tool) in tools {
+                        by_server.entry(server_name).or_insert_with(Vec::new).push(tool);
+                    }
+                    
+                    for (server_name, server_tools) in by_server {
+                        println!("{} {}:", "Server:".bold(), server_name.cyan());
+                        for tool in server_tools {
+                            println!("  🛠️  {}", tool.name.bold());
+                            if let Some(description) = &tool.description {
+                                println!("     {}", description.dimmed());
+                            }
+                        }
+                        println!();
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to list MCP tools: {}", "✗".red(), e);
+                }
+            }
+        }
+        "add" => {
+            if args.len() < 4 {
+                println!("{} Usage: /mcp add <name> stdio <command> [args...]", "⚠️".yellow());
+                println!("{} Usage: /mcp add <name> ws <url>", "⚠️".yellow());
+                println!();
+                println!("{}", "Examples:".green().bold());
+                println!("  /mcp add myserver stdio npx -y @modelcontextprotocol/server-filesystem");
+                println!("  /mcp add websocket ws://localhost:8080");
+                return Ok(());
+            }
+            
+            let name = args[1];
+            let connection_type = args[2];
+            
+            if connection_type == "stdio" {
+                let command = args[3];
+                let server_args: Vec<String> = args[4..].iter().map(|s| s.to_string()).collect();
+                
+                // Validate that we have a proper command
+                if command.is_empty() {
+                    println!("{} Command cannot be empty", "⚠️".yellow());
+                    return Ok(());
+                }
+                
+                let server_config = mcp::McpServerConfig {
+                    name: name.to_string(),
+                    command: Some(command.to_string()),
+                    args: if server_args.is_empty() { None } else { Some(server_args) },
+                    url: None,
+                    env: None,
+                    enabled: true,
+                };
+                
+                println!("{} Adding MCP server: {}", "🔧".blue(), name.cyan());
+                println!("  Command: {}", command);
+                if !args[4..].is_empty() {
+                    println!("  Args: {}", args[4..].join(" "));
+                }
+                
+                match mcp_manager.add_server(name, server_config).await {
+                    Ok(_) => {
+                        println!("{} Successfully added MCP server: {}", "✅".green(), name.cyan());
+                        println!("{} Use '/mcp connect {}' to connect to this server", "💡".blue(), name);
+                    }
+                    Err(e) => {
+                        eprintln!("{} Failed to add MCP server '{}': {}", "✗".red(), name, e);
+                        println!("{} Common issues:", "💡".yellow());
+                        println!("  - Command '{}' not found or not executable", command);
+                        println!("  - Missing dependencies (e.g., Node.js, npm, npx)");
+                        println!("  - Network connectivity issues");
+                        println!("  - Insufficient permissions");
+                    }
+                }
+            } else if connection_type == "ws" || connection_type == "websocket" {
+                let url = args[3];
+                
+                // Basic URL validation
+                if !url.starts_with("ws://") && !url.starts_with("wss://") {
+                    println!("{} URL must start with ws:// or wss://", "⚠️".yellow());
+                    return Ok(());
+                }
+                
+                let server_config = mcp::McpServerConfig {
+                    name: name.to_string(),
+                    command: None,
+                    args: None,
+                    url: Some(url.to_string()),
+                    env: None,
+                    enabled: true,
+                };
+                
+                println!("{} Adding MCP server: {}", "🔧".blue(), name.cyan());
+                println!("  URL: {}", url);
+                
+                match mcp_manager.add_server(name, server_config).await {
+                    Ok(_) => {
+                        println!("{} Successfully added MCP server: {}", "✅".green(), name.cyan());
+                        println!("{} Use '/mcp connect {}' to connect to this server", "💡".blue(), name);
+                    }
+                    Err(e) => {
+                        eprintln!("{} Failed to add MCP server '{}': {}", "✗".red(), name, e);
+                    }
+                }
+            } else {
+                println!("{} Connection type must be 'stdio' or 'ws'", "⚠️".yellow());
+                println!("{} Available types:", "💡".blue());
+                println!("  - stdio: For command-line based MCP servers");
+                println!("  - ws: For WebSocket-based MCP servers");
+            }
+        }
+        "remove" => {
+            if args.len() < 2 {
+                println!("{} Usage: /mcp remove <server_name>", "⚠️".yellow());
+                return Ok(());
+            }
+            
+            match mcp_manager.remove_server(args[1]).await {
+                Ok(_) => {
+                    println!("{} Removed MCP server: {}", "🗑️".red(), args[1].cyan());
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to remove MCP server '{}': {}", "✗".red(), args[1], e);
+                }
+            }
+        }
+        "connect-all" => {
+            match mcp_manager.connect_all_enabled().await {
+                Ok(_) => {
+                    println!("{} Attempted to connect to all enabled MCP servers", "🔄".blue());
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to connect to MCP servers: {}", "✗".red(), e);
+                }
+            }
+        }
+      "test" => {
+            if args.len() < 2 {
+                println!("{} Usage: /mcp test <command>", "⚠️".yellow());
+                println!("{} Test if a command is available and executable", "💡".blue());
+                return Ok(());
+            }
+            
+            let command = args[1];
+            println!("{} Testing command: {}", "🧪".blue(), command.cyan());
+            
+            // Try to run the command with --version or --help to test if it exists
+            let test_args = if command == "npx" {
+                vec!["--version".to_string()]
+            } else {
+                vec!["--version".to_string()]
+            };
+            
+            match tokio::process::Command::new(command)
+                .args(&test_args)
+                .output()
+                .await 
+            {
+                Ok(output) => {
+                    if output.status.success() {
+                        println!("{} Command '{}' is available and executable", "✅".green(), command);
+                        if !output.stdout.is_empty() {
+                            let version = String::from_utf8_lossy(&output.stdout);
+                            println!("  Version: {}", version.trim());
+                        }
+                    } else {
+                        println!("{} Command '{}' exists but failed to execute", "⚠️".yellow(), command);
+                        if !output.stderr.is_empty() {
+                            let error = String::from_utf8_lossy(&output.stderr);
+                            println!("  Error: {}", error.trim());
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("{} Command '{}' not found or not executable", "✗".red(), command);
+                    println!("  Error: {}", e);
+                    println!("{} Suggestions:", "💡".blue());
+                    println!("  - Install the command/tool if missing");
+                    println!("  - Check if the command is in your PATH");
+                    println!("  - Use the full path to the command");
+                }
+            }
+        }
+        "disconnect-all" => {
+            match mcp_manager.disconnect_all().await {
+                Ok(_) => {
+                    println!("{} Disconnected from all MCP servers", "🔌".yellow());
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to disconnect from MCP servers: {}", "✗".red(), e);
+                }
+            }
+        }
+        _ => {
+            println!("{} Unknown MCP command: {}", "⚠️".yellow(), args[0]);
+            print_mcp_help();
+        }
+    }
+    
+    Ok(())
+}
+
+/// Print MCP help information
+fn print_mcp_help() {
+    println!("{}", "🔌 MCP Commands".cyan().bold());
+    println!();
+    println!("{}", "Server Management:".green().bold());
+    println!("  /mcp list                    - List all MCP servers and their status");
+    println!("  /mcp add <name> stdio <cmd>  - Add a stdio MCP server");
+    println!("  /mcp add <name> ws <url>     - Add a WebSocket MCP server");
+    println!("  /mcp remove <name>           - Remove an MCP server");
+    println!("  /mcp connect <name>          - Connect to a specific server");
+    println!("  /mcp disconnect <name>       - Disconnect from a specific server");
+    println!("  /mcp reconnect <name>        - Reconnect to a specific server");
+    println!("  /mcp connect-all             - Connect to all enabled servers");
+    println!("  /mcp disconnect-all          - Disconnect from all servers");
+    println!();
+    println!("{}", "Testing & Debugging:".green().bold());
+    println!("  /mcp test <command>          - Test if a command is available");
+    println!("  /mcp tools                   - List all available MCP tools");
+    println!();
+    println!("{}", "Examples:".green().bold());
+    println!("  /mcp test npx                - Test if npx is available");
+    println!("  /mcp add myserver stdio npx -y @modelcontextprotocol/server-filesystem");
+    println!("  /mcp add websocket ws://localhost:8080");
+    println!("  /mcp connect myserver");
+    println!("  /mcp tools");
+    println!();
 }
 
 /// Print usage statistics
@@ -139,8 +524,18 @@ fn print_help() {
     println!("  /context      - Show current conversation context");
     println!("  /clear        - Clear all conversation context (keeps AGENTS.md if it exists)");
     println!("  /reset-stats  - Reset token usage statistics");
+    println!("  /mcp          - Manage MCP (Model Context Protocol) servers");
     println!("  /exit         - Exit the program");
     println!("  /quit         - Exit the program");
+    println!();
+    println!("{}", "MCP Commands:".green().bold());
+    println!("  /mcp list                    - List MCP servers");
+    println!("  /mcp add <name> stdio <cmd>  - Add stdio server");
+    println!("  /mcp add <name> ws <url>     - Add WebSocket server");
+    println!("  /mcp test <command>          - Test command availability");
+    println!("  /mcp connect <name>          - Connect to server");
+    println!("  /mcp tools                   - List available tools");
+    println!("  /mcp help                    - Show MCP help");
     println!();
     println!("{}", "Context Files:".green().bold());
     println!("  Use -f or --file to include files as context");
@@ -226,6 +621,11 @@ async fn main() -> Result<()> {
         config.api_key = api_key;
     }
 
+    println!("Using configuration:");
+    println!("  Base URL: {}", config.base_url);
+    println!("  Model: {}", cli.model);
+    println!("  API Key (first 10 chars): {}...", &config.api_key[..config.api_key.len().min(10)]);
+
     // Validate API key
     if config.api_key.is_empty() {
         eprintln!("{}", "Error: API key is required. Set it in config or use --api-key".red());
@@ -239,6 +639,35 @@ async fn main() -> Result<()> {
 
     // Create and run agent
     let mut agent = Agent::new(config, cli.model);
+    
+    // Initialize MCP manager
+    let mcp_manager = Arc::new(McpManager::new());
+    
+    // Set MCP manager in agent
+    agent = agent.with_mcp_manager(mcp_manager.clone());
+    
+    // Connect to all enabled MCP servers
+    if let Err(e) = mcp_manager.connect_all_enabled().await {
+        warn!("Failed to connect to MCP servers: {}", e);
+        error!("MCP Server Connection Issues:");
+        error!("  - Check that MCP servers are configured correctly: /mcp list");
+        error!("  - Verify server commands/URLs are valid");
+        error!("  - Ensure all dependencies are installed");
+        error!("  - Use '/mcp test <command>' to verify command availability");
+        error!("  - Tool calls to unavailable MCP servers will fail");
+    }
+
+    // Force initial refresh of MCP tools after connecting
+    if let Err(e) = agent.force_refresh_mcp_tools().await {
+        warn!("Failed to refresh MCP tools on startup: {}", e);
+        error!("MCP Tools Loading Failed:");
+        error!("  - Connected MCP servers may not be responding properly");
+        error!("  - Tools may have invalid schemas or descriptions");
+        error!("  - Use '/mcp tools' to check available tools");
+        error!("  - Use '/mcp reconnect <server>' to fix connection issues");
+    } else {
+        info!("MCP tools loaded successfully");
+    }
 
     // Set system prompt if provided
     if let Some(system_prompt) = &cli.system_prompt {
@@ -291,14 +720,26 @@ async fn main() -> Result<()> {
         println!();
 
         loop {
-            let input: String = Input::new()
+            let input: String = match Input::new()
                 .with_prompt("> ")
                 .allow_empty(false)
-                .interact_text()?;
+                .interact_text() {
+                Ok(input) => input,
+                Err(_) => {
+                    // Handle EOF or input error gracefully
+                    println!("\n{} End of input. Exiting...", "👋".blue());
+                    break;
+                }
+            };
 
             // Check for slash commands first
             if input.starts_with('/') {
-                let _ = handle_slash_command(&input, &mut agent).await;
+                match handle_slash_command(&input, &mut agent, &mcp_manager).await {
+                    Ok(_) => {}, // Command handled successfully
+                    Err(e) => {
+                        eprintln!("{} Error handling command: {}", "✗".red(), e);
+                    }
+                }
                 continue;
             }
 
@@ -318,7 +759,7 @@ async fn main() -> Result<()> {
                 })).await;
                 
                 match result {
-                    Ok(response) => {
+                    Ok(_response) => {
                         println!();
                     }
                     Err(e) => {
@@ -351,6 +792,11 @@ async fn main() -> Result<()> {
     // Print final usage stats before exiting (only for interactive mode)
     if is_interactive {
         print_usage_stats(&agent);
+    }
+
+    // Disconnect from all MCP servers
+    if let Err(e) = mcp_manager.disconnect_all().await {
+        warn!("Failed to disconnect from MCP servers: {}", e);
     }
 
     Ok(())
