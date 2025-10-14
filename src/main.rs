@@ -638,7 +638,7 @@ async fn main() -> Result<()> {
     let formatter = create_code_formatter()?;
 
     // Create and run agent
-    let mut agent = Agent::new(config, cli.model);
+    let mut agent = Agent::new(config.clone(), cli.model);
     
     // Initialize MCP manager
     let mcp_manager = Arc::new(McpManager::new());
@@ -669,10 +669,19 @@ async fn main() -> Result<()> {
         info!("MCP tools loaded successfully");
     }
 
-    // Set system prompt if provided
-    if let Some(system_prompt) = &cli.system_prompt {
-        agent.set_system_prompt(system_prompt.clone());
-        println!("{} Using system prompt: {}", "✓".green(), system_prompt);
+    // Set system prompt - use command line prompt if provided, otherwise use config default
+    match &cli.system_prompt {
+        Some(system_prompt) => {
+            agent.set_system_prompt(system_prompt.clone());
+            println!("{} Using custom system prompt: {}", "✓".green(), system_prompt);
+        }
+        None => {
+            // Use config's default system prompt if available
+            if let Some(default_prompt) = &config.default_system_prompt {
+                agent.set_system_prompt(default_prompt.clone());
+                println!("{} Using default system prompt from config", "✓".green());
+            }
+        }
     }
 
     // Add context files

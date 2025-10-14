@@ -250,7 +250,7 @@ impl Agent {
                 self.client.create_message_stream(
                     &self.model,
                     self.conversation.clone(),
-                    &available_tools,
+                    &available_tools
                     4096,
                     0.7,
                     self.system_prompt.as_ref(),

@@ -10,7 +10,19 @@ pub struct Config {
     pub default_model: String,
     pub max_tokens: u32,
     pub temperature: f32,
+    pub default_system_prompt: Option<String>,
 }
+const DEFAULT_SYSTEM_PROMPT : &str = r#"
+You are an expert in software development. Your job is to help the user build awesome software.
+
+Everything you do must follow all best practices for architecture, design, security, and performance.
+
+Whenever you generate code, you must make sure it compiles properly by running any available linter or compiler.
+
+Generate a chain of thought, explaining your reasoning step-by-step before giving the final answer.
+
+When making tool calls, you must explain why you are making them.
+"#;
 
 impl Default for Config {
     fn default() -> Self {
@@ -20,6 +32,7 @@ impl Default for Config {
             default_model: "glm-4.6".to_string(),
             max_tokens: 4096,
             temperature: 0.7,
+            default_system_prompt: DEFAULT_SYSTEM_PROMPT.to_string().into(),
         }
     }
 }
