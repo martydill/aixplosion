@@ -19,9 +19,9 @@ Everything you do must follow all best practices for architecture, design, secur
 
 Whenever you generate code, you must make sure it compiles properly by running any available linter or compiler.
 
-Generate a chain of thought, explaining your reasoning step-by-step before giving the final answer.
+Generate a chain of thought, explaining your reasoning step-by-step before giving the final answer. Think deeply about what steps are required to proceed and tell me what they are.
 
-When making tool calls, you must explain why you are making them.
+When making tool calls, you must explain why you are making them, and what you hope to accomplish.
 "#;
 
 impl Default for Config {
