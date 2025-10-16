@@ -554,7 +554,9 @@ impl Agent {
                         if let Some(ref text) = block.text {
                             // Show first 100 characters of text content
                             let preview = if text.len() > 100 {
-                                format!("{}...", &text[..100])
+                                // Use safe character boundary slicing
+                                let safe_end = text.char_indices().nth(100).map(|(idx, _)| idx).unwrap_or(text.len());
+                                format!("{}...", &text[..safe_end])
                             } else {
                                 text.clone()
                             };
@@ -580,7 +582,9 @@ impl Agent {
                                     .unwrap_or_else(|_| "Invalid JSON".to_string()),
                             };
                             let preview = if input_str.len() > 80 {
-                                format!("{}...", &input_str[..80])
+                                // Use safe character boundary slicing
+                            let safe_end = input_str.char_indices().nth(80).map(|(idx, _)| idx).unwrap_or(input_str.len());
+                            format!("{}...", &input_str[..safe_end])
                             } else {
                                 input_str
                             };
@@ -597,7 +601,9 @@ impl Agent {
                                      format!("{} chars", content.len()).dimmed()
                             );
                             let preview = if content.len() > 80 {
-                                format!("{}...", &content[..80])
+                                // Use safe character boundary slicing
+                                let safe_end = content.char_indices().nth(80).map(|(idx, _)| idx).unwrap_or(content.len());
+                                format!("{}...", &content[..safe_end])
                             } else {
                                 content.clone()
                             };
