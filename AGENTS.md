@@ -31,7 +31,7 @@ The AI agent supports the following features:
 - **list_directory**: List contents of a directory
 - **create_directory**: Create a directory (and parent directories if needed)
 - **delete_file**: Delete a file or directory
-- **bash**: Execute bash commands and return the output
+- **bash**: Execute shell commands and return the output
 
 ### Usage Examples
 
@@ -95,9 +95,9 @@ ai-agent -s "You are a helpful coding assistant. Always provide code examples an
 - **Response Style**: Control how detailed, technical, or casual the responses should be
 - **Context Setting**: Provide background information that should influence all responses
 
-### Bash Command Execution
+### Shell Command Execution
 
-The agent can execute bash commands directly, allowing you to:
+The agent can execute shell commands directly, allowing you to:
 
 - List directory contents
 - Check git status
@@ -105,7 +105,7 @@ The agent can execute bash commands directly, allowing you to:
 - Execute any shell command
 - Get system information
 
-#### Bash Examples
+#### Command Examples
 ```bash
 # List files in current directory
 ai-agent "List the files in the current directory"
@@ -119,6 +119,12 @@ ai-agent "Run tests and show me the results"
 # Execute multiple commands
 ai-agent "Check the current branch and run the build process"
 ```
+
+#### Platform Support
+
+The shell command tool automatically detects the operating system and uses the appropriate shell:
+- **Windows**: Uses `cmd.exe /C` for command execution
+- **Unix/Linux/macOS**: Uses `bash -c` for command execution
 
 ### Configuration
 

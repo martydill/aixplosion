@@ -215,6 +215,20 @@ pub async fn write_file(call: &ToolCall) -> Result<ToolResult> {
     }
 }
 
+// Detect the line ending type used in the content
+fn detect_line_ending(content: &str) -> &str {
+    if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+// Convert text to use the specified line ending type
+fn normalize_line_endings(text: &str, line_ending: &str) -> String {
+    text.replace("\r\n", "\n").replace('\n', line_ending)
+}
+
 pub async fn edit_file(call: &ToolCall) -> Result<ToolResult> {
     let path = call.arguments.get("path")
         .and_then(|v| v.as_str())
@@ -238,15 +252,24 @@ pub async fn edit_file(call: &ToolCall) -> Result<ToolResult> {
     // Read existing file
     match fs::read_to_string(&absolute_path).await {
         Ok(mut content) => {
-            if !content.contains(old_text) {
+            // Detect the line ending type used in the file
+            let file_line_ending = detect_line_ending(&content);
+
+            // Normalize old_text to use the file's line endings for matching
+            let normalized_old_text = normalize_line_endings(old_text, file_line_ending);
+
+            if !content.contains(&normalized_old_text) {
                 return Ok(ToolResult {
                     tool_use_id,
-                    content: format!("Text not found in file '{}': {}", absolute_path.display(), old_text),
+                    content: format!("Text not found in file '{}': {}", absolute_path.display(), normalized_old_text),
                     is_error: true,
                 });
             }
 
-            content = content.replace(old_text, new_text);
+            // Normalize new_text to use the file's line endings
+            let normalized_new_text = normalize_line_endings(new_text, file_line_ending);
+
+            content = content.replace(&normalized_old_text, &normalized_new_text);
 
             match fs::write(&absolute_path, content).await {
                 Ok(_) => Ok(ToolResult {
@@ -358,10 +381,18 @@ pub async fn bash(call: &ToolCall) -> Result<ToolResult> {
     // Execute the command using tokio::task to spawn blocking operation
     let command_clone = command.clone();
     match task::spawn_blocking(move || {
-        Command::new("bash")
-            .arg("-c")
-            .arg(&command_clone)
-            .output()
+        #[cfg(target_os = "windows")]
+        {
+            Command::new("cmd")
+                .args(["/C", &command_clone])
+                .output()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Command::new("bash")
+                .args(["-c", &command_clone])
+                .output()
+        }
     }).await
     {
         Ok(Ok(output)) => {
@@ -543,13 +574,13 @@ pub fn get_builtin_tools() -> Vec<Tool> {
         },
         Tool {
             name: "bash".to_string(),
-            description: "Execute bash commands and return the output".to_string(),
+            description: "Execute shell commands and return the output".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "Bash command to execute"
+                        "description": "Shell command to execute"
                     }
                 },
                 "required": ["command"]
