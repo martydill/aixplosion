@@ -14,14 +14,6 @@ use futures_util::SinkExt;
 use log::{debug, info, warn, error};
 use std::env;
 
-fn default_input_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {},
-        "required": []
-    })
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
     pub name: String,
@@ -114,7 +106,7 @@ pub struct McpError {
 pub struct McpTool {
     pub name: String,
     pub description: Option<String>,
-    #[serde(default)]
+    #[serde(alias = "inputSchema", rename = "input_schema")]
     pub input_schema: Value,
 }
 
@@ -144,6 +136,50 @@ impl McpConnection {
             tools: Arc::new(RwLock::new(Vec::new())),
             tools_version: Arc::new(RwLock::new(0)),
         }
+    }
+
+    /// Log detailed information about a tool and its parameters
+    fn log_tool_details(&self, tool: &McpTool) {
+        info!("📋 Tool Details:");
+        info!("   Name: {}", tool.name);
+        
+        if let Some(description) = &tool.description {
+            info!("   Description: {}", description);
+        } else {
+            info!("   Description: <No description provided>");
+        }
+
+        // Log input schema details
+        if let Some(schema_obj) = tool.input_schema.as_object() {
+            if let Some(properties) = schema_obj.get("properties").and_then(|p| p.as_object()) {
+                if properties.is_empty() {
+                    info!("   Parameters: <No parameters>");
+                } else {
+                    info!("   Parameters ({}):", properties.len());
+                    for (param_name, param_schema) in properties {
+                        let param_type = param_schema.get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("unknown");
+                        let param_desc = param_schema.get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("<No description>");
+                        let required = schema_obj.get("required")
+                            .and_then(|r| r.as_array())
+                            .map(|reqs| reqs.iter().any(|req| req.as_str() == Some(param_name)))
+                            .unwrap_or(false);
+                        
+                        let required_marker = if required { " (required)" } else { "" };
+                        info!("     • {} [{}]{}: {}", param_name, param_type, required_marker, param_desc);
+                    }
+                }
+            } else {
+                info!("   Parameters: <No parameters defined>");
+            }
+        } else {
+            info!("   Parameters: <Invalid schema>");
+        }
+        
+        info!("   Raw Schema: {}", serde_json::to_string(&tool.input_schema).unwrap_or_else(|_| "<Invalid JSON>".to_string()));
     }
 
       pub async fn connect_stdio(&mut self, command: &str, args: &[String], env: &HashMap<String, String>) -> Result<()> {
@@ -248,9 +284,13 @@ impl McpConnection {
                                                                 let fallback_tool = McpTool {
                                                                     name: tool_name.to_string(),
                                                                     description: raw_tool.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                                                    input_schema: default_input_schema(),
+                                                                    input_schema: json!({
+                                                                        "type": "object",
+                                                                        "properties": {},
+                                                                        "required": []
+                                                                    }),
                                                                 };
-                                                                info!("Created fallback tool '{}' with default schema", tool_name);
+                                                                warn!("⚠️  Created fallback tool '{}' with default schema (original tool had null/invalid schema)", tool_name);
                                                                 parsed_tools.push(fallback_tool);
                                                             }
                                                         }
@@ -428,6 +468,8 @@ impl McpConnection {
     }
 
     async fn load_tools(&mut self) -> Result<()> {
+        info!("Loading tools from MCP server '{}'...", self.name);
+        
         let tools_request = McpRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(self.next_id()),
@@ -437,6 +479,7 @@ impl McpConnection {
         let response = self.send_request(tools_request).await?;
         
         if let Some(error) = response.error {
+            error!("Failed to list tools from MCP server '{}': {:?}", self.name, error);
             return Err(anyhow::anyhow!("Failed to list tools: {:?}", error));
         }
 
@@ -447,11 +490,38 @@ impl McpConnection {
                 // Try to parse tools with better error handling
                 match serde_json::from_value::<Vec<Value>>(tools_value.clone()) {
                     Ok(raw_tools) => {
+                        info!("MCP server '{}' returned {} tools", self.name, raw_tools.len());
+                        
                         let mut parsed_tools = Vec::new();
                         for (i, raw_tool) in raw_tools.into_iter().enumerate() {
+                            // Log the raw tool data before parsing
+                            debug!("Raw tool data {} from server '{}': {}", i, self.name, serde_json::to_string_pretty(&raw_tool).unwrap_or_else(|_| "Invalid JSON".to_string()));
+                            
+                            // Check if inputSchema exists and what its value is
+                            if let Some(input_schema) = raw_tool.get("inputSchema") {
+                                debug!("  inputSchema field found: {}", serde_json::to_string_pretty(input_schema).unwrap_or_else(|_| "Invalid JSON".to_string()));
+                                if input_schema.is_null() {
+                                    debug!("  inputSchema is null - will need fallback");
+                                } else {
+                                    debug!("  inputSchema has valid data");
+                                }
+                            } else if let Some(input_schema) = raw_tool.get("input_schema") {
+                                debug!("  input_schema field found (snake_case): {}", serde_json::to_string_pretty(input_schema).unwrap_or_else(|_| "Invalid JSON".to_string()));
+                                if input_schema.is_null() {
+                                    debug!("  input_schema is null - will need fallback");
+                                } else {
+                                    debug!("  input_schema has valid data");
+                                }
+                            } else {
+                                debug!("  No input schema field found - will use serde default");
+                            }
+                            
                             match serde_json::from_value::<McpTool>(raw_tool.clone()) {
                                 Ok(tool) => {
                                     debug!("Successfully parsed tool: {} from {}", tool.name, self.name);
+                                    debug!("  Parsed schema: {}", serde_json::to_string(&tool.input_schema).unwrap_or_else(|_| "Invalid JSON".to_string()));
+                                    info!("✓ Loaded tool: {} from server '{}'", tool.name, self.name);
+                                    self.log_tool_details(&tool);
                                     parsed_tools.push(tool);
                                 }
                                 Err(e) => {
@@ -463,26 +533,37 @@ impl McpConnection {
                                         let fallback_tool = McpTool {
                                             name: name.to_string(),
                                             description: raw_tool.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                                            input_schema: default_input_schema(),
+                                            input_schema: json!({
+                                                "type": "object",
+                                                "properties": {},
+                                                "required": []
+                                            }),
                                         };
-                                        info!("Created fallback tool '{}' with default schema", name);
+                                        warn!("⚠️  Created fallback tool '{}' with default schema (original tool had null/invalid schema)", name);
+                                        self.log_tool_details(&fallback_tool);
                                         parsed_tools.push(fallback_tool);
                                     }
                                 }
                             }
                         }
+                        
                         *self.tools.write().await = parsed_tools;
                         // Increment version for this connection
                         let mut version = self.tools_version.write().await;
                         *version += 1;
-                        info!("Loaded {} tools from MCP server {}", self.tools.read().await.len(), self.name);
+                        
+                        info!("✅ Successfully loaded {} tools from MCP server '{}'", self.tools.read().await.len(), self.name);
                     }
                     Err(e) => {
                         warn!("Failed to parse tools array from {}: {}. Raw response: {}", self.name, e, serde_json::to_string_pretty(tools_value)?);
                         return Err(anyhow::anyhow!("Invalid tools response format from MCP server '{}': {}", self.name, e));
                     }
                 }
+            } else {
+                warn!("No 'tools' field found in response from MCP server '{}'", self.name);
             }
+        } else {
+            warn!("No result found in tools response from MCP server '{}'", self.name);
         }
 
         Ok(())
@@ -504,7 +585,18 @@ impl McpConnection {
             }
         }
 
-        debug!("Calling MCP tool '{}' on server '{}'", name, self.name);
+        // Log the tool call with details
+        info!("🔧 Calling MCP tool '{}' on server '{}'", name, self.name);
+        
+        if let Some(ref args) = arguments {
+            if !args.is_null() {
+                info!("   Arguments: {}", serde_json::to_string_pretty(args).unwrap_or_else(|_| "<Invalid JSON>".to_string()));
+            } else {
+                info!("   Arguments: <No arguments>");
+            }
+        } else {
+            info!("   Arguments: <No arguments>");
+        }
 
         let tool_request = McpRequest {
             jsonrpc: "2.0".to_string(),
@@ -518,11 +610,16 @@ impl McpConnection {
         let response = self.send_request(tool_request).await?;
 
         if let Some(error) = response.error {
-            error!("MCP tool '{}' failed on server '{}': {:?}", name, self.name, error);
+            error!("❌ MCP tool '{}' failed on server '{}': {:?}", name, self.name, error);
             return Err(anyhow::anyhow!("Tool call failed: {:?}", error));
         }
 
-        debug!("MCP tool '{}' completed successfully on server '{}'", name, self.name);
+        info!("✅ MCP tool '{}' completed successfully on server '{}'", name, self.name);
+        
+        if let Some(ref result) = response.result {
+            debug!("   Result: {}", serde_json::to_string_pretty(result).unwrap_or_else(|_| "<Invalid JSON>".to_string()));
+        }
+
         Ok(response.result.unwrap_or(json!({})))
     }
 
@@ -670,6 +767,27 @@ impl McpManager {
             return Err(anyhow::anyhow!("Server '{}' is disabled", name));
         }
 
+        info!("🔌 Connecting to MCP server: {}", name);
+        info!("   Configuration:");
+        
+        if let Some(url) = &server_config.url {
+            info!("     Type: WebSocket");
+            info!("     URL: {}", url);
+        } else if let Some(command) = &server_config.command {
+            info!("     Type: STDIO");
+            info!("     Command: {}", command);
+            if let Some(args) = &server_config.args {
+                info!("     Args: {}", args.join(" "));
+            }
+            if let Some(env_vars) = &server_config.env {
+                info!("     Environment Variables: {}", env_vars.len());
+                for (key, value) in env_vars {
+                    info!("       {}={}", key, value);
+                }
+            }
+        }
+        info!("     Enabled: {}", server_config.enabled);
+
         let mut connection = McpConnection::new(name.to_string());
 
         if let Some(url) = &server_config.url {
@@ -685,7 +803,17 @@ impl McpManager {
         }
 
         self.connections.write().await.insert(name.to_string(), connection);
-        info!("Connected to MCP server: {}", name);
+        info!("✅ Successfully connected to MCP server: {}", name);
+        
+        // Log summary of available tools
+        if let Some(connection) = self.connections.read().await.get(name) {
+            let tools = connection.get_tools().await;
+            info!("📊 Available tools from '{}': {}", name, tools.len());
+            for tool in &tools {
+                info!("   • {} - {}", tool.name, tool.description.as_deref().unwrap_or("<No description>"));
+            }
+        }
+        
         Ok(())
     }
 
@@ -731,6 +859,18 @@ impl McpManager {
         Ok(all_tools)
     }
 
+    pub async fn disconnect_all(&self) -> Result<()> {
+        let connections = self.connections.read().await;
+        let server_names: Vec<String> = connections.keys().cloned().collect();
+        drop(connections);
+        
+        for name in server_names {
+            let _ = self.disconnect_server(&name).await;
+        }
+        
+        Ok(())
+    }
+
     /// Get the global tools version (sum of all connection versions)
     pub async fn get_tools_version(&self) -> u64 {
         let connections = self.connections.read().await;
@@ -760,36 +900,125 @@ impl McpManager {
     pub async fn connect_all_enabled(&self) -> Result<()> {
         let config = self.load_config().await?;
         let mut connected_count = 0;
+        let mut failed_count = 0;
         
-        for (name, server_config) in config.servers {
+        info!("🌐 Connecting to all enabled MCP servers...");
+        info!("   Total servers configured: {}", config.servers.len());
+        
+        for (name, server_config) in &config.servers {
             if server_config.enabled {
-                match self.connect_server(&name).await {
+                info!("   Attempting to connect to: {}", name);
+                match self.connect_server(name).await {
                     Ok(_) => {
                         connected_count += 1;
-                        info!("Connected to MCP server: {}", name);
+                        info!("✅ Connected to MCP server: {}", name);
                     }
                     Err(e) => {
-                        warn!("Failed to connect to MCP server '{}': {}", name, e);
+                        failed_count += 1;
+                        warn!("❌ Failed to connect to MCP server '{}': {}", name, e);
                     }
                 }
+            } else {
+                info!("⏭️  Skipping disabled server: {}", name);
             }
         }
         
+        info!("📊 MCP Connection Summary:");
+        info!("   Successfully connected: {}", connected_count);
+        info!("   Failed connections: {}", failed_count);
+        info!("   Skipped (disabled): {}", config.servers.len() - connected_count - failed_count);
+        
         if connected_count > 0 {
-            info!("Connected to {} MCP server(s)", connected_count);
+            // Log total tools available across all servers
+            let all_tools = self.get_all_tools().await?;
+            info!("🛠️  Total tools available across all MCP servers: {}", all_tools.len());
+            
+            // Group tools by server for better organization
+            let mut tools_by_server = std::collections::HashMap::new();
+            for (server_name, tool) in all_tools {
+                tools_by_server.entry(server_name).or_insert_with(Vec::new).push(tool);
+            }
+            
+            for (server_name, tools) in tools_by_server {
+                info!("   Server '{}': {} tools", server_name, tools.len());
+            }
         }
         
         Ok(())
     }
 
-    pub async fn disconnect_all(&self) -> Result<()> {
-        let connections = self.connections.read().await;
-        let server_names: Vec<String> = connections.keys().cloned().collect();
-        drop(connections);
+    /// Get a comprehensive overview of all MCP tools and their parameters
+    pub async fn log_all_tools_overview(&self) -> Result<()> {
+        info!("📊 MCP Tools Overview");
+        info!("====================");
         
-        for name in server_names {
-            let _ = self.disconnect_server(&name).await;
+        let connections = self.connections.read().await;
+        
+        if connections.is_empty() {
+            info!("No MCP servers are currently connected.");
+            return Ok(());
         }
+        
+        let mut total_tools = 0;
+        
+        for (server_name, connection) in connections.iter() {
+            let tools = connection.get_tools().await;
+            total_tools += tools.len();
+            
+            info!("🔌 Server: {} ({} tools)", server_name, tools.len());
+            
+            if tools.is_empty() {
+                info!("   ⚠️  No tools available");
+                continue;
+            }
+            
+            for (i, tool) in tools.iter().enumerate() {
+                info!("   {}. {}", i + 1, tool.name);
+                
+                if let Some(description) = &tool.description {
+                    info!("      📝 {}", description);
+                } else {
+                    info!("      📝 <No description>");
+                }
+                
+                // Log parameters if available
+                if let Some(schema_obj) = tool.input_schema.as_object() {
+                    if let Some(properties) = schema_obj.get("properties").and_then(|p| p.as_object()) {
+                        if !properties.is_empty() {
+                            info!("      🔧 Parameters:");
+                            for (param_name, param_schema) in properties {
+                                let param_type = param_schema.get("type")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("unknown");
+                                let required = schema_obj.get("required")
+                                    .and_then(|r| r.as_array())
+                                    .map(|reqs| reqs.iter().any(|req| req.as_str() == Some(param_name)))
+                                    .unwrap_or(false);
+                                
+                                let required_marker = if required { " (required)" } else { "" };
+                                info!("         • {} [{}]{}", param_name, param_type, required_marker);
+                                
+                                // Log parameter description if available
+                                if let Some(param_desc) = param_schema.get("description").and_then(|d| d.as_str()) {
+                                    info!("           {}", param_desc);
+                                }
+                            }
+                        } else {
+                            info!("      🔧 Parameters: <No parameters>");
+                        }
+                    } else {
+                        info!("      🔧 Parameters: <Invalid schema>");
+                    }
+                } else {
+                    info!("      🔧 Parameters: <No schema>");
+                }
+                
+                info!(""); // Empty line for readability
+            }
+        }
+        
+        info!("📈 Summary: {} total tools from {} MCP servers", total_tools, connections.len());
+        info!("====================");
         
         Ok(())
     }
