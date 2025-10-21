@@ -14,28 +14,8 @@ use futures_util::SinkExt;
 use log::{debug, info, warn, error};
 use std::env;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpServerConfig {
-    pub name: String,
-    pub command: Option<String>,
-    pub args: Option<Vec<String>>,
-    pub url: Option<String>,
-    pub env: Option<HashMap<String, String>>,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpConfig {
-    pub servers: HashMap<String, McpServerConfig>,
-}
-
-impl Default for McpConfig {
-    fn default() -> Self {
-        Self {
-            servers: HashMap::new(),
-        }
-    }
-}
+// Re-export from config module to maintain compatibility
+pub use crate::config::{McpServerConfig, McpConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method")]
@@ -476,7 +456,23 @@ impl McpConnection {
             method: McpMethod::ListTools,
         };
 
-        let response = self.send_request(tools_request).await?;
+        // Add timeout for tools loading to prevent hanging
+        let response_result = tokio::time::timeout(
+            std::time::Duration::from_secs(10), // 10 second timeout for tools loading
+            self.send_request(tools_request)
+        ).await;
+        
+        let response = match response_result {
+            Ok(Ok(response)) => response,
+            Ok(Err(e)) => {
+                error!("Failed to send tools request to MCP server '{}': {}", self.name, e);
+                return Err(e);
+            }
+            Err(_) => {
+                error!("MCP server '{}' tools loading timed out after 10 seconds", self.name);
+                return Err(anyhow::anyhow!("Tools loading timed out for MCP server '{}'", self.name));
+            }
+        };
         
         if let Some(error) = response.error {
             error!("Failed to list tools from MCP server '{}': {:?}", self.name, error);
@@ -700,54 +696,74 @@ impl McpConnection {
 #[derive(Debug)]
 pub struct McpManager {
     connections: Arc<RwLock<HashMap<String, McpConnection>>>,
-    config_path: String,
+    config: Arc<RwLock<McpConfig>>,
 }
 
 impl McpManager {
     pub fn new() -> Self {
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| Path::new(".").to_path_buf())
-            .join("ai-agent");
-        
-        let config_path = config_dir.join("mcp.toml").to_string_lossy().to_string();
-        
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
-            config_path,
+            config: Arc::new(RwLock::new(McpConfig::default())),
         }
+    }
+
+    /// Initialize with MCP configuration from unified config
+    pub async fn initialize(&self, mcp_config: McpConfig) -> Result<()> {
+        *self.config.write().await = mcp_config;
+        info!("MCP manager initialized with {} servers", self.config.read().await.servers.len());
+        Ok(())
+    }
+
+    /// Load MCP configuration from unified config file
+    pub async fn load_from_config_file(&self) -> Result<()> {
+        use crate::config::Config;
+        
+        let unified_config = Config::load(None).await?;
+        *self.config.write().await = unified_config.mcp;
+        info!("Loaded MCP configuration from unified config file");
+        Ok(())
+    }
+
+    /// Save current MCP configuration to unified config file
+    pub async fn save_to_config_file(&self) -> Result<()> {
+        use crate::config::Config;
+        
+        // Load existing unified config to preserve other settings
+        let mut unified_config = Config::load(None).await?;
+        
+        // Update MCP configuration
+        let current_mcp_config = self.config.read().await.clone();
+        unified_config.mcp = current_mcp_config;
+        
+        // Save unified config
+        unified_config.save(None).await?;
+        info!("Saved MCP configuration to unified config file");
+        Ok(())
     }
 
     pub async fn load_config(&self) -> Result<McpConfig> {
-        if Path::new(&self.config_path).exists() {
-            let content = tokio::fs::read_to_string(&self.config_path).await?;
-            let config: McpConfig = toml::from_str(&content)?;
-            Ok(config)
-        } else {
-            Ok(McpConfig::default())
-        }
+        Ok(self.config.read().await.clone())
     }
 
     pub async fn save_config(&self, config: &McpConfig) -> Result<()> {
-        if let Some(parent) = Path::new(&self.config_path).parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        
-        let content = toml::to_string_pretty(config)?;
-        tokio::fs::write(&self.config_path, content).await?;
+        *self.config.write().await = config.clone();
+        self.save_to_config_file().await?;
         Ok(())
     }
 
     pub async fn add_server(&self, name: &str, server_config: McpServerConfig) -> Result<()> {
-        let mut config = self.load_config().await?;
+        let mut config = self.config.write().await;
         config.servers.insert(name.to_string(), server_config);
-        self.save_config(&config).await?;
+        drop(config);
+        self.save_to_config_file().await?;
         Ok(())
     }
 
     pub async fn remove_server(&self, name: &str) -> Result<()> {
-        let mut config = self.load_config().await?;
+        let mut config = self.config.write().await;
         config.servers.remove(name);
-        self.save_config(&config).await?;
+        drop(config);
+        self.save_to_config_file().await?;
         
         // Disconnect if connected
         let mut connections = self.connections.write().await;
@@ -833,13 +849,13 @@ impl McpManager {
     }
 
     pub async fn list_servers(&self) -> Result<Vec<(String, McpServerConfig, bool)>> {
-        let config = self.load_config().await?;
+        let config = self.config.read().await;
         let connections = self.connections.read().await;
         
         let mut servers = Vec::new();
-        for (name, server_config) in config.servers {
-            let connected = connections.contains_key(&name);
-            servers.push((name, server_config, connected));
+        for (name, server_config) in config.servers.iter() {
+            let connected = connections.contains_key(name);
+            servers.push((name.clone(), server_config.clone(), connected));
         }
         
         Ok(servers)
@@ -898,24 +914,35 @@ impl McpManager {
     }
 
     pub async fn connect_all_enabled(&self) -> Result<()> {
-        let config = self.load_config().await?;
+        let config = self.config.read().await;
         let mut connected_count = 0;
         let mut failed_count = 0;
         
         info!("🌐 Connecting to all enabled MCP servers...");
         info!("   Total servers configured: {}", config.servers.len());
         
-        for (name, server_config) in &config.servers {
+        for (name, server_config) in config.servers.iter() {
             if server_config.enabled {
                 info!("   Attempting to connect to: {}", name);
-                match self.connect_server(name).await {
-                    Ok(_) => {
+                
+                // Add timeout for individual server connections
+                let connect_result = tokio::time::timeout(
+                    std::time::Duration::from_secs(10), // 10 second timeout per server
+                    self.connect_server(name)
+                ).await;
+                
+                match connect_result {
+                    Ok(Ok(_)) => {
                         connected_count += 1;
                         info!("✅ Connected to MCP server: {}", name);
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         failed_count += 1;
                         warn!("❌ Failed to connect to MCP server '{}': {}", name, e);
+                    }
+                    Err(_) => {
+                        failed_count += 1;
+                        warn!("⏰ MCP server '{}' connection timed out after 10 seconds", name);
                     }
                 }
             } else {

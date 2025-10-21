@@ -8,7 +8,7 @@ use tokio::io::AsyncReadExt;
 use tokio::task;
 use path_absolutize::*;
 use shellexpand;
-use log::debug;
+use log::{debug, info};
 use std::sync::Arc;
 use crate::mcp::{McpManager, McpTool};
 
@@ -42,7 +42,15 @@ impl Tool {
             "edit_file" => Box::new(edit_file_sync),
             "delete_file" => Box::new(delete_file_sync),
             "create_directory" => Box::new(create_directory_sync),
-            "bash" => Box::new(bash_sync),
+            "bash" => {
+                // For bash tool, we need to create a handler that will be updated later
+                // with the security manager. This is a limitation of the current architecture.
+                Box::new(|_call| Box::pin(async move {
+                    // This should be handled by the Agent's tool execution logic
+                    // The Agent has special handling for bash commands with security
+                    Err(anyhow::anyhow!("Bash tool should be handled by Agent with security manager. Tool recreation failed."))
+                }))
+            }
             _ if self.name.starts_with("mcp_") => {
                 // This is an MCP tool - we need to handle this differently
                 // The issue is that we can't recreate MCP handlers without the MCP manager
@@ -368,7 +376,7 @@ pub async fn create_directory(call: &ToolCall) -> Result<ToolResult> {
     }
 }
 
-pub async fn bash(call: &ToolCall) -> Result<ToolResult> {
+pub async fn bash(call: &ToolCall, security_manager: &mut crate::security::BashSecurityManager) -> Result<ToolResult> {
     let command = call.arguments.get("command")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'command' argument"))?
@@ -377,6 +385,49 @@ pub async fn bash(call: &ToolCall) -> Result<ToolResult> {
     debug!("TOOL CALL: bash('{}')", command);
 
     let tool_use_id = call.id.clone();
+    let mut permissions_updated = false;
+
+    // Check security permissions
+    match security_manager.check_command_permission(&command) {
+        crate::security::PermissionResult::Allowed => {
+            debug!("Command '{}' is allowed by security policy", command);
+        }
+        crate::security::PermissionResult::Denied => {
+            return Ok(ToolResult {
+                tool_use_id,
+                content: format!("🔒 Security: Command '{}' is not allowed by security policy. Use /permissions to manage allowed commands.", command),
+                is_error: true,
+            });
+        }
+        crate::security::PermissionResult::RequiresPermission => {
+            // Ask user for permission
+            match security_manager.ask_permission(&command).await {
+                Ok(Some(true)) => {
+                    // User granted permission and wants to add to allowlist
+                    info!("User granted permission for command: {} (added to allowlist)", command);
+                    permissions_updated = true;
+                }
+                Ok(Some(false)) => {
+                    // User granted permission for this time only
+                    info!("User granted one-time permission for command: {}", command);
+                }
+                Ok(None) => {
+                    return Ok(ToolResult {
+                        tool_use_id,
+                        content: format!("🔒 Security: Permission denied for command '{}'", command),
+                        is_error: true,
+                    });
+                }
+                Err(e) => {
+                    return Ok(ToolResult {
+                        tool_use_id,
+                        content: format!("🔒 Security: Error checking permission for command '{}': {}", command, e),
+                        is_error: true,
+                    });
+                }
+            }
+        }
+    }
 
     // Execute the command using tokio::task to spawn blocking operation
     let command_clone = command.clone();
@@ -407,9 +458,16 @@ pub async fn bash(call: &ToolCall) -> Result<ToolResult> {
                     output.status.code().unwrap_or(-1), stdout)
             };
 
+            let mut final_content = content;
+            
+            // Add a note if permissions were updated
+            if permissions_updated {
+                final_content.push_str("\n\n💾 Note: This command has been added to your allowlist and saved to config.");
+            }
+
             Ok(ToolResult {
                 tool_use_id,
-                content,
+                content: final_content,
                 is_error: !output.status.success(),
             })
         }
@@ -463,9 +521,11 @@ fn create_directory_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::F
     })
 }
 
-fn bash_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+fn bash_sync(_call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
     Box::pin(async move {
-        bash(&call).await
+        // This function signature needs to be updated to handle security manager
+        // For now, we'll create a placeholder that shows an error
+        Err(anyhow::anyhow!("bash_sync called without security manager. This indicates an issue with tool recreation."))
     })
 }
 
@@ -572,21 +632,8 @@ pub fn get_builtin_tools() -> Vec<Tool> {
             }),
             handler: Box::new(create_directory_sync),
         },
-        Tool {
-            name: "bash".to_string(),
-            description: "Execute shell commands and return the output".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Shell command to execute"
-                    }
-                },
-                "required": ["command"]
-            }),
-            handler: Box::new(bash_sync),
-        },
+        // Note: The bash tool is handled specially by the Agent with security
+        // We include a placeholder here that will be properly handled by the Agent
     ]
 }
 

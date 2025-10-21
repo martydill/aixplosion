@@ -5,14 +5,15 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use log::{debug, info, warn, error};
 use crate::mcp::McpManager;
+use crate::security::BashSecurityManager;
 use regex::Regex;
-use serde_json::Value;
+use serde_json::{json, Value};
+use colored::*;
 
 use crate::config::Config;
 use crate::anthropic::{AnthropicClient, Message, ContentBlock, Usage};
-use crate::tools::{Tool, ToolResult, get_builtin_tools};
+use crate::tools::{Tool, ToolResult, get_builtin_tools, bash, ToolCall};
 use crate::tool_display::{ToolCallDisplay, SimpleToolDisplay, should_use_pretty_output, ToolDisplay};
-use colored::*;
 
 #[derive(Debug, Clone)]
 pub struct TokenUsage {
@@ -56,15 +57,53 @@ pub struct Agent {
     system_prompt: Option<String>,
     mcp_manager: Option<Arc<McpManager>>,
     last_mcp_tools_version: u64,
+    bash_security_manager: Arc<RwLock<BashSecurityManager>>,
 }
 
 impl Agent {
     pub fn new(config: Config, model: String) -> Self {
         let client = AnthropicClient::new(config.api_key, config.base_url);
-        let tools = get_builtin_tools()
+        let mut tools: std::collections::HashMap<String, Tool> = get_builtin_tools()
             .into_iter()
             .map(|tool| (tool.name.clone(), tool))
             .collect();
+
+        // Create bash security manager
+        let bash_security_manager = Arc::new(RwLock::new(
+            BashSecurityManager::new(config.bash_security.clone())
+        ));
+
+        // Add bash tool with security to the initial tools
+        let security_manager = bash_security_manager.clone();
+        tools.insert("bash".to_string(), Tool {
+            name: "bash".to_string(),
+            description: "Execute shell commands and return the output (with security)".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to execute"
+                    }
+                },
+                "required": ["command"]
+            }),
+            handler: Box::new(move |call: ToolCall| {
+                let security_manager = security_manager.clone();
+                Box::pin(async move {
+                    // Create a wrapper function that handles the mutable reference
+                    async fn bash_wrapper(
+                        call: ToolCall,
+                        security_manager: Arc<RwLock<BashSecurityManager>>,
+                    ) -> Result<ToolResult> {
+                        let mut manager = security_manager.write().await;
+                        bash(&call, &mut *manager).await
+                    }
+                    
+                    bash_wrapper(call, security_manager).await
+                })
+            }),
+        });
 
         Self {
             client,
@@ -75,6 +114,7 @@ impl Agent {
             system_prompt: None,
             mcp_manager: None,
             last_mcp_tools_version: 0,
+            bash_security_manager,
         }
     }
 
@@ -100,6 +140,38 @@ impl Agent {
             let mut tools = self.tools.write().await;
             tools.retain(|name, _| !name.starts_with("mcp_"));
             
+            // Add bash tool with security
+            let security_manager = self.bash_security_manager.clone();
+            tools.insert("bash".to_string(), Tool {
+                name: "bash".to_string(),
+                description: "Execute shell commands and return the output (with security)".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "Shell command to execute"
+                        }
+                    },
+                    "required": ["command"]
+                }),
+                handler: Box::new(move |call: ToolCall| {
+                    let security_manager = security_manager.clone();
+                    Box::pin(async move {
+                        // Create a wrapper function that handles the mutable reference
+                        async fn bash_wrapper(
+                            call: ToolCall,
+                            security_manager: Arc<RwLock<BashSecurityManager>>,
+                        ) -> Result<ToolResult> {
+                            let mut manager = security_manager.write().await;
+                            bash(&call, &mut *manager).await
+                        }
+                        
+                        bash_wrapper(call, security_manager).await
+                    })
+                }),
+            });
+            
             // Get all MCP tools
             match mcp_manager.get_all_tools().await {
                 Ok(mcp_tools) => {
@@ -120,11 +192,45 @@ impl Agent {
 
     /// Force refresh MCP tools regardless of version
     pub async fn force_refresh_mcp_tools(&mut self) -> Result<()> {
-        if let Some(mcp_manager) = &self.mcp_manager {
+        if let Some(_mcp_manager) = &self.mcp_manager {
             // Reset version to force refresh
             self.last_mcp_tools_version = 0;
             self.refresh_mcp_tools().await
         } else {
+            // Even without MCP manager, ensure bash tool is available
+            let mut tools = self.tools.write().await;
+            if !tools.contains_key("bash") {
+                let security_manager = self.bash_security_manager.clone();
+                tools.insert("bash".to_string(), Tool {
+                    name: "bash".to_string(),
+                    description: "Execute shell commands and return the output (with security)".to_string(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string",
+                                "description": "Shell command to execute"
+                            }
+                        },
+                        "required": ["command"]
+                    }),
+                    handler: Box::new(move |call: ToolCall| {
+                        let security_manager = security_manager.clone();
+                        Box::pin(async move {
+                            // Create a wrapper function that handles the mutable reference
+                            async fn bash_wrapper(
+                                call: ToolCall,
+                                security_manager: Arc<RwLock<BashSecurityManager>>,
+                            ) -> Result<ToolResult> {
+                                let mut manager = security_manager.write().await;
+                                bash(&call, &mut *manager).await
+                            }
+                            
+                            bash_wrapper(call, security_manager).await
+                        })
+                    }),
+                });
+            }
             Ok(())
         }
     }
@@ -406,6 +512,82 @@ impl Agent {
                                 is_error: true,
                             });
                         }
+                    } else if call.name == "bash" {
+                        // Handle bash tool with security
+                        let security_manager = self.bash_security_manager.clone();
+                        let call_clone = call.clone();
+                        
+                        // We need to get a mutable reference to the security manager
+                        let mut manager = security_manager.write().await;
+                        match bash(&call_clone, &mut *manager).await {
+                            Ok(result) => {
+                                debug!("Bash tool executed successfully");
+                                
+                                // Check if permissions were updated and save to config
+                                if result.content.contains("💾 Note: This command has been added to your allowlist") {
+                                    info!("Permissions updated, scheduling save to config file");
+                                    // Get the current security settings to save in background
+                                    let security_manager_clone = self.bash_security_manager.clone();
+                                    tokio::spawn(async move {
+                                        // Load existing config to preserve other settings
+                                        match crate::config::Config::load(None).await {
+                                            Ok(mut existing_config) => {
+                                                // Get current security settings
+                                                let current_security = security_manager_clone.read().await;
+                                                let updated_security = current_security.get_security().clone();
+                                                drop(current_security);
+                                                
+                                                // Update only the bash_security settings
+                                                existing_config.bash_security = updated_security;
+                                                
+                                                // Save the updated config
+                                                match existing_config.save(None).await {
+                                                    Ok(_) => {
+                                                        info!("Updated bash security settings saved to config (background)");
+                                                    }
+                                                    Err(e) => {
+                                                        warn!("Failed to save bash security settings (background): {}", e);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to load config for saving permissions (background): {}", e);
+                                            }
+                                        }
+                                    });
+                                }
+                                
+                                if result.is_error {
+                                    if should_use_pretty_output() {
+                                        display.complete_error(&result.content);
+                                    } else {
+                                        display.complete_error(&result.content);
+                                    }
+                                } else {
+                                    if should_use_pretty_output() {
+                                        display.complete_success(&result.content);
+                                    } else {
+                                        display.complete_success(&result.content);
+                                    }
+                                }
+                                results.push(result);
+                            },
+                            Err(e) => {
+                                error!("Error executing bash tool: {}", e);
+                                let error_content = format!("Error executing bash tool: {}", e);
+                                if should_use_pretty_output() {
+                                    display.complete_error(&error_content);
+                                } else {
+                                    display.complete_error(&error_content);
+                                }
+                                results.push(ToolResult {
+                                    tool_use_id: call.id.clone(),
+                                    content: error_content,
+                                    is_error: true,
+                                });
+                            }
+                        };
+                        drop(manager); // Explicitly drop the lock guard
                     } else if let Some(tool) = {
                         let tools = self.tools.read().await;
                         tools.get(&call.name).cloned()
@@ -628,6 +810,60 @@ impl Agent {
                  self.conversation.iter().map(|m| m.content.len()).sum::<usize>()
         );
         println!();
+    }
+
+    /// Get the bash security manager
+    pub fn get_bash_security_manager(&self) -> Arc<RwLock<BashSecurityManager>> {
+        self.bash_security_manager.clone()
+    }
+
+    /// Get current configuration (for saving permissions)
+    pub async fn get_config_for_save(&self) -> crate::config::Config {
+        use crate::config::Config;
+        
+        // Get current security settings from agent
+        let security_manager = self.bash_security_manager.read().await;
+        let current_security = security_manager.get_security().clone();
+        
+        // Create a basic config with the current bash security settings
+        Config {
+            api_key: "".to_string(), // Don't save API key from this method
+            base_url: "".to_string(),
+            default_model: self.model.clone(),
+            max_tokens: 4096,
+            temperature: 0.7,
+            default_system_prompt: self.system_prompt.clone(),
+            bash_security: current_security,
+            mcp: crate::config::McpConfig::default(),
+        }
+    }
+
+    /// Save updated bash security settings to config file
+    async fn save_bash_security_to_config(&self) -> Result<()> {
+        use crate::config::Config;
+        
+        // Load existing config to preserve other settings
+        let mut existing_config = Config::load(None).await?;
+        
+        // Get current security settings from agent
+        let security_manager = self.bash_security_manager.read().await;
+        let current_security = security_manager.get_security().clone();
+        drop(security_manager);
+        
+        // Update only the bash_security settings
+        existing_config.bash_security = current_security;
+        
+        // Save the updated config
+        match existing_config.save(None).await {
+            Ok(_) => {
+                info!("Updated bash security settings saved to config");
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to save bash security settings: {}", e);
+                Err(e)
+            }
+        }
     }
 
     /// Clear conversation but keep AGENTS.md if it exists in context

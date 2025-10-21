@@ -68,12 +68,13 @@ export ANTHROPIC_BASE_URL="https://api.anthropic.com/v1"
 Create a configuration file at `~/.config/ai-agent/config.toml`:
 
 ```toml
-api_key = "your-api-key"
 base_url = "https://api.anthropic.com/v1"
 default_model = "glm-4.6"
 max_tokens = 4096
 temperature = 0.7
 ```
+
+⚠️ **IMPORTANT**: API keys are **never** stored in configuration files for security reasons. Use environment variables or command line flags.
 
 ### Command Line Options
 
@@ -327,10 +328,38 @@ If you encounter issues:
 
 ### Security Considerations
 
-1. **Never commit API keys** to version control
-2. **Use environment variables** for sensitive configuration
-3. **Be careful with file paths** to avoid exposing sensitive data
-4. **Review auto-included files** before sharing conversations
+1. **API Key Security**:
+   - **Never store API keys** in configuration files
+   - **Use environment variables** for API keys (recommended)
+   - **Use command line flags** for temporary API keys
+   - **API keys are automatically excluded** from config files
+   - **Never commit API keys** to version control
+
+2. **File Safety**:
+   - Be careful with file paths to avoid exposing sensitive data
+   - Review auto-included files before sharing conversations
+   - Use .env files for local development (add to .gitignore)
+
+3. **Secure API Key Usage Examples**:
+
+```bash
+# ✅ RECOMMENDED: Environment variable
+export ANTHROPIC_AUTH_TOKEN="your-api-key"
+ai-agent -m "Hello"
+
+# ✅ SECURE: Command line flag
+ai-agent -k "your-api-key" -m "Hello"
+
+# ✅ DEVELOPMENT: .env file (add to .gitignore)
+echo 'ANTHROPIC_AUTH_TOKEN="your-api-key"' > .env
+source .env && ai-agent -m "Hello"
+```
+
+4. ❌ **NEVER DO**:
+```toml
+# ❌ NEVER store API key in config.toml
+api_key = "sk-ant-api03-..."  # SECURITY RISK!
+```
 
 ## Examples
 

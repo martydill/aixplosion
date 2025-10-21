@@ -15,6 +15,7 @@ mod agent;
 mod formatter;
 mod tool_display;
 mod mcp;
+mod security;
 
 use config::Config;
 use agent::Agent;
@@ -85,6 +86,10 @@ async fn handle_slash_command(command: &str, agent: &mut Agent, mcp_manager: &Mc
             }
             Ok(true) // Command was handled
         }
+        "/permissions" => {
+            handle_permissions_command(&parts[1..], agent).await?;
+            Ok(true) // Command was handled
+        }
         "/exit" | "/quit" => {
             // Print final stats before exiting
             print_usage_stats(agent);
@@ -100,7 +105,7 @@ async fn handle_slash_command(command: &str, agent: &mut Agent, mcp_manager: &Mc
 
 /// Handle MCP commands
 async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<()> {
-    use log::{warn, error};
+    use log::{debug, info, warn, error};
     
     if args.is_empty() {
         print_mcp_help();
@@ -513,6 +518,282 @@ fn create_spinner() -> ProgressBar {
     spinner
 }
 
+/// Handle permissions commands
+async fn handle_permissions_command(args: &[&str], agent: &mut Agent) -> Result<()> {
+    use crate::security::PermissionResult;
+    
+    if args.is_empty() {
+        // Display current permissions with full details
+        let security_manager_ref = agent.get_bash_security_manager().clone();
+        let security_manager = security_manager_ref.read().await;
+        security_manager.display_permissions();
+        return Ok(());
+    }
+
+    match args[0] {
+        "show" | "list" => {
+            let security_manager_ref = agent.get_bash_security_manager().clone();
+            let security_manager = security_manager_ref.read().await;
+            security_manager.display_permissions();
+        }
+        "test" => {
+            if args.len() < 2 {
+                println!("{} Usage: /permissions test <command>", "⚠️".yellow());
+                return Ok(());
+            }
+            
+            let command = args[1..].join(" ");
+            let security_manager_ref = agent.get_bash_security_manager().clone();
+            let security_manager = security_manager_ref.read().await;
+            
+            match security_manager.check_command_permission(&command) {
+                PermissionResult::Allowed => {
+                    println!("{} Command '{}' is ALLOWED", "✅".green(), command);
+                }
+                PermissionResult::Denied => {
+                    println!("{} Command '{}' is DENIED", "❌".red(), command);
+                }
+                PermissionResult::RequiresPermission => {
+                    println!("{} Command '{}' requires permission", "❓".yellow(), command);
+                }
+            }
+        }
+        "allow" => {
+            if args.len() < 2 {
+                println!("{} Usage: /permissions allow <command_pattern>", "⚠️".yellow());
+                println!("{} Examples:", "💡".blue());
+                println!("  /permissions allow 'git *'");
+                println!("  /permissions allow 'cargo test'");
+                println!("  /permissions allow 'ls -la'");
+                return Ok(());
+            }
+            
+            let command = args[1..].join(" ");
+            let security_manager_ref = agent.get_bash_security_manager().clone();
+            let mut security_manager = security_manager_ref.write().await;
+            
+            security_manager.add_to_allowlist(command.clone());
+            println!("{} Added '{}' to allowlist", "✅".green(), command);
+            
+            // Save to config
+            if let Err(e) = save_permissions_to_config(&agent).await {
+                println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
+            }
+        }
+        "deny" => {
+            if args.len() < 2 {
+                println!("{} Usage: /permissions deny <command_pattern>", "⚠️".yellow());
+                println!("{} Examples:", "💡".blue());
+                println!("  /permissions deny 'rm *'");
+                println!("  /permissions deny 'sudo *'");
+                println!("  /permissions deny 'format'");
+                return Ok(());
+            }
+            
+            let command = args[1..].join(" ");
+            let security_manager_ref = agent.get_bash_security_manager().clone();
+            let mut security_manager = security_manager_ref.write().await;
+            
+            security_manager.add_to_denylist(command.clone());
+            println!("{} Added '{}' to denylist", "❌".red(), command);
+            
+            // Save to config
+            if let Err(e) = save_permissions_to_config(&agent).await {
+                println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
+            }
+        }
+        "remove-allow" => {
+            if args.len() < 2 {
+                println!("{} Usage: /permissions remove-allow <command_pattern>", "⚠️".yellow());
+                return Ok(());
+            }
+            
+            let command = args[1..].join(" ");
+            let security_manager_ref = agent.get_bash_security_manager().clone();
+            let mut security_manager = security_manager_ref.write().await;
+            
+            if security_manager.remove_from_allowlist(&command) {
+                println!("{} Removed '{}' from allowlist", "🗑️".yellow(), command);
+                
+                // Save to config
+                if let Err(e) = save_permissions_to_config(&agent).await {
+                    println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
+                }
+            } else {
+                println!("{} Command '{}' not found in allowlist", "⚠️".yellow(), command);
+            }
+        }
+        "remove-deny" => {
+            if args.len() < 2 {
+                println!("{} Usage: /permissions remove-deny <command_pattern>", "⚠️".yellow());
+                return Ok(());
+            }
+            
+            let command = args[1..].join(" ");
+            let security_manager_ref = agent.get_bash_security_manager().clone();
+            let mut security_manager = security_manager_ref.write().await;
+            
+            if security_manager.remove_from_denylist(&command) {
+                println!("{} Removed '{}' from denylist", "🗑️".yellow(), command);
+                
+                // Save to config
+                if let Err(e) = save_permissions_to_config(&agent).await {
+                    println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
+                }
+            } else {
+                println!("{} Command '{}' not found in denylist", "⚠️".yellow(), command);
+            }
+        }
+        "enable" => {
+            let security_manager_ref = agent.get_bash_security_manager().clone();
+            let mut security_manager = security_manager_ref.write().await;
+            let mut security = security_manager.get_security().clone();
+            security.enabled = true;
+            security_manager.update_security(security);
+            println!("{} Bash security enabled", "✅".green());
+            
+            // Save to config
+            if let Err(e) = save_permissions_to_config(&agent).await {
+                println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
+            }
+        }
+        "disable" => {
+            let security_manager_ref = agent.get_bash_security_manager().clone();
+            let mut security_manager = security_manager_ref.write().await;
+            let mut security = security_manager.get_security().clone();
+            security.enabled = false;
+            security_manager.update_security(security);
+            println!("{} Bash security disabled", "⚠️".yellow());
+            println!("{} Warning: This allows any bash command to be executed!", "⚠️".red().bold());
+            
+            // Save to config
+            if let Err(e) = save_permissions_to_config(&agent).await {
+                println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
+            }
+        }
+        "ask-on" => {
+            let security_manager_ref = agent.get_bash_security_manager().clone();
+            let mut security_manager = security_manager_ref.write().await;
+            let mut security = security_manager.get_security().clone();
+            security.ask_for_permission = true;
+            security_manager.update_security(security);
+            println!("{} Ask for permission enabled", "✅".green());
+            
+            // Save to config
+            if let Err(e) = save_permissions_to_config(&agent).await {
+                println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
+            }
+        }
+        "ask-off" => {
+            let security_manager_ref = agent.get_bash_security_manager().clone();
+            let mut security_manager = security_manager_ref.write().await;
+            let mut security = security_manager.get_security().clone();
+            security.ask_for_permission = false;
+            security_manager.update_security(security);
+            println!("{} Ask for permission disabled", "⚠️".yellow());
+            println!("{} Unknown commands will be denied by default", "⚠️".red());
+            
+            // Save to config
+            if let Err(e) = save_permissions_to_config(&agent).await {
+                println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
+            }
+        }
+        "help" => {
+            print_permissions_help();
+        }
+        _ => {
+            println!("{} Unknown permissions command: {}", "⚠️".yellow(), args[0]);
+            println!("{} Available commands:", "💡".yellow());
+            println!("  /permissions                - Show current permissions");
+            println!("  /permissions help          - Show permissions help");
+            println!("  /permissions test <cmd>    - Test if a command is allowed");
+            println!("  /permissions allow <cmd>   - Add command to allowlist");
+            println!("  /permissions deny <cmd>    - Add command to denylist");
+            println!("  /permissions remove-allow <cmd> - Remove from allowlist");
+            println!("  /permissions remove-deny <cmd> - Remove from denylist");
+            println!("  /permissions enable        - Enable bash security");
+            println!("  /permissions disable       - Disable bash security");
+            println!("  /permissions ask-on        - Enable asking for permission");
+            println!("  /permissions ask-off       - Disable asking for permission");
+        }
+    }
+    
+    Ok(())
+}
+
+/// Save current permissions to unified config file
+async fn save_permissions_to_config(agent: &Agent) -> Result<()> {
+    use crate::config::Config;
+    
+    // Load existing config to preserve other settings
+    let mut existing_config = Config::load(None).await?;
+    
+    // Get current security settings from agent
+    let updated_config = agent.get_config_for_save().await;
+    
+    // Update only the bash_security settings
+    existing_config.bash_security = updated_config.bash_security;
+    
+    // Save the updated config
+    match existing_config.save(None).await {
+        Ok(_) => {
+            println!("{} Permissions saved to unified config", "💾".blue());
+        }
+        Err(e) => {
+            println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
+        }
+    }
+    
+    Ok(())
+}
+
+/// Print permissions help information
+fn print_permissions_help() {
+    println!("{}", "🔒 Permissions Commands".cyan().bold());
+    println!();
+    println!("{}", "View Permissions:".green().bold());
+    println!("  /permissions                - Show current permissions and security settings");
+    println!("  /permissions show          - Alias for /permissions");
+    println!("  /permissions list          - Alias for /permissions");
+    println!("  /permissions help          - Show this help message");
+    println!();
+    println!("{}", "Manage Allowlist:".green().bold());
+    println!("  /permissions allow <cmd>    - Add command to allowlist");
+    println!("  /permissions remove-allow <cmd> - Remove from allowlist");
+    println!();
+    println!("{}", "Manage Denylist:".green().bold());
+    println!("  /permissions deny <cmd>     - Add command to denylist");
+    println!("  /permissions remove-deny <cmd> - Remove from denylist");
+    println!();
+    println!("{}", "Security Settings:".green().bold());
+    println!("  /permissions enable         - Enable bash security");
+    println!("  /permissions disable        - Disable bash security");
+    println!("  /permissions ask-on         - Enable asking for permission");
+    println!("  /permissions ask-off        - Disable asking for permission");
+    println!();
+    println!("{}", "Testing:".green().bold());
+    println!("  /permissions test <cmd>     - Test if a command is allowed");
+    println!();
+    println!("{}", "Pattern Matching:".green().bold());
+    println!("  • Use wildcards: 'git *' allows all git commands");
+    println!("  • Use exact match: 'cargo test' allows only that command");
+    println!("  • Prefix matching: 'git' matches 'git status', 'git log', etc.");
+    println!();
+    println!("{}", "Examples:".green().bold());
+    println!("  /permissions allow 'git *'  - Allow all git commands");
+    println!("  /permissions deny 'rm *'    - Deny dangerous rm commands");
+    println!("  /permissions test 'ls -la'  - Test if ls -la is allowed");
+    println!("  /permissions enable         - Turn security on");
+    println!("  /permissions ask-on         - Ask for unknown commands");
+    println!();
+    println!("{}", "Security Tips:".yellow().bold());
+    println!("  • Be specific with allowlist entries for better security");
+    println!("  • Use denylist for dangerous command patterns");
+    println!("  • Enable 'ask for permission' for unknown commands");
+    println!("  • Changes are automatically saved to config file");
+    println!();
+}
+
 /// Print help information
 fn print_help() {
     println!("{}", "🤖 AI Agent - Slash Commands".cyan().bold());
@@ -524,9 +805,16 @@ fn print_help() {
     println!("  /context      - Show current conversation context");
     println!("  /clear        - Clear all conversation context (keeps AGENTS.md if it exists)");
     println!("  /reset-stats  - Reset token usage statistics");
+    println!("  /permissions  - Manage bash command security permissions");
     println!("  /mcp          - Manage MCP (Model Context Protocol) servers");
     println!("  /exit         - Exit the program");
     println!("  /quit         - Exit the program");
+    println!();
+    println!("{}", "Security Commands:".green().bold());
+    println!("  /permissions              - Show current bash security settings");
+    println!("  /permissions allow <cmd>  - Add command to allowlist");
+    println!("  /permissions deny <cmd>   - Add command to denylist");
+    println!("  /permissions test <cmd>  - Test if command is allowed");
     println!();
     println!("{}", "MCP Commands:".green().bold());
     println!("  /mcp list                    - List MCP servers");
@@ -616,22 +904,30 @@ async fn main() -> Result<()> {
     // Load configuration
     let mut config = Config::load(cli.config.as_deref()).await?;
 
-    // Override API key if provided via command line
+    // Override API key if provided via command line (highest priority)
     if let Some(api_key) = cli.api_key {
         config.api_key = api_key;
+    } else if config.api_key.is_empty() {
+        // If no API key from config, try environment variable
+        config.api_key = std::env::var("ANTHROPIC_AUTH_TOKEN").unwrap_or_default();
     }
 
     println!("Using configuration:");
     println!("  Base URL: {}", config.base_url);
     println!("  Model: {}", cli.model);
-    println!("  API Key (first 10 chars): {}...", &config.api_key[..config.api_key.len().min(10)]);
-
-    // Validate API key
+    
+    // Validate API key without exposing it
     if config.api_key.is_empty() {
-        eprintln!("{}", "Error: API key is required. Set it in config or use --api-key".red());
+        eprintln!("{}", "Error: API key is required. Set it via environment variable ANTHROPIC_AUTH_TOKEN or use --api-key".red());
         eprintln!("Create a config file at {} or set ANTHROPIC_AUTH_TOKEN environment variable",
                  Config::default_config_path().display());
         std::process::exit(1);
+    } else {
+        println!("  API Key: {}", if config.api_key.len() > 10 { 
+            format!("{}... ({} chars)", &config.api_key[..8], config.api_key.len())
+        } else { 
+            "configured".to_string() 
+        });
     }
 
     // Create code formatter
@@ -643,30 +939,67 @@ async fn main() -> Result<()> {
     // Initialize MCP manager
     let mcp_manager = Arc::new(McpManager::new());
     
+    // Initialize MCP manager with config from unified config
+    mcp_manager.initialize(config.mcp.clone()).await?;
+    
     // Set MCP manager in agent
     agent = agent.with_mcp_manager(mcp_manager.clone());
     
     // Connect to all enabled MCP servers
-    if let Err(e) = mcp_manager.connect_all_enabled().await {
-        warn!("Failed to connect to MCP servers: {}", e);
-        error!("MCP Server Connection Issues:");
-        error!("  - Check that MCP servers are configured correctly: /mcp list");
-        error!("  - Verify server commands/URLs are valid");
-        error!("  - Ensure all dependencies are installed");
-        error!("  - Use '/mcp test <command>' to verify command availability");
-        error!("  - Tool calls to unavailable MCP servers will fail");
+    info!("Connecting to MCP servers...");
+    let mcp_connect_result = tokio::time::timeout(
+        std::time::Duration::from_secs(30), // 30 second timeout for MCP connections
+        mcp_manager.connect_all_enabled()
+    ).await;
+    
+    match mcp_connect_result {
+        Ok(Ok(_)) => {
+            info!("MCP servers connected successfully");
+        }
+        Ok(Err(e)) => {
+            warn!("Failed to connect to MCP servers: {}", e);
+            error!("MCP Server Connection Issues:");
+            error!("  - Check that MCP servers are configured correctly: /mcp list");
+            error!("  - Verify server commands/URLs are valid");
+            error!("  - Ensure all dependencies are installed");
+            error!("  - Use '/mcp test <command>' to verify command availability");
+            error!("  - Tool calls to unavailable MCP servers will fail");
+        }
+        Err(_) => {
+            warn!("MCP server connection timed out after 30 seconds");
+            error!("MCP Server Connection Timeout:");
+            error!("  - MCP servers are taking too long to respond");
+            error!("  - Check if servers are running and accessible");
+            error!("  - Use '/mcp reconnect <server>' to try connecting manually");
+        }
     }
 
     // Force initial refresh of MCP tools after connecting
-    if let Err(e) = agent.force_refresh_mcp_tools().await {
-        warn!("Failed to refresh MCP tools on startup: {}", e);
-        error!("MCP Tools Loading Failed:");
-        error!("  - Connected MCP servers may not be responding properly");
-        error!("  - Tools may have invalid schemas or descriptions");
-        error!("  - Use '/mcp tools' to check available tools");
-        error!("  - Use '/mcp reconnect <server>' to fix connection issues");
-    } else {
-        info!("MCP tools loaded successfully");
+    info!("Refreshing MCP tools...");
+    let mcp_refresh_result = tokio::time::timeout(
+        std::time::Duration::from_secs(15), // 15 second timeout for MCP tools refresh
+        agent.force_refresh_mcp_tools()
+    ).await;
+    
+    match mcp_refresh_result {
+        Ok(Ok(_)) => {
+            info!("MCP tools loaded successfully");
+        }
+        Ok(Err(e)) => {
+            warn!("Failed to refresh MCP tools on startup: {}", e);
+            error!("MCP Tools Loading Failed:");
+            error!("  - Connected MCP servers may not be responding properly");
+            error!("  - Tools may have invalid schemas or descriptions");
+            error!("  - Use '/mcp tools' to check available tools");
+            error!("  - Use '/mcp reconnect <server>' to fix connection issues");
+        }
+        Err(_) => {
+            warn!("MCP tools refresh timed out after 15 seconds");
+            error!("MCP Tools Refresh Timeout:");
+            error!("  - MCP servers are taking too long to provide tools");
+            error!("  - Some tools may not be available initially");
+            error!("  - Tools will be refreshed on demand during use");
+        }
     }
 
     // Set system prompt - use command line prompt if provided, otherwise use config default

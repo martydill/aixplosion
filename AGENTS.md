@@ -45,8 +45,12 @@ ai-agent -m "Hello, how are you?"
 # Read from stdin
 echo "Help me understand this code" | ai-agent --non-interactive
 
-# With custom API key
+# With API key via command line
 ai-agent -k "your-api-key" -m "Your message here"
+
+# With API key from environment variable (RECOMMENDED)
+export ANTHROPIC_AUTH_TOKEN="your-api-key"
+ai-agent -m "Your message here"
 
 # With context files
 ai-agent -f config.toml -f Cargo.toml "Explain this project"
@@ -131,19 +135,30 @@ The shell command tool automatically detects the operating system and uses the a
 The agent can be configured via:
 
 1. **Environment Variables**:
-   - `ANTHROPIC_AUTH_TOKEN`: Your API key
+   - `ANTHROPIC_AUTH_TOKEN`: Your API key (required)
    - `ANTHROPIC_BASE_URL`: Custom base URL (default: https://api.anthropic.com/v1)
 
-2. **Config File**: Located at `~/.config/ai-agent/config.toml`
+2. **Command Line**:
+   - `-k` or `--api-key`: Set API key via command line
 
-Example config file:
+3. **Config File**: Located at `~/.config/ai-agent/config.toml` (API keys are excluded for security)
+
+⚠️ **Security Note**: API keys are **never** stored in config files for security reasons. Always use environment variables or command line flags.
+
+Example config file (API key excluded):
 ```toml
-api_key = "your-api-key"
 base_url = "https://api.anthropic.com/v1"
 default_model = "glm-4.6"
 max_tokens = 4096
 temperature = 0.7
 ```
+
+#### API Key Security Best Practices
+- **Use environment variables** for API keys (recommended)
+- **Use command line flag `-k`** for temporary API keys
+- **Never commit API keys** to version control
+- **API keys are automatically excluded** from config files
+- **Use `.env` files** for local development (add to .gitignore)
 
 ### Context Files
 
