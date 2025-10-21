@@ -155,13 +155,9 @@ impl BashSecurityManager {
         println!("The following command is not in the allowlist:");
         println!("  {}", command.cyan());
         println!();
-        println!("Choose an action:");
         
-        let options = vec![
-            "Allow this time only (don't add to allowlist)".to_string(),
-            "Allow and add to allowlist".to_string(),
-            "Deny this command".to_string(),
-        ];
+        // Generate options based on whether command has parameters
+        let options = self.generate_permission_options(command);
         
         // Use tokio::task::spawn_blocking with timeout to prevent hanging
         let options_clone = options.clone();
@@ -171,28 +167,14 @@ impl BashSecurityManager {
                 Select::new()
                     .with_prompt("Select an option")
                     .items(&options_clone)
-                    .default(2) // Default to "Deny this command" for safety
+                    .default(options_clone.len() - 1) // Default to "Deny this command" for safety
                     .interact()
             })
         ).await;
         
         match result {
-            Ok(Ok(Ok(0))) => {
-                println!("{} Command allowed for this time only", "✅".green());
-                Ok(Some(false)) // Allow but don't add to allowlist
-            }
-            Ok(Ok(Ok(1))) => {
-                println!("{} Command allowed and added to allowlist", "✅".green());
-                self.add_to_allowlist(command.to_string());
-                Ok(Some(true)) // Allow and add to allowlist
-            }
-            Ok(Ok(Ok(2))) => {
-                println!("{} Command denied", "❌".red());
-                Ok(None) // Deny
-            }
-            Ok(Ok(Ok(_))) => {
-                println!("{} Invalid selection, denying command for safety", "⚠️".yellow());
-                Ok(None) // Deny for safety
+            Ok(Ok(Ok(selection))) => {
+                self.handle_permission_selection(selection, command).await
             }
             Ok(Ok(Err(e))) => {
                 error!("Failed to get user input: {}", e);
@@ -207,6 +189,79 @@ impl BashSecurityManager {
             Err(_) => {
                 error!("Permission dialog timed out after 30 seconds");
                 println!("{} Permission dialog timed out, denying command for safety", "⚠️".yellow());
+                Ok(None) // Deny for safety
+            }
+        }
+    }
+
+    /// Generate permission options based on the command structure
+    fn generate_permission_options(&self, command: &str) -> Vec<String> {
+        let mut options = vec![
+            "Allow this time only (don't add to allowlist)".to_string(),
+            "Allow and add to allowlist".to_string(),
+        ];
+
+        // Add wildcard option if command has parameters
+        if self.has_parameters(command) {
+            let wildcard_pattern = self.generate_wildcard_pattern(command);
+            options.push(format!("Allow and add to allowlist with wildcard: '{}'", wildcard_pattern.cyan()));
+        }
+
+        options.push("Deny this command".to_string());
+        options
+    }
+
+    /// Check if a command has parameters (arguments beyond the base command)
+    fn has_parameters(&self, command: &str) -> bool {
+        command.split_whitespace().count() > 1
+    }
+
+    /// Generate a wildcard pattern for the command
+    fn generate_wildcard_pattern(&self, command: &str) -> String {
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        if parts.is_empty() {
+            return command.to_string();
+        }
+        
+        // Replace all parameters after the base command with *
+        format!("{} *", parts[0])
+    }
+
+    /// Handle the user's permission selection
+    async fn handle_permission_selection(&mut self, selection: usize, command: &str) -> Result<Option<bool>> {
+        match selection {
+            0 => {
+                // Allow this time only
+                println!("{} Command allowed for this time only", "✅".green());
+                Ok(Some(false)) // Allow but don't add to allowlist
+            }
+            1 => {
+                // Allow and add to allowlist
+                println!("{} Command allowed and added to allowlist", "✅".green());
+                self.add_to_allowlist(command.to_string());
+                Ok(Some(true)) // Allow and add to allowlist
+            }
+            2 => {
+                if self.has_parameters(command) {
+                    // Allowlist with wildcard
+                    let wildcard_pattern = self.generate_wildcard_pattern(command);
+                    println!("{} Command wildcard pattern added to allowlist: '{}'", 
+                             "✅".green(), wildcard_pattern.cyan());
+                    self.add_to_allowlist(wildcard_pattern);
+                    Ok(Some(true)) // Allow and add wildcard to allowlist
+                } else {
+                    // No wildcard option, this is the deny option
+                    println!("{} Command denied", "❌".red());
+                    Ok(None) // Deny
+                }
+            }
+            3 => {
+                // Deny this command (only present when there are parameters)
+                println!("{} Command denied", "❌".red());
+                Ok(None) // Deny
+            }
+            _ => {
+                println!("{} Invalid selection, denying command for safety", "⚠️".yellow());
                 Ok(None) // Deny for safety
             }
         }
@@ -324,6 +379,8 @@ impl BashSecurityManager {
         println!("  • Enable 'ask for permission' for unknown commands");
         println!("  • Choose 'Allow this time only' for one-off commands");
         println!("  • Choose 'Allow and add to allowlist' for trusted commands");
+        println!("  • Choose 'Allowlist with wildcard' for commands with parameters");
+        println!("  • Wildcard patterns replace parameters with * (e.g., 'curl example.com' → 'curl *')");
         println!();
     }
 
