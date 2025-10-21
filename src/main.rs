@@ -17,6 +17,9 @@ mod tool_display;
 mod mcp;
 mod security;
 
+#[cfg(test)]
+mod test_shell_commands;
+
 use config::Config;
 use agent::Agent;
 use formatter::create_code_formatter;
@@ -43,6 +46,103 @@ async fn add_context_files(agent: &mut Agent, context_files: &[String]) -> Resul
     }
 
     Ok(())
+}
+
+async fn handle_shell_command(command: &str, _agent: &mut Agent) -> Result<()> {
+    // Extract the shell command by removing the '!' prefix
+    let shell_command = command.trim_start_matches('!').trim();
+    
+    if shell_command.is_empty() {
+        println!("{} Usage: !<command> - Execute a shell command", "⚠️".yellow());
+        println!("{} Examples: !dir, !ls -la, !git status", "💡".blue());
+        return Ok(());
+    }
+
+    println!("{} Executing: {}", "🔧".blue(), shell_command);
+    
+    // Create a tool call for the bash command
+    let tool_call = tools::ToolCall {
+        id: "shell_command".to_string(),
+        name: "bash".to_string(),
+        arguments: serde_json::json!({
+            "command": shell_command
+        }),
+    };
+
+    // Execute the bash command directly without permission checks
+    // This bypasses the security manager for ! commands
+    execute_bash_command_directly(&tool_call).await.map(|result| {
+        if result.is_error {
+            println!("{} Command failed:", "❌".red());
+            println!("{}", result.content.red());
+        } else {
+            println!("{}", result.content);
+        }
+    }).map_err(|e| {
+        eprintln!("{} Error executing shell command: {}", "✗".red(), e);
+        e
+    })?;
+
+    Ok(())
+}
+
+/// Execute a bash command directly without security checks (for ! commands)
+async fn execute_bash_command_directly(tool_call: &tools::ToolCall) -> Result<tools::ToolResult> {
+    let command = tool_call.arguments.get("command")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing 'command' argument"))?
+        .to_string();
+
+    debug!("Direct shell command execution: {}", command);
+
+    let tool_use_id = tool_call.id.clone();
+
+    // Execute the command using tokio::task to spawn blocking operation
+    let command_clone = command.clone();
+    match tokio::task::spawn_blocking(move || {
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", &command_clone])
+                .output()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::process::Command::new("bash")
+                .args(["-c", &command_clone])
+                .output()
+        }
+    }).await
+    {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            
+            let content = if !stderr.is_empty() {
+                format!("Exit code: {}\nStdout:\n{}\nStderr:\n{}", 
+                    output.status.code().unwrap_or(-1), stdout, stderr)
+            } else {
+                format!("Exit code: {}\nOutput:\n{}", 
+                    output.status.code().unwrap_or(-1), stdout)
+            };
+
+            Ok(tools::ToolResult {
+                tool_use_id,
+                content,
+                is_error: !output.status.success(),
+            })
+        }
+        Ok(Err(e)) => Ok(tools::ToolResult {
+            tool_use_id,
+            content: format!("Error executing command '{}': {}", command, e),
+            is_error: true,
+        }),
+        Err(e) => Ok(tools::ToolResult {
+            tool_use_id,
+            content: format!("Task join error: {}", e),
+            is_error: true,
+        })
+    }
 }
 
 async fn handle_slash_command(command: &str, agent: &mut Agent, mcp_manager: &McpManager) -> Result<bool> {
@@ -810,6 +910,11 @@ fn print_help() {
     println!("  /exit         - Exit the program");
     println!("  /quit         - Exit the program");
     println!();
+    println!("{}", "Shell Commands:".green().bold());
+    println!("  !<command>    - Execute a shell command directly (bypasses all security)");
+    println!("  Examples: !dir, !ls -la, !git status, !cargo test");
+    println!("  Note: ! commands execute immediately without permission checks");
+    println!();
     println!("{}", "Security Commands:".green().bold());
     println!("  /permissions              - Show current bash security settings");
     println!("  /permissions allow <cmd>  - Add command to allowlist");
@@ -848,6 +953,9 @@ fn print_help() {
     println!("  ai-agent -s \"You are a Rust expert\" \"Help me with this code\"");
     println!("  ai-agent -s \"Act as a code reviewer\" -f main.rs \"Review this code\"");
     println!("  ai-agent --stream \"Tell me a story\"  # Stream the response");
+    println!("  !dir                    # List directory contents");
+    println!("  !git status             # Check git status");
+    println!("  !cargo build            # Build the project");
     println!();
     println!("{}", "Any other input will be sent to the AI agent for processing.".dimmed());
     println!();
@@ -1080,6 +1188,17 @@ async fn main() -> Result<()> {
                     Ok(_) => {}, // Command handled successfully
                     Err(e) => {
                         eprintln!("{} Error handling command: {}", "✗".red(), e);
+                    }
+                }
+                continue;
+            }
+
+            // Check for shell commands (!)
+            if input.starts_with('!') {
+                match handle_shell_command(&input, &mut agent).await {
+                    Ok(_) => {}, // Command handled successfully
+                    Err(e) => {
+                        eprintln!("{} Error executing shell command: {}", "✗".red(), e);
                     }
                 }
                 continue;

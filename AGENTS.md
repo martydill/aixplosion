@@ -69,6 +69,14 @@ ai-agent -s "You are a helpful assistant" "Explain this concept"
 ai-agent --stream -m "Tell me a story"
 ai-agent --stream --non-interactive < input.txt
 ai-agent --stream  # Interactive mode with streaming
+
+# Interactive mode examples
+ai-agent
+> !dir                    # List directory contents
+> !git status             # Check git status
+> !cargo build            # Build the project
+> /help                   # Show available commands
+> /permissions allow "git *"  # Allow git commands
 ```
 
 ### System Prompts
@@ -101,15 +109,11 @@ ai-agent -s "You are a helpful coding assistant. Always provide code examples an
 
 ### Shell Command Execution
 
-The agent can execute shell commands directly, allowing you to:
+The agent can execute shell commands directly using two different methods:
 
-- List directory contents
-- Check git status
-- Run tests and build processes
-- Execute any shell command
-- Get system information
+#### 1. AI-Executed Commands
+The agent can automatically execute shell commands when you ask it to:
 
-#### Command Examples
 ```bash
 # List files in current directory
 ai-agent "List the files in the current directory"
@@ -123,6 +127,31 @@ ai-agent "Run tests and show me the results"
 # Execute multiple commands
 ai-agent "Check the current branch and run the build process"
 ```
+
+#### 2. Direct Shell Commands (!)
+In interactive mode, you can use `!` commands to execute shell commands directly:
+
+```bash
+# Start interactive mode
+ai-agent
+
+# Then use shell commands directly
+> !dir
+> !ls -la
+> !git status
+> !cargo build
+> !cargo test
+> !pwd
+> !ps aux
+```
+
+#### Security for Shell Commands
+**Important distinction** between AI-executed and direct shell commands:
+
+- **AI-Executed Commands**: Subject to security permissions, allowlist/denylist checks
+- **Direct Shell Commands (!)**: Execute immediately without permission checks for full user control
+
+Use `/permissions` to manage security settings for AI-executed commands only. Direct `!` commands provide unrestricted shell access.
 
 #### Platform Support
 
@@ -245,6 +274,52 @@ In interactive mode, you can use these commands:
 - `/clear` - Clear all conversation context (keeps AGENTS.md if it exists)
 - `/reset-stats` - Reset token usage statistics
 - `/exit` or `/quit` - Exit the program
+
+### Shell Commands (!)
+
+In interactive mode, you can use `!` commands to execute shell commands directly:
+
+- `!<command>` - Execute a shell command and display the output
+- Examples: `!dir`, `!ls -la`, `!git status`, `!cargo test`
+- **Note**: Shell commands with `!` bypass all security permissions for unrestricted access
+
+#### Shell Command Examples
+```bash
+# List directory contents
+!dir
+
+# List files with details (Unix)
+!ls -la
+
+# Check git status
+!git status
+
+# Build project
+!cargo build
+
+# Run tests
+!cargo test
+
+# Show current directory
+!pwd
+
+# List processes
+!ps aux
+
+# Any command executes without permission checks
+!sudo apt update
+!rm -rf /tmp/*
+!chmod +x script.sh
+```
+
+#### Security for Shell Commands
+Direct shell commands (`!`) bypass all security restrictions:
+- **No permission checks**: Commands execute immediately
+- **No allowlist/denylist**: All commands are allowed
+- **No interactive prompts**: No confirmation dialogs
+- **User responsibility**: You have full control and responsibility
+
+⚠️ **Warning**: `!` commands provide unrestricted shell access. Use with caution and only execute commands you trust.
 
 ### Error Handling
 
