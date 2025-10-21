@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::collections::HashMap;
 use tokio::fs;
 use crate::security::BashSecurity;
-use log::{info, warn};
+use log::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
@@ -76,92 +76,8 @@ impl Config {
             .join("config.toml")
     }
 
-    /// Get the legacy mcp.toml path for migration
-    pub fn legacy_mcp_config_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("ai-agent")
-            .join("mcp.toml")
-    }
-
-    /// Migrate MCP settings from legacy mcp.toml to unified config.toml
-    pub async fn migrate_legacy_mcp_config() -> Result<()> {
-        use crate::mcp::{McpConfig as LegacyMcpConfig};
-        
-        let legacy_path = Self::legacy_mcp_config_path();
-        let unified_path = Self::default_config_path();
-        
-        if !legacy_path.exists() {
-            info!("No legacy MCP config found at {}", legacy_path.display());
-            return Ok(());
-        }
-        
-        if unified_path.exists() {
-            info!("Unified config already exists at {}, checking for MCP migration", unified_path.display());
-            
-            // Load existing unified config
-            let existing_content = fs::read_to_string(&unified_path).await?;
-            let unified_config: Config = toml::from_str(&existing_content)?;
-            
-            // If unified config already has MCP servers, skip migration
-            if !unified_config.mcp.servers.is_empty() {
-                info!("Unified config already contains MCP servers, skipping migration");
-                return Ok(());
-            }
-        }
-        
-        // Load legacy MCP config
-        info!("Migrating MCP settings from {} to {}", legacy_path.display(), unified_path.display());
-        let legacy_content = fs::read_to_string(&legacy_path).await?;
-        let legacy_config: LegacyMcpConfig = toml::from_str(&legacy_content)?;
-        
-        let server_count = legacy_config.servers.len();
-        if server_count == 0 {
-            info!("Legacy MCP config is empty, nothing to migrate");
-            return Ok(());
-        }
-        
-        // Load or create unified config
-        let mut unified_config = if unified_path.exists() {
-            let content = fs::read_to_string(&unified_path).await?;
-            toml::from_str(&content)?
-        } else {
-            Config::default()
-        };
-        
-        // Convert legacy server configs to new format
-        for (name, legacy_server) in legacy_config.servers {
-            let new_server = McpServerConfig {
-                name: legacy_server.name,
-                command: legacy_server.command,
-                args: legacy_server.args,
-                url: legacy_server.url,
-                env: legacy_server.env,
-                enabled: legacy_server.enabled,
-            };
-            unified_config.mcp.servers.insert(name, new_server);
-        }
-        
-        // Save unified config
-        unified_config.save(None).await?;
-        
-        // Backup and remove legacy config
-        let backup_path = legacy_path.with_extension("toml.bak");
-        fs::rename(&legacy_path, &backup_path).await?;
-        
-        info!("Successfully migrated {} MCP servers to unified config", server_count);
-        info!("Legacy MCP config backed up to: {}", backup_path.display());
-        
-        Ok(())
-    }
-
-        /// Load configuration from file
-      /// Load configuration from file and merge with environment variables
+    /// Load configuration from file and merge with environment variables
     pub async fn load(path: Option<&str>) -> Result<Self> {
-        // First, try to migrate legacy MCP config
-        if let Err(e) = Self::migrate_legacy_mcp_config().await {
-            warn!("Failed to migrate legacy MCP config: {}", e);
-        }
         
         let config_path = path
             .map(PathBuf::from)
@@ -173,7 +89,7 @@ impl Config {
             
             // Ensure API key is never loaded from config file
             if !config.api_key.is_empty() {
-                warn!("API key found in config file - ignoring for security. Use environment variables or command line.");
+                info!("API key found in config file - ignoring for security. Use environment variables or command line.");
                 config.api_key = String::new();
             }
             
