@@ -1,5 +1,4 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use indicatif::{ProgressBar, ProgressStyle};
 use colored::*;
 use std::io::{self, Write};
 use serde_json::Value;
@@ -19,9 +18,8 @@ pub trait ToolDisplay {
     fn complete_error(&mut self, error: &str);
 }
 
-/// A pretty display for tool calls with progress indicators
+/// A pretty display for tool calls with simple status indicators
 pub struct ToolCallDisplay {
-    progress_bar: Option<ProgressBar>,
     tool_name: String,
     start_time: std::time::Instant,
 }
@@ -29,35 +27,10 @@ pub struct ToolCallDisplay {
 impl ToolCallDisplay {
     /// Create a new tool call display for a specific tool
     pub fn new(tool_name: &str) -> Self {
-        let progress_bar = Self::create_progress_bar(tool_name);
-        
         Self {
-            progress_bar,
             tool_name: tool_name.to_string(),
             start_time: std::time::Instant::now(),
         }
-    }
-
-    /// Create a styled progress bar for the tool
-    fn create_progress_bar(tool_name: &str) -> Option<ProgressBar> {
-        // Only show progress bar if we're in a terminal
-        if !atty::is(atty::Stream::Stdout) {
-            return None;
-        }
-
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .tick_chars("⠁⠁⠉⠙⠚⠒⠂⠂⠒⠲⠴⠤⠄⠄⠤⠠⠠⠤⠦⠖⠒⠐⠐⠒⠓⠋⠉⠈⠈ ")
-                .template("{spinner:.green} {msg}")
-                .unwrap()
-        );
-        
-        let icon = Self::get_tool_icon(tool_name);
-        let action = Self::get_tool_action(tool_name);
-        pb.set_message(format!("{} {} {}...", icon, tool_name.cyan().bold(), action));
-        
-        Some(pb)
     }
 
     /// Get current time as formatted string
@@ -87,25 +60,11 @@ impl ToolCallDisplay {
         }
     }
 
-    /// Get a descriptive action for each tool
-    fn get_tool_action(tool_name: &str) -> &'static str {
-        match tool_name {
-            "list_directory" => "listing directory",
-            "read_file" => "reading file",
-            "write_file" => "writing to file",
-            "edit_file" => "editing file",
-            "delete_file" => "deleting",
-            "create_directory" => "creating directory",
-            "bash" => "executing command",
-            _ => "processing",
-        }
-    }
 
     /// Display the tool call details
     pub fn show_call_details(&self, arguments: &Value) {
         let icon = Self::get_tool_icon(&self.tool_name);
         
-        println!();
         println!("{}", "┌─────────────────────────────────────────────────".dimmed());
         println!("{} {} {} {}",
                  "│".dimmed(),
@@ -159,28 +118,14 @@ impl ToolCallDisplay {
     }
 
     /// Complete the tool call with success
-    pub fn complete_success(mut self, result: &str) {
+    pub fn complete_success(self, result: &str) {
         let duration = self.start_time.elapsed();
-        
-        if let Some(pb) = self.progress_bar.take() {
-            pb.finish_with_message(format!("✅ {} completed in {:?}", 
-                                         self.tool_name.cyan().bold(), 
-                                         duration));
-        }
-
         self.show_result(result, false, duration);
     }
 
     /// Complete the tool call with error
-    pub fn complete_error(mut self, error: &str) {
+    pub fn complete_error(self, error: &str) {
         let duration = self.start_time.elapsed();
-        
-        if let Some(pb) = self.progress_bar.take() {
-            pb.finish_with_message(format!("❌ {} failed in {:?}", 
-                                         self.tool_name.cyan().bold(), 
-                                         duration));
-        }
-
         self.show_result(error, true, duration);
     }
 
@@ -189,7 +134,6 @@ impl ToolCallDisplay {
         let icon = if is_error { "❌" } else { "✅" };
         let status = if is_error { "FAILED".red().bold() } else { "SUCCESS".green().bold() };
         
-        println!();
         println!("{}", "┌─────────────────────────────────────────────────".dimmed());
         println!("{} {} {} {} ({})", 
                  "│".dimmed(),
@@ -199,36 +143,47 @@ impl ToolCallDisplay {
                  format!("{:.2}s", duration.as_secs_f64()).dimmed()
         );
         
-        // Truncate very long content for display
-        let display_content = if content.len() > 500 {
-            format!("{}...\n[{} bytes total, truncated for display]", 
-                   &content[..500], 
-                   content.len())
-        } else {
-            content.to_string()
-        };
+        // Limit output to max 5 lines
+        let lines: Vec<&str> = content.lines().collect();
+        let total_lines = lines.len();
+        let max_display_lines = 5;
         
-        // Display content with appropriate formatting
-        if is_error {
-            println!("{} {}", "│".dimmed(), "Error:".red().bold());
-            for line in display_content.lines().take(10) {
-                println!("{}   {}", "│".dimmed(), line.red());
-            }
-            if display_content.lines().count() > 10 {
-                println!("{}   {}", "│".dimmed(), "[...]".dimmed());
+        if total_lines == 0 {
+            if is_error {
+                println!("{} {}", "│".dimmed(), "Error:".red().bold());
+                println!("{}   {}", "│".dimmed(), "[No error details]".dimmed());
+            } else {
+                println!("{} {}", "│".dimmed(), "Output:".green().bold());
+                println!("{}   {}", "│".dimmed(), "[No output]".dimmed());
             }
         } else {
-            println!("{} {}", "│".dimmed(), "Output:".green().bold());
-            for line in display_content.lines().take(10) {
-                println!("{}   {}", "│".dimmed(), line);
+            // Display limited lines
+            let display_lines = if total_lines <= max_display_lines {
+                total_lines
+            } else {
+                max_display_lines
+            };
+            
+            if is_error {
+                println!("{} {}", "│".dimmed(), "Error:".red().bold());
+                for line in lines.iter().take(display_lines) {
+                    println!("{}   {}", "│".dimmed(), line.red());
+                }
+            } else {
+                println!("{} {}", "│".dimmed(), "Output:".green().bold());
+                for line in lines.iter().take(display_lines) {
+                    println!("{}   {}", "│".dimmed(), line);
+                }
             }
-            if display_content.lines().count() > 10 {
-                println!("{}   {}", "│".dimmed(), "[...]".dimmed());
+            
+            // Show truncation indicator if content was limited
+            if total_lines > max_display_lines {
+                let remaining = total_lines - max_display_lines;
+                println!("{}   {}", "│".dimmed(), format!("[... {} more lines omitted]", remaining).dimmed());
             }
         }
         
         println!("{}", "└─────────────────────────────────────────────────".dimmed());
-        println!();
         
         // Flush to ensure immediate display
         io::stdout().flush().unwrap();
@@ -241,42 +196,22 @@ impl ToolDisplay for ToolCallDisplay {
     }
 
     fn complete_success(&mut self, result: &str) {
-        // Take ownership of the progress bar and complete it
-        if let Some(pb) = self.progress_bar.take() {
-            let duration = self.start_time.elapsed();
-            pb.finish_with_message(format!("✅ {} completed in {:?}",
-                                         self.tool_name.cyan().bold(),
-                                         duration));
-        }
-
-        self.show_result(result, false, self.start_time.elapsed());
+        let duration = self.start_time.elapsed();
+        self.show_result(result, false, duration);
     }
 
     fn complete_error(&mut self, error: &str) {
-        // Take ownership of the progress bar and complete it
-        if let Some(pb) = self.progress_bar.take() {
-            let duration = self.start_time.elapsed();
-            pb.finish_with_message(format!("❌ {} failed in {:?}",
-                                         self.tool_name.cyan().bold(),
-                                         duration));
-        }
-
-        self.show_result(error, true, self.start_time.elapsed());
+        let duration = self.start_time.elapsed();
+        self.show_result(error, true, duration);
     }
 }
 
-impl Drop for ToolCallDisplay {
-    fn drop(&mut self) {
-        // Ensure progress bar is finished
-        if let Some(pb) = self.progress_bar.take() {
-            pb.finish();
-        }
-    }
-}
+
 
 /// Check if output should be pretty (terminal) or plain (redirected)
 pub fn should_use_pretty_output() -> bool {
-    atty::is(atty::Stream::Stdout)
+    // Always return true for now since we're not using atty check anymore
+    true
 }
 
 /// A simple text-only display for non-interactive environments
@@ -314,21 +249,51 @@ impl SimpleToolDisplay {
         let duration = self.start_time.elapsed();
         println!("✅ {} completed in {:?}", self.tool_name, duration);
         
-        // Show abbreviated result
+        // Show limited result (max 5 lines)
         if !result.is_empty() {
-            let preview = if result.len() > 200 {
-                format!("{}... [{} bytes]", &result[..200], result.len())
+            let lines: Vec<&str> = result.lines().collect();
+            let total_lines = lines.len();
+            let max_display_lines = 5;
+            
+            if total_lines <= max_display_lines {
+                // Show all lines if within limit
+                for line in lines {
+                    println!("   {}", line);
+                }
             } else {
-                result.to_string()
-            };
-            println!("   {}", preview);
+                // Show first 5 lines and indicate truncation
+                for line in lines.iter().take(max_display_lines) {
+                    println!("   {}", line);
+                }
+                let remaining = total_lines - max_display_lines;
+                println!("   [... {} more lines omitted] [{} bytes total]", remaining, result.len());
+            }
         }
     }
 
     pub fn complete_error(self, error: &str) {
         let duration = self.start_time.elapsed();
         println!("❌ {} failed in {:?}", self.tool_name, duration);
-        println!("   Error: {}", error);
+        
+        // Show limited error (max 5 lines)
+        let lines: Vec<&str> = error.lines().collect();
+        let total_lines = lines.len();
+        let max_display_lines = 5;
+        
+        println!("   Error:");
+        if total_lines <= max_display_lines {
+            // Show all lines if within limit
+            for line in lines {
+                println!("   {}", line);
+            }
+        } else {
+            // Show first 5 lines and indicate truncation
+            for line in lines.iter().take(max_display_lines) {
+                println!("   {}", line);
+            }
+            let remaining = total_lines - max_display_lines;
+            println!("   [... {} more lines omitted] [{} bytes total]", remaining, error.len());
+        }
     }
 }
 
@@ -337,20 +302,50 @@ impl ToolDisplay for SimpleToolDisplay {
         let duration = self.start_time.elapsed();
         println!("✅ {} completed in {:?}", self.tool_name, duration);
 
-        // Show abbreviated result
+        // Show limited result (max 5 lines)
         if !result.is_empty() {
-            let preview = if result.len() > 200 {
-                format!("{}... [{} bytes]", &result[..200], result.len())
+            let lines: Vec<&str> = result.lines().collect();
+            let total_lines = lines.len();
+            let max_display_lines = 5;
+            
+            if total_lines <= max_display_lines {
+                // Show all lines if within limit
+                for line in lines {
+                    println!("   {}", line);
+                }
             } else {
-                result.to_string()
-            };
-            println!("   {}", preview);
+                // Show first 5 lines and indicate truncation
+                for line in lines.iter().take(max_display_lines) {
+                    println!("   {}", line);
+                }
+                let remaining = total_lines - max_display_lines;
+                println!("   [... {} more lines omitted] [{} bytes total]", remaining, result.len());
+            }
         }
     }
 
     fn complete_error(&mut self, error: &str) {
         let duration = self.start_time.elapsed();
         println!("❌ {} failed in {:?}", self.tool_name, duration);
-        println!("   Error: {}", error);
+        
+        // Show limited error (max 5 lines)
+        let lines: Vec<&str> = error.lines().collect();
+        let total_lines = lines.len();
+        let max_display_lines = 5;
+        
+        println!("   Error:");
+        if total_lines <= max_display_lines {
+            // Show all lines if within limit
+            for line in lines {
+                println!("   {}", line);
+            }
+        } else {
+            // Show first 5 lines and indicate truncation
+            for line in lines.iter().take(max_display_lines) {
+                println!("   {}", line);
+            }
+            let remaining = total_lines - max_display_lines;
+            println!("   [... {} more lines omitted] [{} bytes total]", remaining, error.len());
+        }
     }
 }
