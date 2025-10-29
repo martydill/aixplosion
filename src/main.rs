@@ -2,7 +2,7 @@ use clap::Parser;
 use colored::*;
 use anyhow::Result;
 use std::io::{self, Read};
-use dialoguer::Input;
+
 use log::{debug, info, warn, error};
 use env_logger::Builder;
 use std::path::Path;
@@ -25,6 +25,49 @@ use agent::Agent;
 use formatter::create_code_formatter;
 use mcp::McpManager;
 use std::sync::Arc;
+
+
+
+/// Process input and handle streaming/non-streaming response
+async fn process_input(input: &str, agent: &mut Agent, formatter: &formatter::CodeFormatter, stream: bool) {
+    // Show spinner while processing (only for non-streaming)
+    if stream {
+        let result = agent.process_message_with_stream(&input, Some(|content| {
+            print!("{}", content);
+            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+        })).await;
+        
+        match result {
+            Ok(_response) => {
+                println!();
+            }
+            Err(e) => {
+                eprintln!("{}: {}", "Error".red(), e);
+                println!();
+            }
+        }
+    } else {
+        let spinner = create_spinner();
+        let result = agent.process_message(&input).await;
+        spinner.finish_and_clear();
+        
+        match result {
+            Ok(response) => {
+                // Only print response if it's not empty (i.e., not just @file references)
+                if !response.is_empty() {
+                    if let Err(e) = formatter.print_formatted(&response) {
+                        eprintln!("{} formatting response: {}", "Error".red(), e);
+                    }
+                }
+                println!();
+            }
+            Err(e) => {
+                eprintln!("{}: {}", "Error".red(), e);
+                println!();
+            }
+        }
+    }
+}
 
 /// Check for and add context files
 async fn add_context_files(agent: &mut Agent, context_files: &[String]) -> Result<()> {
@@ -1367,84 +1410,119 @@ async fn main() -> Result<()> {
         // Interactive mode
         println!("{}", "🤖 AI Agent - Interactive Mode".green().bold());
         println!("{}", "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands.".dimmed());
+        println!("{}", "For multi-line input, start with quotes (\") or code blocks (```).".dimmed());
         println!();
 
         loop {
-            let input: String = match Input::new()
-                .with_prompt("> ")
-                .allow_empty(false)
-                .interact_text() {
-                Ok(input) => input,
+            print!("> ");
+            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            
+            // Read first line to check if it might be multi-line
+            let mut first_line = String::new();
+            match io::stdin().read_line(&mut first_line) {
+                Ok(0) => {
+                    // EOF
+                    println!("\n{} End of input. Exiting...", "👋".blue());
+                    break;
+                }
+                Ok(_) => {
+                    let first_line = first_line.trim_end().to_string();
+                    
+                    // If first line is empty, continue to next iteration
+                    if first_line.is_empty() {
+                        continue;
+                    }
+                    
+                    // Check for commands first (they can't be multi-line)
+                    if first_line.starts_with('/') || first_line.starts_with('!') || 
+                       first_line == "exit" || first_line == "quit" {
+                        let input = first_line;
+                        
+                        // Check for slash commands first
+                        if input.starts_with('/') {
+                            match handle_slash_command(&input, &mut agent, &mcp_manager).await {
+                                Ok(_) => {}, // Command handled successfully
+                                Err(e) => {
+                                    eprintln!("{} Error handling command: {}", "✗".red(), e);
+                                }
+                            }
+                            continue;
+                        }
+
+                        // Check for shell commands (!)
+                        if input.starts_with('!') {
+                            match handle_shell_command(&input, &mut agent).await {
+                                Ok(_) => {}, // Command handled successfully
+                                Err(e) => {
+                                    eprintln!("{} Error executing shell command: {}", "✗".red(), e);
+                                }
+                            }
+                            continue;
+                        }
+
+                        // Check for traditional exit commands
+                        if input == "exit" || input == "quit" {
+                            // Print final stats before exiting
+                            print_usage_stats(&agent);
+                            println!("{}", "Goodbye! 👋".green());
+                            break;
+                        }
+                    } else {
+                        // For regular messages, process immediately for single line
+                        // For multiline input, user needs to start with a quote or specific indicator
+                        let input = first_line;
+
+                        // Check if this might be the start of multiline input
+                        if input.starts_with('"') || input.starts_with('\'') ||
+                           (input.starts_with("```") && !input.ends_with("```")) {
+                            // Handle multiline input (quotes, code blocks, etc.)
+                            let mut lines = vec![input];
+
+                            loop {
+                                print!("... ");
+                                std::io::Write::flush(&mut std::io::stdout()).unwrap();
+
+                                let mut line = String::new();
+                                match io::stdin().read_line(&mut line) {
+                                    Ok(0) => {
+                                        // EOF
+                                        break;
+                                    }
+                                    Ok(_) => {
+                                        let line = line.trim_end().to_string();
+                                        if line.is_empty() {
+                                            // Empty line signals end of input
+                                            break;
+                                        }
+
+                                        // Check if we've reached the end of a code block
+                                        let is_code_block_end = line.ends_with("```") && (lines.len() > 1 || lines[0].starts_with("```"));
+                                        lines.push(line);
+
+                                        if is_code_block_end {
+                                            break;
+                                        }
+                                    }
+                                    Err(_) => {
+                                        // Handle EOF or input error gracefully
+                                        println!("\n{} End of input. Exiting...", "👋".blue());
+                                        break;
+                                    }
+                                }
+                            }
+
+                            let input = lines.join("\n");
+                            process_input(&input, &mut agent, &formatter, cli.stream).await;
+                        } else {
+                            // Single line input - process immediately
+                            process_input(&input, &mut agent, &formatter, cli.stream).await;
+                        }
+                    }
+                }
                 Err(_) => {
                     // Handle EOF or input error gracefully
                     println!("\n{} End of input. Exiting...", "👋".blue());
                     break;
-                }
-            };
-
-            // Check for slash commands first
-            if input.starts_with('/') {
-                match handle_slash_command(&input, &mut agent, &mcp_manager).await {
-                    Ok(_) => {}, // Command handled successfully
-                    Err(e) => {
-                        eprintln!("{} Error handling command: {}", "✗".red(), e);
-                    }
-                }
-                continue;
-            }
-
-            // Check for shell commands (!)
-            if input.starts_with('!') {
-                match handle_shell_command(&input, &mut agent).await {
-                    Ok(_) => {}, // Command handled successfully
-                    Err(e) => {
-                        eprintln!("{} Error executing shell command: {}", "✗".red(), e);
-                    }
-                }
-                continue;
-            }
-
-            // Check for traditional exit commands
-            if input == "exit" || input == "quit" {
-                // Print final stats before exiting
-                print_usage_stats(&agent);
-                println!("{}", "Goodbye! 👋".green());
-                break;
-            }
-
-            // Show spinner while processing (only for non-streaming)
-            if cli.stream {
-                let result = agent.process_message_with_stream(&input, Some(|content| {
-                    print!("{}", content);
-                    std::io::Write::flush(&mut std::io::stdout()).unwrap();
-                })).await;
-                
-                match result {
-                    Ok(_response) => {
-                        println!();
-                    }
-                    Err(e) => {
-                        eprintln!("{}: {}", "Error".red(), e);
-                        println!();
-                    }
-                }
-            } else {
-                let spinner = create_spinner();
-                let result = agent.process_message(&input).await;
-                spinner.finish_and_clear();
-                
-                match result {
-                    Ok(response) => {
-                        // Only print response if it's not empty (i.e., not just @file references)
-                        if !response.is_empty() {
-                            formatter.print_formatted(&response)?;
-                        }
-                        println!();
-                    }
-                    Err(e) => {
-                        eprintln!("{}: {}", "Error".red(), e);
-                        println!();
-                    }
                 }
             }
         }
