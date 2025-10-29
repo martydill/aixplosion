@@ -190,6 +190,10 @@ async fn handle_slash_command(command: &str, agent: &mut Agent, mcp_manager: &Mc
             handle_permissions_command(&parts[1..], agent).await?;
             Ok(true) // Command was handled
         }
+        "/file-permissions" => {
+            handle_file_permissions_command(&parts[1..], agent).await?;
+            Ok(true) // Command was handled
+        }
         "/exit" | "/quit" => {
             // Print final stats before exiting
             print_usage_stats(agent);
@@ -847,7 +851,200 @@ async fn save_permissions_to_config(agent: &Agent) -> Result<()> {
     Ok(())
 }
 
-/// Print permissions help information
+/// Handle file permissions commands
+async fn handle_file_permissions_command(args: &[&str], agent: &mut Agent) -> Result<()> {
+    use crate::security::FilePermissionResult;
+    
+    if args.is_empty() {
+        // Display current file permissions with full details
+        let file_security_manager_ref = agent.get_file_security_manager().clone();
+        let file_security_manager = file_security_manager_ref.read().await;
+        file_security_manager.display_file_permissions();
+        return Ok(());
+    }
+
+    match args[0] {
+        "show" | "list" => {
+            let file_security_manager_ref = agent.get_file_security_manager().clone();
+            let file_security_manager = file_security_manager_ref.read().await;
+            file_security_manager.display_file_permissions();
+        }
+        "test" => {
+            if args.len() < 3 {
+                println!("{} Usage: /file-permissions test <operation> <path>", "⚠️".yellow());
+                println!("{} Operations: write_file, edit_file, delete_file, create_directory", "💡".blue());
+                return Ok(());
+            }
+            
+            let operation = args[1];
+            let path = args[2..].join(" ");
+            let file_security_manager_ref = agent.get_file_security_manager().clone();
+            let mut file_security_manager = file_security_manager_ref.write().await;
+            
+            match file_security_manager.check_file_permission(operation, &path) {
+                FilePermissionResult::Allowed => {
+                    println!("{} File operation '{}' on '{}' is ALLOWED", "✅".green(), operation, path);
+                }
+                FilePermissionResult::Denied => {
+                    println!("{} File operation '{}' on '{}' is DENIED", "❌".red(), operation, path);
+                }
+                FilePermissionResult::RequiresPermission => {
+                    println!("{} File operation '{}' on '{}' requires permission", "❓".yellow(), operation, path);
+                }
+            }
+        }
+        "enable" => {
+            let file_security_manager_ref = agent.get_file_security_manager().clone();
+            let mut file_security_manager = file_security_manager_ref.write().await;
+            let mut security = file_security_manager.get_file_security().clone();
+            security.enabled = true;
+            file_security_manager.update_file_security(security);
+            println!("{} File security enabled", "✅".green());
+            
+            // Save to config
+            if let Err(e) = save_file_permissions_to_config(&agent).await {
+                println!("{} Failed to save file permissions: {}", "⚠️".yellow(), e);
+            }
+        }
+        "disable" => {
+            let file_security_manager_ref = agent.get_file_security_manager().clone();
+            let mut file_security_manager = file_security_manager_ref.write().await;
+            let mut security = file_security_manager.get_file_security().clone();
+            security.enabled = false;
+            file_security_manager.update_file_security(security);
+            println!("{} File security disabled", "⚠️".yellow());
+            println!("{} Warning: This allows any file operation to be executed!", "⚠️".red().bold());
+            
+            // Save to config
+            if let Err(e) = save_file_permissions_to_config(&agent).await {
+                println!("{} Failed to save file permissions: {}", "⚠️".yellow(), e);
+            }
+        }
+        "ask-on" => {
+            let file_security_manager_ref = agent.get_file_security_manager().clone();
+            let mut file_security_manager = file_security_manager_ref.write().await;
+            let mut security = file_security_manager.get_file_security().clone();
+            security.ask_for_permission = true;
+            file_security_manager.update_file_security(security);
+            println!("{} Ask for file permission enabled", "✅".green());
+            
+            // Save to config
+            if let Err(e) = save_file_permissions_to_config(&agent).await {
+                println!("{} Failed to save file permissions: {}", "⚠️".yellow(), e);
+            }
+        }
+        "ask-off" => {
+            let file_security_manager_ref = agent.get_file_security_manager().clone();
+            let mut file_security_manager = file_security_manager_ref.write().await;
+            let mut security = file_security_manager.get_file_security().clone();
+            security.ask_for_permission = false;
+            file_security_manager.update_file_security(security);
+            println!("{} Ask for file permission disabled", "⚠️".yellow());
+            println!("{} All file operations will be allowed by default", "⚠️".red());
+            
+            // Save to config
+            if let Err(e) = save_file_permissions_to_config(&agent).await {
+                println!("{} Failed to save file permissions: {}", "⚠️".yellow(), e);
+            }
+        }
+        "reset-session" => {
+            let file_security_manager_ref = agent.get_file_security_manager().clone();
+            let mut file_security_manager = file_security_manager_ref.write().await;
+            file_security_manager.reset_session_permissions();
+            println!("{} Session file permissions reset", "🔄".blue());
+            println!("{} File operations will require permission again", "💡".blue());
+        }
+        "help" => {
+            print_file_permissions_help();
+        }
+        _ => {
+            println!("{} Unknown file permissions command: {}", "⚠️".yellow(), args[0]);
+            println!("{} Available commands:", "💡".yellow());
+            println!("  /file-permissions                - Show current file permissions");
+            println!("  /file-permissions help          - Show file permissions help");
+            println!("  /file-permissions test <op> <path> - Test if file operation is allowed");
+            println!("  /file-permissions enable        - Enable file security");
+            println!("  /file-permissions disable       - Disable file security");
+            println!("  /file-permissions ask-on        - Enable asking for permission");
+            println!("  /file-permissions ask-off       - Disable asking for permission");
+            println!("  /file-permissions reset-session - Reset session permissions");
+        }
+    }
+    
+    Ok(())
+}
+
+/// Save current file permissions to unified config file
+async fn save_file_permissions_to_config(agent: &Agent) -> Result<()> {
+    use crate::config::Config;
+    
+    // Load existing config to preserve other settings
+    let mut existing_config = Config::load(None).await?;
+    
+    // Get current file security settings from agent
+    let file_security_manager_ref = agent.get_file_security_manager().clone();
+    let file_security_manager = file_security_manager_ref.read().await;
+    let updated_file_security = file_security_manager.get_file_security().clone();
+    
+    // Update only the file_security settings
+    existing_config.file_security = updated_file_security;
+    
+    // Save the updated config
+    match existing_config.save(None).await {
+        Ok(_) => {
+            println!("{} File permissions saved to unified config", "💾".blue());
+        }
+        Err(e) => {
+            println!("{} Failed to save file permissions: {}", "⚠️".yellow(), e);
+        }
+    }
+    
+    Ok(())
+}
+
+/// Print file permissions help information
+fn print_file_permissions_help() {
+    println!("{}", "🔒 File Permissions Commands".cyan().bold());
+    println!();
+    println!("{}", "View File Permissions:".green().bold());
+    println!("  /file-permissions                - Show current file permissions and security settings");
+    println!("  /file-permissions show          - Alias for /file-permissions");
+    println!("  /file-permissions list          - Alias for /file-permissions");
+    println!("  /file-permissions help          - Show this help message");
+    println!();
+    println!("{}", "Testing:".green().bold());
+    println!("  /file-permissions test <op> <path> - Test if file operation is allowed");
+    println!("    Operations: write_file, edit_file, delete_file, create_directory");
+    println!();
+    println!("{}", "Security Settings:".green().bold());
+    println!("  /file-permissions enable        - Enable file security");
+    println!("  /file-permissions disable       - Disable file security");
+    println!("  /file-permissions ask-on        - Enable asking for permission");
+    println!("  /file-permissions ask-off       - Disable asking for permission");
+    println!("  /file-permissions reset-session - Reset session permissions");
+    println!();
+    println!("{}", "Permission Options:".green().bold());
+    println!("  When a file operation requires permission, you can choose:");
+    println!("  • Allow this operation only - One-time permission");
+    println!("  • Allow all file operations this session - Session-wide permission");
+    println!("  • Deny this operation - Block the operation");
+    println!();
+    println!("{}", "Security Tips:".yellow().bold());
+    println!("  • Enable 'ask for permission' for better security");
+    println!("  • Use 'Allow this operation only' for one-off edits");
+    println!("  • Use 'Allow all file operations this session' for trusted sessions");
+    println!("  • File operations include: write_file, edit_file, create_directory, delete_file");
+    println!("  • Read operations (read_file, list_directory) are always allowed");
+    println!("  • Session permissions are reset when you restart the agent");
+    println!();
+    println!("{}", "Examples:".green().bold());
+    println!("  /file-permissions test write_file /tmp/test.txt");
+    println!("  /file-permissions enable");
+    println!("  /file-permissions ask-on");
+    println!("  /file-permissions reset-session");
+    println!();
+}
+  /// Print permissions help information
 fn print_permissions_help() {
     println!("{}", "🔒 Permissions Commands".cyan().bold());
     println!();
@@ -906,6 +1103,7 @@ fn print_help() {
     println!("  /clear        - Clear all conversation context (keeps AGENTS.md if it exists)");
     println!("  /reset-stats  - Reset token usage statistics");
     println!("  /permissions  - Manage bash command security permissions");
+    println!("  /file-permissions  - Manage file operation security permissions");
     println!("  /mcp          - Manage MCP (Model Context Protocol) servers");
     println!("  /exit         - Exit the program");
     println!("  /quit         - Exit the program");
@@ -917,9 +1115,11 @@ fn print_help() {
     println!();
     println!("{}", "Security Commands:".green().bold());
     println!("  /permissions              - Show current bash security settings");
+    println!("  /file-permissions        - Show current file security settings");
     println!("  /permissions allow <cmd>  - Add command to allowlist");
     println!("  /permissions deny <cmd>   - Add command to denylist");
     println!("  /permissions test <cmd>  - Test if command is allowed");
+    println!("  /file-permissions test <op> <path> - Test if file operation is allowed");
     println!();
     println!("{}", "MCP Commands:".green().bold());
     println!("  /mcp list                    - List MCP servers");

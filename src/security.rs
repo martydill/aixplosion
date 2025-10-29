@@ -18,6 +18,16 @@ pub struct BashSecurity {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileSecurity {
+    /// Whether to ask for permission for file create/edit operations
+    pub ask_for_permission: bool,
+    /// Whether to enable file security mode at all
+    pub enabled: bool,
+    /// Whether to allow all file operations this session
+    pub allow_all_session: bool,
+}
+
 impl Default for BashSecurity {
     fn default() -> Self {
         Self {
@@ -89,6 +99,16 @@ impl Default for BashSecurity {
     }
 }
 
+impl Default for FileSecurity {
+    fn default() -> Self {
+        Self {
+            ask_for_permission: true,
+            enabled: true,
+            allow_all_session: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum PermissionResult {
     Allowed,
@@ -96,8 +116,186 @@ pub enum PermissionResult {
     RequiresPermission,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum FilePermissionResult {
+    Allowed,
+    Denied,
+    RequiresPermission,
+}
+
 pub struct BashSecurityManager {
     security: BashSecurity,
+}
+
+pub struct FileSecurityManager {
+    security: FileSecurity,
+}
+
+impl FileSecurityManager {
+    pub fn new(security: FileSecurity) -> Self {
+        Self { security }
+    }
+
+    /// Check if a file operation is allowed
+    pub fn check_file_permission(&mut self, operation: &str, path: &str) -> FilePermissionResult {
+        if !self.security.enabled {
+            debug!("File security is disabled, allowing operation: {} on {}", operation, path);
+            return FilePermissionResult::Allowed;
+        }
+
+        // If allow all session is enabled, allow all file operations
+        if self.security.allow_all_session {
+            debug!("Allow all session is enabled, allowing operation: {} on {}", operation, path);
+            return FilePermissionResult::Allowed;
+        }
+
+        // If ask_for_permission is enabled, require permission for all file operations
+        if self.security.ask_for_permission {
+            info!("File operation '{}' on '{}' requires user permission", operation, path);
+            FilePermissionResult::RequiresPermission
+        } else {
+            debug!("File operation '{}' on '{}' allowed (ask_for_permission is false)", operation, path);
+            FilePermissionResult::Allowed
+        }
+    }
+
+    /// Ask user for permission to perform a file operation
+    pub async fn ask_file_permission(&mut self, operation: &str, path: &str) -> Result<Option<bool>> {
+        if !self.security.ask_for_permission {
+            return Ok(Some(true));
+        }
+
+        println!();
+        println!("{}", "🔒 File Operation Security Check".yellow().bold());
+        println!("The following file operation requires permission:");
+        println!("  Operation: {}", operation.cyan());
+        println!("  Path: {}", path.cyan());
+        println!();
+        
+        let options = vec![
+            "Allow this operation only".to_string(),
+            "Allow all file operations this session".to_string(),
+            "Deny this operation".to_string(),
+        ];
+        
+        // Use tokio::task::spawn_blocking with timeout to prevent hanging
+        let options_clone = options.clone();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(30), // 30 second timeout
+            tokio::task::spawn_blocking(move || {
+                Select::new()
+                    .with_prompt("Select an option")
+                    .items(&options_clone)
+                    .default(options_clone.len() - 1) // Default to "Deny this operation" for safety
+                    .interact()
+            })
+        ).await;
+        
+        match result {
+            Ok(Ok(Ok(selection))) => {
+                self.handle_file_permission_selection(selection, operation, path).await
+            }
+            Ok(Ok(Err(e))) => {
+                error!("Failed to get user input: {}", e);
+                println!("{} Failed to get user input, denying file operation for safety", "⚠️".yellow());
+                Ok(None) // Deny for safety
+            }
+            Ok(Err(e)) => {
+                error!("Task join error: {}", e);
+                println!("{} Failed to get user input, denying file operation for safety", "⚠️".yellow());
+                Ok(None) // Deny for safety
+            }
+            Err(_) => {
+                error!("Permission dialog timed out after 30 seconds");
+                println!("{} Permission dialog timed out, denying file operation for safety", "⚠️".yellow());
+                Ok(None) // Deny for safety
+            }
+        }
+    }
+
+    /// Handle the user's file permission selection
+    async fn handle_file_permission_selection(&mut self, selection: usize, _operation: &str, _path: &str) -> Result<Option<bool>> {
+        match selection {
+            0 => {
+                // Allow this operation only
+                println!("{} File operation allowed for this time only", "✅".green());
+                Ok(Some(false)) // Allow but don't change session settings
+            }
+            1 => {
+                // Allow all file operations this session
+                println!("{} All file operations allowed for this session", "✅".green());
+                self.security.allow_all_session = true;
+                Ok(Some(true)) // Allow and set session flag
+            }
+            2 => {
+                // Deny this operation
+                println!("{} File operation denied", "❌".red());
+                Ok(None) // Deny
+            }
+            _ => {
+                println!("{} Invalid selection, denying file operation for safety", "⚠️".yellow());
+                Ok(None) // Deny for safety
+            }
+        }
+    }
+
+    /// Get current file security settings
+    pub fn get_file_security(&self) -> &FileSecurity {
+        &self.security
+    }
+
+    /// Update file security settings
+    pub fn update_file_security(&mut self, security: FileSecurity) {
+        self.security = security;
+    }
+
+    /// Reset allow all session flag
+    pub fn reset_session_permissions(&mut self) {
+        self.security.allow_all_session = false;
+    }
+
+    /// Display current file security settings
+    pub fn display_file_permissions(&self) {
+        println!();
+        println!("{}", "🔒 File Security Settings".cyan().bold());
+        println!();
+        
+        println!("{}", "Security Status:".green().bold());
+        let status = if self.security.enabled { 
+            "✅ Enabled".green().to_string() 
+        } else { 
+            "❌ Disabled".red().to_string() 
+        };
+        println!("  File Security: {}", status);
+        
+        let ask_status = if self.security.ask_for_permission { 
+            "✅ Enabled".green().to_string() 
+        } else { 
+            "❌ Disabled".red().to_string() 
+        };
+        println!("  Ask for permission: {}", ask_status);
+        
+        let session_status = if self.security.allow_all_session { 
+            "✅ Enabled".green().to_string() 
+        } else { 
+            "❌ Disabled".red().to_string() 
+        };
+        println!("  Allow all this session: {}", session_status);
+        println!();
+        
+        println!("{}", "File Security Tips:".yellow().bold());
+        println!("  • Enable 'ask for permission' for better security");
+        println!("  • Use 'Allow this operation only' for one-off edits");
+        println!("  • Use 'Allow all file operations this session' for trusted sessions");
+        println!("  • File operations include: write_file, edit_file, create_directory, delete_file");
+        println!("  • Read operations (read_file, list_directory) are always allowed");
+        println!();
+    }
+
+    /// Consume the file security manager and return the updated security settings
+    pub fn into_file_security(self) -> FileSecurity {
+        self.security
+    }
 }
 
 impl BashSecurityManager {

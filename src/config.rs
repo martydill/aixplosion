@@ -3,7 +3,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use std::collections::HashMap;
 use tokio::fs;
-use crate::security::BashSecurity;
+use crate::security::{BashSecurity, FileSecurity};
 use log::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +39,8 @@ pub struct Config {
     pub temperature: f32,
     pub default_system_prompt: Option<String>,
     pub bash_security: BashSecurity,
+    #[serde(skip)]
+    pub file_security: FileSecurity,
     pub mcp: McpConfig,
 }
 const DEFAULT_SYSTEM_PROMPT : &str = r#"
@@ -63,6 +65,7 @@ impl Default for Config {
             temperature: 0.7,
             default_system_prompt: DEFAULT_SYSTEM_PROMPT.to_string().into(),
             bash_security: BashSecurity::default(),
+            file_security: FileSecurity::default(),
             mcp: McpConfig::default(),
         }
     }
@@ -136,6 +139,13 @@ impl Config {
     /// Update bash security configuration and save to file
     pub async fn update_bash_security(&mut self, bash_security: BashSecurity) -> Result<()> {
         self.bash_security = bash_security;
+        self.save(None).await?;
+        Ok(())
+    }
+
+  /// Update file security configuration and save to file
+    pub async fn update_file_security(&mut self, file_security: FileSecurity) -> Result<()> {
+        self.file_security = file_security;
         self.save(None).await?;
         Ok(())
     }

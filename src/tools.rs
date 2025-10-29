@@ -182,7 +182,7 @@ pub async fn read_file(call: &ToolCall) -> Result<ToolResult> {
     }
 }
 
-pub async fn write_file(call: &ToolCall) -> Result<ToolResult> {
+pub async fn write_file(call: &ToolCall, file_security_manager: &mut crate::security::FileSecurityManager) -> Result<ToolResult> {
     let path = call.arguments.get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
@@ -197,6 +197,43 @@ pub async fn write_file(call: &ToolCall) -> Result<ToolResult> {
 
     let expanded_path = shellexpand::tilde(path);
     let absolute_path = Path::new(&*expanded_path).absolutize()?;
+
+    // Check file security permissions
+    match file_security_manager.check_file_permission("write_file", &absolute_path.to_string_lossy()) {
+        crate::security::FilePermissionResult::Allowed => {
+            debug!("File operation 'write_file' on '{}' is allowed by security policy", absolute_path.display());
+        }
+        crate::security::FilePermissionResult::Denied => {
+            return Ok(ToolResult {
+                tool_use_id,
+                content: format!("🔒 Security: File write operation on '{}' is not allowed by security policy.", absolute_path.display()),
+                is_error: true,
+            });
+        }
+        crate::security::FilePermissionResult::RequiresPermission => {
+            // Ask user for permission
+            match file_security_manager.ask_file_permission("write_file", &absolute_path.to_string_lossy()).await {
+                Ok(Some(_)) => {
+                    // User granted permission
+                    info!("User granted permission for file write operation: {}", absolute_path.display());
+                }
+                Ok(None) => {
+                    return Ok(ToolResult {
+                        tool_use_id,
+                        content: format!("🔒 Security: Permission denied for file write operation on '{}'", absolute_path.display()),
+                        is_error: true,
+                    });
+                }
+                Err(e) => {
+                    return Ok(ToolResult {
+                        tool_use_id,
+                        content: format!("🔒 Security: Error checking permission for file write operation on '{}': {}", absolute_path.display(), e),
+                        is_error: true,
+                    });
+                }
+            }
+        }
+    }
 
     // Create parent directory if it doesn't exist
     if let Some(parent) = absolute_path.parent() {
@@ -237,7 +274,7 @@ fn normalize_line_endings(text: &str, line_ending: &str) -> String {
     text.replace("\r\n", "\n").replace('\n', line_ending)
 }
 
-pub async fn edit_file(call: &ToolCall) -> Result<ToolResult> {
+pub async fn edit_file(call: &ToolCall, file_security_manager: &mut crate::security::FileSecurityManager) -> Result<ToolResult> {
     let path = call.arguments.get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
@@ -256,6 +293,43 @@ pub async fn edit_file(call: &ToolCall) -> Result<ToolResult> {
 
     let expanded_path = shellexpand::tilde(path);
     let absolute_path = Path::new(&*expanded_path).absolutize()?;
+
+    // Check file security permissions
+    match file_security_manager.check_file_permission("edit_file", &absolute_path.to_string_lossy()) {
+        crate::security::FilePermissionResult::Allowed => {
+            debug!("File operation 'edit_file' on '{}' is allowed by security policy", absolute_path.display());
+        }
+        crate::security::FilePermissionResult::Denied => {
+            return Ok(ToolResult {
+                tool_use_id,
+                content: format!("🔒 Security: File edit operation on '{}' is not allowed by security policy.", absolute_path.display()),
+                is_error: true,
+            });
+        }
+        crate::security::FilePermissionResult::RequiresPermission => {
+            // Ask user for permission
+            match file_security_manager.ask_file_permission("edit_file", &absolute_path.to_string_lossy()).await {
+                Ok(Some(_)) => {
+                    // User granted permission
+                    info!("User granted permission for file edit operation: {}", absolute_path.display());
+                }
+                Ok(None) => {
+                    return Ok(ToolResult {
+                        tool_use_id,
+                        content: format!("🔒 Security: Permission denied for file edit operation on '{}'", absolute_path.display()),
+                        is_error: true,
+                    });
+                }
+                Err(e) => {
+                    return Ok(ToolResult {
+                        tool_use_id,
+                        content: format!("🔒 Security: Error checking permission for file edit operation on '{}': {}", absolute_path.display(), e),
+                        is_error: true,
+                    });
+                }
+            }
+        }
+    }
 
     // Read existing file
     match fs::read_to_string(&absolute_path).await {
@@ -300,7 +374,7 @@ pub async fn edit_file(call: &ToolCall) -> Result<ToolResult> {
     }
 }
 
-pub async fn delete_file(call: &ToolCall) -> Result<ToolResult> {
+pub async fn delete_file(call: &ToolCall, file_security_manager: &mut crate::security::FileSecurityManager) -> Result<ToolResult> {
     let path = call.arguments.get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
@@ -311,6 +385,43 @@ pub async fn delete_file(call: &ToolCall) -> Result<ToolResult> {
 
     let expanded_path = shellexpand::tilde(path);
     let absolute_path = Path::new(&*expanded_path).absolutize()?;
+
+    // Check file security permissions
+    match file_security_manager.check_file_permission("delete_file", &absolute_path.to_string_lossy()) {
+        crate::security::FilePermissionResult::Allowed => {
+            debug!("File operation 'delete_file' on '{}' is allowed by security policy", absolute_path.display());
+        }
+        crate::security::FilePermissionResult::Denied => {
+            return Ok(ToolResult {
+                tool_use_id,
+                content: format!("🔒 Security: File delete operation on '{}' is not allowed by security policy.", absolute_path.display()),
+                is_error: true,
+            });
+        }
+        crate::security::FilePermissionResult::RequiresPermission => {
+            // Ask user for permission
+            match file_security_manager.ask_file_permission("delete_file", &absolute_path.to_string_lossy()).await {
+                Ok(Some(_)) => {
+                    // User granted permission
+                    info!("User granted permission for file delete operation: {}", absolute_path.display());
+                }
+                Ok(None) => {
+                    return Ok(ToolResult {
+                        tool_use_id,
+                        content: format!("🔒 Security: Permission denied for file delete operation on '{}'", absolute_path.display()),
+                        is_error: true,
+                    });
+                }
+                Err(e) => {
+                    return Ok(ToolResult {
+                        tool_use_id,
+                        content: format!("🔒 Security: Error checking permission for file delete operation on '{}': {}", absolute_path.display(), e),
+                        is_error: true,
+                    });
+                }
+            }
+        }
+    }
 
     match fs::metadata(&absolute_path).await {
         Ok(metadata) => {
@@ -350,7 +461,7 @@ pub async fn delete_file(call: &ToolCall) -> Result<ToolResult> {
     }
 }
 
-pub async fn create_directory(call: &ToolCall) -> Result<ToolResult> {
+pub async fn create_directory(call: &ToolCall, file_security_manager: &mut crate::security::FileSecurityManager) -> Result<ToolResult> {
     let path = call.arguments.get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
@@ -361,6 +472,43 @@ pub async fn create_directory(call: &ToolCall) -> Result<ToolResult> {
 
     let expanded_path = shellexpand::tilde(path);
     let absolute_path = Path::new(&*expanded_path).absolutize()?;
+
+    // Check file security permissions
+    match file_security_manager.check_file_permission("create_directory", &absolute_path.to_string_lossy()) {
+        crate::security::FilePermissionResult::Allowed => {
+            debug!("File operation 'create_directory' on '{}' is allowed by security policy", absolute_path.display());
+        }
+        crate::security::FilePermissionResult::Denied => {
+            return Ok(ToolResult {
+                tool_use_id,
+                content: format!("🔒 Security: Directory create operation on '{}' is not allowed by security policy.", absolute_path.display()),
+                is_error: true,
+            });
+        }
+        crate::security::FilePermissionResult::RequiresPermission => {
+            // Ask user for permission
+            match file_security_manager.ask_file_permission("create_directory", &absolute_path.to_string_lossy()).await {
+                Ok(Some(_)) => {
+                    // User granted permission
+                    info!("User granted permission for directory create operation: {}", absolute_path.display());
+                }
+                Ok(None) => {
+                    return Ok(ToolResult {
+                        tool_use_id,
+                        content: format!("🔒 Security: Permission denied for directory create operation on '{}'", absolute_path.display()),
+                        is_error: true,
+                    });
+                }
+                Err(e) => {
+                    return Ok(ToolResult {
+                        tool_use_id,
+                        content: format!("🔒 Security: Error checking permission for directory create operation on '{}': {}", absolute_path.display(), e),
+                        is_error: true,
+                    });
+                }
+            }
+        }
+    }
 
     match fs::create_dir_all(&absolute_path).await {
         Ok(_) => Ok(ToolResult {
@@ -497,27 +645,35 @@ fn read_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<O
     })
 }
 
-fn write_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+fn write_file_sync(_call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
     Box::pin(async move {
-        write_file(&call).await
+        // This function signature needs to be updated to handle file security manager
+        // For now, we'll create a placeholder that shows an error
+        Err(anyhow::anyhow!("write_file_sync called without file security manager. This indicates an issue with tool recreation."))
     })
 }
 
-fn edit_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+fn edit_file_sync(_call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
     Box::pin(async move {
-        edit_file(&call).await
+        // This function signature needs to be updated to handle file security manager
+        // For now, we'll create a placeholder that shows an error
+        Err(anyhow::anyhow!("edit_file_sync called without file security manager. This indicates an issue with tool recreation."))
     })
 }
 
-fn delete_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+fn delete_file_sync(_call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
     Box::pin(async move {
-        delete_file(&call).await
+        // This function signature needs to be updated to handle file security manager
+        // For now, we'll create a placeholder that shows an error
+        Err(anyhow::anyhow!("delete_file_sync called without file security manager. This indicates an issue with tool recreation."))
     })
 }
 
-fn create_directory_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+fn create_directory_sync(_call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
     Box::pin(async move {
-        create_directory(&call).await
+        // This function signature needs to be updated to handle file security manager
+        // For now, we'll create a placeholder that shows an error
+        Err(anyhow::anyhow!("create_directory_sync called without file security manager. This indicates an issue with tool recreation."))
     })
 }
 

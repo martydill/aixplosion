@@ -5,14 +5,14 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use log::{debug, info, warn, error};
 use crate::mcp::McpManager;
-use crate::security::BashSecurityManager;
+use crate::security::{BashSecurityManager, FileSecurityManager};
 use regex::Regex;
 use serde_json::{json, Value};
 use colored::*;
 
 use crate::config::Config;
 use crate::anthropic::{AnthropicClient, Message, ContentBlock, Usage};
-use crate::tools::{Tool, ToolResult, get_builtin_tools, bash, ToolCall};
+use crate::tools::{Tool, ToolResult, get_builtin_tools, bash, write_file, edit_file, delete_file, create_directory, ToolCall};
 use crate::tool_display::{ToolCallDisplay, SimpleToolDisplay, should_use_pretty_output, ToolDisplay};
 
 #[derive(Debug, Clone)]
@@ -58,6 +58,7 @@ pub struct Agent {
     mcp_manager: Option<Arc<McpManager>>,
     last_mcp_tools_version: u64,
     bash_security_manager: Arc<RwLock<BashSecurityManager>>,
+    file_security_manager: Arc<RwLock<FileSecurityManager>>,
 }
 
 impl Agent {
@@ -71,6 +72,11 @@ impl Agent {
         // Create bash security manager
         let bash_security_manager = Arc::new(RwLock::new(
             BashSecurityManager::new(config.bash_security.clone())
+        ));
+
+        // Create file security manager
+        let file_security_manager = Arc::new(RwLock::new(
+            FileSecurityManager::new(config.file_security.clone())
         ));
 
         // Add bash tool with security to the initial tools
@@ -115,6 +121,7 @@ impl Agent {
             mcp_manager: None,
             last_mcp_tools_version: 0,
             bash_security_manager,
+            file_security_manager,
         }
     }
 
@@ -171,6 +178,149 @@ impl Agent {
                     })
                 }),
             });
+
+            // Add file operation tools with security
+            let file_security_manager = self.file_security_manager.clone();
+            
+            // write_file tool
+            let file_security_manager_clone = file_security_manager.clone();
+            tools.insert("write_file".to_string(), Tool {
+                name: "write_file".to_string(),
+                description: "Write content to a file (creates file if it doesn't exist)".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path to the file to write"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Content to write to the file"
+                        }
+                    },
+                    "required": ["path", "content"]
+                }),
+                handler: Box::new(move |call: ToolCall| {
+                    let file_security_manager = file_security_manager_clone.clone();
+                    Box::pin(async move {
+                        // Create a wrapper function that handles the mutable reference
+                        async fn write_file_wrapper(
+                            call: ToolCall,
+                            file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                        ) -> Result<ToolResult> {
+                            let mut manager = file_security_manager.write().await;
+                            write_file(&call, &mut *manager).await
+                        }
+                        
+                        write_file_wrapper(call, file_security_manager).await
+                    })
+                }),
+            });
+
+            // edit_file tool
+            let file_security_manager_clone = file_security_manager.clone();
+            tools.insert("edit_file".to_string(), Tool {
+                name: "edit_file".to_string(),
+                description: "Replace specific text in a file with new text".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path to the file to edit"
+                        },
+                        "old_text": {
+                            "type": "string",
+                            "description": "Text to replace"
+                        },
+                        "new_text": {
+                            "type": "string",
+                            "description": "New text to replace with"
+                        }
+                    },
+                    "required": ["path", "old_text", "new_text"]
+                }),
+                handler: Box::new(move |call: ToolCall| {
+                    let file_security_manager = file_security_manager_clone.clone();
+                    Box::pin(async move {
+                        // Create a wrapper function that handles the mutable reference
+                        async fn edit_file_wrapper(
+                            call: ToolCall,
+                            file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                        ) -> Result<ToolResult> {
+                            let mut manager = file_security_manager.write().await;
+                            edit_file(&call, &mut *manager).await
+                        }
+                        
+                        edit_file_wrapper(call, file_security_manager).await
+                    })
+                }),
+            });
+
+            // delete_file tool
+            let file_security_manager_clone = file_security_manager.clone();
+            tools.insert("delete_file".to_string(), Tool {
+                name: "delete_file".to_string(),
+                description: "Delete a file or directory".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path to the file or directory to delete"
+                        }
+                    },
+                    "required": ["path"]
+                }),
+                handler: Box::new(move |call: ToolCall| {
+                    let file_security_manager = file_security_manager_clone.clone();
+                    Box::pin(async move {
+                        // Create a wrapper function that handles the mutable reference
+                        async fn delete_file_wrapper(
+                            call: ToolCall,
+                            file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                        ) -> Result<ToolResult> {
+                            let mut manager = file_security_manager.write().await;
+                            delete_file(&call, &mut *manager).await
+                        }
+                        
+                        delete_file_wrapper(call, file_security_manager).await
+                    })
+                }),
+            });
+
+            // create_directory tool
+            let file_security_manager_clone = file_security_manager.clone();
+            tools.insert("create_directory".to_string(), Tool {
+                name: "create_directory".to_string(),
+                description: "Create a directory (and parent directories if needed)".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path to the directory to create"
+                        }
+                    },
+                    "required": ["path"]
+                }),
+                handler: Box::new(move |call: ToolCall| {
+                    let file_security_manager = file_security_manager_clone.clone();
+                    Box::pin(async move {
+                        // Create a wrapper function that handles the mutable reference
+                        async fn create_directory_wrapper(
+                            call: ToolCall,
+                            file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                        ) -> Result<ToolResult> {
+                            let mut manager = file_security_manager.write().await;
+                            create_directory(&call, &mut *manager).await
+                        }
+                        
+                        create_directory_wrapper(call, file_security_manager).await
+                    })
+                }),
+            });
             
             // Get all MCP tools
             match mcp_manager.get_all_tools().await {
@@ -197,7 +347,7 @@ impl Agent {
             self.last_mcp_tools_version = 0;
             self.refresh_mcp_tools().await
         } else {
-            // Even without MCP manager, ensure bash tool is available
+            // Even without MCP manager, ensure bash and file tools are available
             let mut tools = self.tools.write().await;
             if !tools.contains_key("bash") {
                 let security_manager = self.bash_security_manager.clone();
@@ -227,6 +377,153 @@ impl Agent {
                             }
                             
                             bash_wrapper(call, security_manager).await
+                        })
+                    }),
+                });
+            }
+
+            // Ensure file operation tools are available
+            let file_security_manager = self.file_security_manager.clone();
+            
+            if !tools.contains_key("write_file") {
+                let file_security_manager_clone = file_security_manager.clone();
+                tools.insert("write_file".to_string(), Tool {
+                    name: "write_file".to_string(),
+                    description: "Write content to a file (creates file if it doesn't exist)".to_string(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Path to the file to write"
+                            },
+                            "content": {
+                                "type": "string",
+                                "description": "Content to write to the file"
+                            }
+                        },
+                        "required": ["path", "content"]
+                    }),
+                    handler: Box::new(move |call: ToolCall| {
+                        let file_security_manager = file_security_manager_clone.clone();
+                        Box::pin(async move {
+                            // Create a wrapper function that handles the mutable reference
+                            async fn write_file_wrapper(
+                                call: ToolCall,
+                                file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                            ) -> Result<ToolResult> {
+                                let mut manager = file_security_manager.write().await;
+                                write_file(&call, &mut *manager).await
+                            }
+                            
+                            write_file_wrapper(call, file_security_manager).await
+                        })
+                    }),
+                });
+            }
+
+            if !tools.contains_key("edit_file") {
+                let file_security_manager_clone = file_security_manager.clone();
+                tools.insert("edit_file".to_string(), Tool {
+                    name: "edit_file".to_string(),
+                    description: "Replace specific text in a file with new text".to_string(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Path to the file to edit"
+                            },
+                            "old_text": {
+                                "type": "string",
+                                "description": "Text to replace"
+                            },
+                            "new_text": {
+                                "type": "string",
+                                "description": "New text to replace with"
+                            }
+                        },
+                        "required": ["path", "old_text", "new_text"]
+                    }),
+                    handler: Box::new(move |call: ToolCall| {
+                        let file_security_manager = file_security_manager_clone.clone();
+                        Box::pin(async move {
+                            // Create a wrapper function that handles the mutable reference
+                            async fn edit_file_wrapper(
+                                call: ToolCall,
+                                file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                            ) -> Result<ToolResult> {
+                                let mut manager = file_security_manager.write().await;
+                                edit_file(&call, &mut *manager).await
+                            }
+                            
+                            edit_file_wrapper(call, file_security_manager).await
+                        })
+                    }),
+                });
+            }
+
+            if !tools.contains_key("delete_file") {
+                let file_security_manager_clone = file_security_manager.clone();
+                tools.insert("delete_file".to_string(), Tool {
+                    name: "delete_file".to_string(),
+                    description: "Delete a file or directory".to_string(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Path to the file or directory to delete"
+                            }
+                        },
+                        "required": ["path"]
+                    }),
+                    handler: Box::new(move |call: ToolCall| {
+                        let file_security_manager = file_security_manager_clone.clone();
+                        Box::pin(async move {
+                            // Create a wrapper function that handles the mutable reference
+                            async fn delete_file_wrapper(
+                                call: ToolCall,
+                                file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                            ) -> Result<ToolResult> {
+                                let mut manager = file_security_manager.write().await;
+                                delete_file(&call, &mut *manager).await
+                            }
+                            
+                            delete_file_wrapper(call, file_security_manager).await
+                        })
+                    }),
+                });
+            }
+
+            if !tools.contains_key("create_directory") {
+                let file_security_manager_clone = file_security_manager.clone();
+                tools.insert("create_directory".to_string(), Tool {
+                    name: "create_directory".to_string(),
+                    description: "Create a directory (and parent directories if needed)".to_string(),
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Path to the directory to create"
+                            }
+                        },
+                        "required": ["path"]
+                    }),
+                    handler: Box::new(move |call: ToolCall| {
+                        let file_security_manager = file_security_manager_clone.clone();
+                        Box::pin(async move {
+                            // Create a wrapper function that handles the mutable reference
+                            async fn create_directory_wrapper(
+                                call: ToolCall,
+                                file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                            ) -> Result<ToolResult> {
+                                let mut manager = file_security_manager.write().await;
+                                create_directory(&call, &mut *manager).await
+                            }
+                            
+                            create_directory_wrapper(call, file_security_manager).await
                         })
                     }),
                 });
@@ -588,6 +885,302 @@ impl Agent {
                             }
                         };
                         drop(manager); // Explicitly drop the lock guard
+                    } else if call.name == "write_file" {
+                        // Handle write_file tool with security
+                        let file_security_manager = self.file_security_manager.clone();
+                        let call_clone = call.clone();
+                        
+                        let mut manager = file_security_manager.write().await;
+                        match write_file(&call_clone, &mut *manager).await {
+                            Ok(result) => {
+                                debug!("Write file tool executed successfully");
+                                
+                                // Check if permissions were updated and save to config
+                                if result.content.contains("✅ All file operations allowed for this session") {
+                                    info!("File permissions updated, scheduling save to config file");
+                                    let file_security_manager_clone = self.file_security_manager.clone();
+                                    tokio::spawn(async move {
+                                        // Load existing config to preserve other settings
+                                        match crate::config::Config::load(None).await {
+                                            Ok(mut existing_config) => {
+                                                // Get current file security settings
+                                                let current_file_security = file_security_manager_clone.read().await;
+                                                let updated_file_security = current_file_security.get_file_security().clone();
+                                                drop(current_file_security);
+                                                
+                                                // Update only the file_security settings
+                                                existing_config.file_security = updated_file_security;
+                                                
+                                                // Save the updated config
+                                                match existing_config.save(None).await {
+                                                    Ok(_) => {
+                                                        info!("Updated file security settings saved to config (background)");
+                                                    }
+                                                    Err(e) => {
+                                                        warn!("Failed to save file security settings (background): {}", e);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to load config for saving file permissions (background): {}", e);
+                                            }
+                                        }
+                                    });
+                                }
+                                
+                                if result.is_error {
+                                    if should_use_pretty_output() {
+                                        display.complete_error(&result.content);
+                                    } else {
+                                        display.complete_error(&result.content);
+                                    }
+                                } else {
+                                    if should_use_pretty_output() {
+                                        display.complete_success(&result.content);
+                                    } else {
+                                        display.complete_success(&result.content);
+                                    }
+                                }
+                                results.push(result);
+                            },
+                            Err(e) => {
+                                error!("Error executing write file tool: {}", e);
+                                let error_content = format!("Error executing write file tool: {}", e);
+                                if should_use_pretty_output() {
+                                    display.complete_error(&error_content);
+                                } else {
+                                    display.complete_error(&error_content);
+                                }
+                                results.push(ToolResult {
+                                    tool_use_id: call.id.clone(),
+                                    content: error_content,
+                                    is_error: true,
+                                });
+                            }
+                        };
+                        drop(manager); // Explicitly drop the lock guard
+                    } else if call.name == "edit_file" {
+                        // Handle edit_file tool with security
+                        let file_security_manager = self.file_security_manager.clone();
+                        let call_clone = call.clone();
+                        
+                        let mut manager = file_security_manager.write().await;
+                        match edit_file(&call_clone, &mut *manager).await {
+                            Ok(result) => {
+                                debug!("Edit file tool executed successfully");
+                                
+                                // Check if permissions were updated and save to config
+                                if result.content.contains("✅ All file operations allowed for this session") {
+                                    info!("File permissions updated, scheduling save to config file");
+                                    let file_security_manager_clone = self.file_security_manager.clone();
+                                    tokio::spawn(async move {
+                                        // Load existing config to preserve other settings
+                                        match crate::config::Config::load(None).await {
+                                            Ok(mut existing_config) => {
+                                                // Get current file security settings
+                                                let current_file_security = file_security_manager_clone.read().await;
+                                                let updated_file_security = current_file_security.get_file_security().clone();
+                                                drop(current_file_security);
+                                                
+                                                // Update only the file_security settings
+                                                existing_config.file_security = updated_file_security;
+                                                
+                                                // Save the updated config
+                                                match existing_config.save(None).await {
+                                                    Ok(_) => {
+                                                        info!("Updated file security settings saved to config (background)");
+                                                    }
+                                                    Err(e) => {
+                                                        warn!("Failed to save file security settings (background): {}", e);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to load config for saving file permissions (background): {}", e);
+                                            }
+                                        }
+                                    });
+                                }
+                                
+                                if result.is_error {
+                                    if should_use_pretty_output() {
+                                        display.complete_error(&result.content);
+                                    } else {
+                                        display.complete_error(&result.content);
+                                    }
+                                } else {
+                                    if should_use_pretty_output() {
+                                        display.complete_success(&result.content);
+                                    } else {
+                                        display.complete_success(&result.content);
+                                    }
+                                }
+                                results.push(result);
+                            },
+                            Err(e) => {
+                                error!("Error executing edit file tool: {}", e);
+                                let error_content = format!("Error executing edit file tool: {}", e);
+                                if should_use_pretty_output() {
+                                    display.complete_error(&error_content);
+                                } else {
+                                    display.complete_error(&error_content);
+                                }
+                                results.push(ToolResult {
+                                    tool_use_id: call.id.clone(),
+                                    content: error_content,
+                                    is_error: true,
+                                });
+                            }
+                        };
+                        drop(manager); // Explicitly drop the lock guard
+                    } else if call.name == "delete_file" {
+                        // Handle delete_file tool with security
+                        let file_security_manager = self.file_security_manager.clone();
+                        let call_clone = call.clone();
+                        
+                        let mut manager = file_security_manager.write().await;
+                        match delete_file(&call_clone, &mut *manager).await {
+                            Ok(result) => {
+                                debug!("Delete file tool executed successfully");
+                                
+                                // Check if permissions were updated and save to config
+                                if result.content.contains("✅ All file operations allowed for this session") {
+                                    info!("File permissions updated, scheduling save to config file");
+                                    let file_security_manager_clone = self.file_security_manager.clone();
+                                    tokio::spawn(async move {
+                                        // Load existing config to preserve other settings
+                                        match crate::config::Config::load(None).await {
+                                            Ok(mut existing_config) => {
+                                                // Get current file security settings
+                                                let current_file_security = file_security_manager_clone.read().await;
+                                                let updated_file_security = current_file_security.get_file_security().clone();
+                                                drop(current_file_security);
+                                                
+                                                // Update only the file_security settings
+                                                existing_config.file_security = updated_file_security;
+                                                
+                                                // Save the updated config
+                                                match existing_config.save(None).await {
+                                                    Ok(_) => {
+                                                        info!("Updated file security settings saved to config (background)");
+                                                    }
+                                                    Err(e) => {
+                                                        warn!("Failed to save file security settings (background): {}", e);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to load config for saving file permissions (background): {}", e);
+                                            }
+                                        }
+                                    });
+                                }
+                                
+                                if result.is_error {
+                                    if should_use_pretty_output() {
+                                        display.complete_error(&result.content);
+                                    } else {
+                                        display.complete_error(&result.content);
+                                    }
+                                } else {
+                                    if should_use_pretty_output() {
+                                        display.complete_success(&result.content);
+                                    } else {
+                                        display.complete_success(&result.content);
+                                    }
+                                }
+                                results.push(result);
+                            },
+                            Err(e) => {
+                                error!("Error executing delete file tool: {}", e);
+                                let error_content = format!("Error executing delete file tool: {}", e);
+                                if should_use_pretty_output() {
+                                    display.complete_error(&error_content);
+                                } else {
+                                    display.complete_error(&error_content);
+                                }
+                                results.push(ToolResult {
+                                    tool_use_id: call.id.clone(),
+                                    content: error_content,
+                                    is_error: true,
+                                });
+                            }
+                        };
+                        drop(manager); // Explicitly drop the lock guard
+                    } else if call.name == "create_directory" {
+                        // Handle create_directory tool with security
+                        let file_security_manager = self.file_security_manager.clone();
+                        let call_clone = call.clone();
+                        
+                        let mut manager = file_security_manager.write().await;
+                        match create_directory(&call_clone, &mut *manager).await {
+                            Ok(result) => {
+                                debug!("Create directory tool executed successfully");
+                                
+                                // Check if permissions were updated and save to config
+                                if result.content.contains("✅ All file operations allowed for this session") {
+                                    info!("File permissions updated, scheduling save to config file");
+                                    let file_security_manager_clone = self.file_security_manager.clone();
+                                    tokio::spawn(async move {
+                                        // Load existing config to preserve other settings
+                                        match crate::config::Config::load(None).await {
+                                            Ok(mut existing_config) => {
+                                                // Get current file security settings
+                                                let current_file_security = file_security_manager_clone.read().await;
+                                                let updated_file_security = current_file_security.get_file_security().clone();
+                                                drop(current_file_security);
+                                                
+                                                // Update only the file_security settings
+                                                existing_config.file_security = updated_file_security;
+                                                
+                                                // Save the updated config
+                                                match existing_config.save(None).await {
+                                                    Ok(_) => {
+                                                        info!("Updated file security settings saved to config (background)");
+                                                    }
+                                                    Err(e) => {
+                                                        warn!("Failed to save file security settings (background): {}", e);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to load config for saving file permissions (background): {}", e);
+                                            }
+                                        }
+                                    });
+                                }
+                                
+                                if result.is_error {
+                                    if should_use_pretty_output() {
+                                        display.complete_error(&result.content);
+                                    } else {
+                                        display.complete_error(&result.content);
+                                    }
+                                } else {
+                                    if should_use_pretty_output() {
+                                        display.complete_success(&result.content);
+                                    } else {
+                                        display.complete_success(&result.content);
+                                    }
+                                }
+                                results.push(result);
+                            },
+                            Err(e) => {
+                                error!("Error executing create directory tool: {}", e);
+                                let error_content = format!("Error executing create directory tool: {}", e);
+                                if should_use_pretty_output() {
+                                    display.complete_error(&error_content);
+                                } else {
+                                    display.complete_error(&error_content);
+                                }
+                                results.push(ToolResult {
+                                    tool_use_id: call.id.clone(),
+                                    content: error_content,
+                                    is_error: true,
+                                });
+                            }
+                        };
+                        drop(manager); // Explicitly drop the lock guard
                     } else if let Some(tool) = {
                         let tools = self.tools.read().await;
                         tools.get(&call.name).cloned()
@@ -863,6 +1456,11 @@ impl Agent {
         self.bash_security_manager.clone()
     }
 
+  /// Get the file security manager
+    pub fn get_file_security_manager(&self) -> Arc<RwLock<FileSecurityManager>> {
+        self.file_security_manager.clone()
+    }
+
     /// Get current configuration (for saving permissions)
     pub async fn get_config_for_save(&self) -> crate::config::Config {
         use crate::config::Config;
@@ -880,6 +1478,7 @@ impl Agent {
             temperature: 0.7,
             default_system_prompt: self.system_prompt.clone(),
             bash_security: current_security,
+            file_security: crate::security::FileSecurity::default(),
             mcp: crate::config::McpConfig::default(),
         }
     }
