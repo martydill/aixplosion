@@ -59,10 +59,11 @@ pub struct Agent {
     last_mcp_tools_version: u64,
     bash_security_manager: Arc<RwLock<BashSecurityManager>>,
     file_security_manager: Arc<RwLock<FileSecurityManager>>,
+    yolo_mode: bool,
 }
 
 impl Agent {
-    pub fn new(config: Config, model: String) -> Self {
+    pub fn new(config: Config, model: String, yolo_mode: bool) -> Self {
         let client = AnthropicClient::new(config.api_key, config.base_url);
         let mut tools: std::collections::HashMap<String, Tool> = get_builtin_tools()
             .into_iter()
@@ -81,9 +82,14 @@ impl Agent {
 
         // Add bash tool with security to the initial tools
         let security_manager = bash_security_manager.clone();
+        let yolo_mode = yolo_mode;
         tools.insert("bash".to_string(), Tool {
             name: "bash".to_string(),
-            description: "Execute shell commands and return the output (with security)".to_string(),
+            description: if yolo_mode {
+                "Execute shell commands and return the output (YOLO MODE - no security checks)".to_string()
+            } else {
+                "Execute shell commands and return the output (with security)".to_string()
+            },
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -96,17 +102,19 @@ impl Agent {
             }),
             handler: Box::new(move |call: ToolCall| {
                 let security_manager = security_manager.clone();
+                let yolo_mode = yolo_mode;
                 Box::pin(async move {
                     // Create a wrapper function that handles the mutable reference
                     async fn bash_wrapper(
                         call: ToolCall,
                         security_manager: Arc<RwLock<BashSecurityManager>>,
+                        yolo_mode: bool,
                     ) -> Result<ToolResult> {
                         let mut manager = security_manager.write().await;
-                        bash(&call, &mut *manager).await
+                        bash(&call, &mut *manager, yolo_mode).await
                     }
                     
-                    bash_wrapper(call, security_manager).await
+                    bash_wrapper(call, security_manager, yolo_mode).await
                 })
             }),
         });
@@ -122,6 +130,7 @@ impl Agent {
             last_mcp_tools_version: 0,
             bash_security_manager,
             file_security_manager,
+            yolo_mode,
         }
     }
 
@@ -149,9 +158,14 @@ impl Agent {
             
             // Add bash tool with security
             let security_manager = self.bash_security_manager.clone();
+            let yolo_mode = self.yolo_mode;
             tools.insert("bash".to_string(), Tool {
                 name: "bash".to_string(),
-                description: "Execute shell commands and return the output (with security)".to_string(),
+                description: if yolo_mode {
+                    "Execute shell commands and return the output (YOLO MODE - no security checks)".to_string()
+                } else {
+                    "Execute shell commands and return the output (with security)".to_string()
+                },
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -164,29 +178,36 @@ impl Agent {
                 }),
                 handler: Box::new(move |call: ToolCall| {
                     let security_manager = security_manager.clone();
+                    let yolo_mode = yolo_mode;
                     Box::pin(async move {
                         // Create a wrapper function that handles the mutable reference
                         async fn bash_wrapper(
                             call: ToolCall,
                             security_manager: Arc<RwLock<BashSecurityManager>>,
+                            yolo_mode: bool,
                         ) -> Result<ToolResult> {
                             let mut manager = security_manager.write().await;
-                            bash(&call, &mut *manager).await
+                            bash(&call, &mut *manager, yolo_mode).await
                         }
                         
-                        bash_wrapper(call, security_manager).await
+                        bash_wrapper(call, security_manager, yolo_mode).await
                     })
                 }),
             });
 
             // Add file operation tools with security
             let file_security_manager = self.file_security_manager.clone();
+            let yolo_mode = self.yolo_mode;
             
             // write_file tool
             let file_security_manager_clone = file_security_manager.clone();
             tools.insert("write_file".to_string(), Tool {
                 name: "write_file".to_string(),
-                description: "Write content to a file (creates file if it doesn't exist)".to_string(),
+                description: if yolo_mode {
+                    "Write content to a file (YOLO MODE - no security checks)".to_string()
+                } else {
+                    "Write content to a file (creates file if it doesn't exist)".to_string()
+                },
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -203,17 +224,19 @@ impl Agent {
                 }),
                 handler: Box::new(move |call: ToolCall| {
                     let file_security_manager = file_security_manager_clone.clone();
+                    let yolo_mode = yolo_mode;
                     Box::pin(async move {
                         // Create a wrapper function that handles the mutable reference
                         async fn write_file_wrapper(
                             call: ToolCall,
                             file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                            yolo_mode: bool,
                         ) -> Result<ToolResult> {
                             let mut manager = file_security_manager.write().await;
-                            write_file(&call, &mut *manager).await
+                            write_file(&call, &mut *manager, yolo_mode).await
                         }
                         
-                        write_file_wrapper(call, file_security_manager).await
+                        write_file_wrapper(call, file_security_manager, yolo_mode).await
                     })
                 }),
             });
@@ -222,7 +245,11 @@ impl Agent {
             let file_security_manager_clone = file_security_manager.clone();
             tools.insert("edit_file".to_string(), Tool {
                 name: "edit_file".to_string(),
-                description: "Replace specific text in a file with new text".to_string(),
+                description: if yolo_mode {
+                    "Edit a file (YOLO MODE - no security checks)".to_string()
+                } else {
+                    "Replace specific text in a file with new text".to_string()
+                },
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -243,17 +270,19 @@ impl Agent {
                 }),
                 handler: Box::new(move |call: ToolCall| {
                     let file_security_manager = file_security_manager_clone.clone();
+                    let yolo_mode = yolo_mode;
                     Box::pin(async move {
                         // Create a wrapper function that handles the mutable reference
                         async fn edit_file_wrapper(
                             call: ToolCall,
                             file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                            yolo_mode: bool,
                         ) -> Result<ToolResult> {
                             let mut manager = file_security_manager.write().await;
-                            edit_file(&call, &mut *manager).await
+                            edit_file(&call, &mut *manager, yolo_mode).await
                         }
                         
-                        edit_file_wrapper(call, file_security_manager).await
+                        edit_file_wrapper(call, file_security_manager, yolo_mode).await
                     })
                 }),
             });
@@ -262,7 +291,11 @@ impl Agent {
             let file_security_manager_clone = file_security_manager.clone();
             tools.insert("delete_file".to_string(), Tool {
                 name: "delete_file".to_string(),
-                description: "Delete a file or directory".to_string(),
+                description: if yolo_mode {
+                    "Delete a file or directory (YOLO MODE - no security checks)".to_string()
+                } else {
+                    "Delete a file or directory".to_string()
+                },
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -275,17 +308,19 @@ impl Agent {
                 }),
                 handler: Box::new(move |call: ToolCall| {
                     let file_security_manager = file_security_manager_clone.clone();
+                    let yolo_mode = yolo_mode;
                     Box::pin(async move {
                         // Create a wrapper function that handles the mutable reference
                         async fn delete_file_wrapper(
                             call: ToolCall,
                             file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                            yolo_mode: bool,
                         ) -> Result<ToolResult> {
                             let mut manager = file_security_manager.write().await;
-                            delete_file(&call, &mut *manager).await
+                            delete_file(&call, &mut *manager, yolo_mode).await
                         }
                         
-                        delete_file_wrapper(call, file_security_manager).await
+                        delete_file_wrapper(call, file_security_manager, yolo_mode).await
                     })
                 }),
             });
@@ -294,7 +329,11 @@ impl Agent {
             let file_security_manager_clone = file_security_manager.clone();
             tools.insert("create_directory".to_string(), Tool {
                 name: "create_directory".to_string(),
-                description: "Create a directory (and parent directories if needed)".to_string(),
+                description: if yolo_mode {
+                    "Create a directory (YOLO MODE - no security checks)".to_string()
+                } else {
+                    "Create a directory (and parent directories if needed)".to_string()
+                },
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -307,17 +346,19 @@ impl Agent {
                 }),
                 handler: Box::new(move |call: ToolCall| {
                     let file_security_manager = file_security_manager_clone.clone();
+                    let yolo_mode = yolo_mode;
                     Box::pin(async move {
                         // Create a wrapper function that handles the mutable reference
                         async fn create_directory_wrapper(
                             call: ToolCall,
                             file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                            yolo_mode: bool,
                         ) -> Result<ToolResult> {
                             let mut manager = file_security_manager.write().await;
-                            create_directory(&call, &mut *manager).await
+                            create_directory(&call, &mut *manager, yolo_mode).await
                         }
                         
-                        create_directory_wrapper(call, file_security_manager).await
+                        create_directory_wrapper(call, file_security_manager, yolo_mode).await
                     })
                 }),
             });
@@ -351,9 +392,14 @@ impl Agent {
             let mut tools = self.tools.write().await;
             if !tools.contains_key("bash") {
                 let security_manager = self.bash_security_manager.clone();
+                let yolo_mode = self.yolo_mode;
                 tools.insert("bash".to_string(), Tool {
                     name: "bash".to_string(),
-                    description: "Execute shell commands and return the output (with security)".to_string(),
+                    description: if yolo_mode {
+                        "Execute shell commands and return the output (YOLO MODE - no security checks)".to_string()
+                    } else {
+                        "Execute shell commands and return the output (with security)".to_string()
+                    },
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -366,17 +412,19 @@ impl Agent {
                     }),
                     handler: Box::new(move |call: ToolCall| {
                         let security_manager = security_manager.clone();
+                        let yolo_mode = yolo_mode;
                         Box::pin(async move {
                             // Create a wrapper function that handles the mutable reference
                             async fn bash_wrapper(
                                 call: ToolCall,
                                 security_manager: Arc<RwLock<BashSecurityManager>>,
+                                yolo_mode: bool,
                             ) -> Result<ToolResult> {
                                 let mut manager = security_manager.write().await;
-                                bash(&call, &mut *manager).await
+                                bash(&call, &mut *manager, yolo_mode).await
                             }
                             
-                            bash_wrapper(call, security_manager).await
+                            bash_wrapper(call, security_manager, yolo_mode).await
                         })
                     }),
                 });
@@ -384,12 +432,17 @@ impl Agent {
 
             // Ensure file operation tools are available
             let file_security_manager = self.file_security_manager.clone();
+            let yolo_mode = self.yolo_mode;
             
             if !tools.contains_key("write_file") {
                 let file_security_manager_clone = file_security_manager.clone();
                 tools.insert("write_file".to_string(), Tool {
                     name: "write_file".to_string(),
-                    description: "Write content to a file (creates file if it doesn't exist)".to_string(),
+                    description: if yolo_mode {
+                        "Write content to a file (YOLO MODE - no security checks)".to_string()
+                    } else {
+                        "Write content to a file (creates file if it doesn't exist)".to_string()
+                    },
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -406,17 +459,19 @@ impl Agent {
                     }),
                     handler: Box::new(move |call: ToolCall| {
                         let file_security_manager = file_security_manager_clone.clone();
+                        let yolo_mode = yolo_mode;
                         Box::pin(async move {
                             // Create a wrapper function that handles the mutable reference
                             async fn write_file_wrapper(
                                 call: ToolCall,
                                 file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                                yolo_mode: bool,
                             ) -> Result<ToolResult> {
                                 let mut manager = file_security_manager.write().await;
-                                write_file(&call, &mut *manager).await
+                                write_file(&call, &mut *manager, yolo_mode).await
                             }
                             
-                            write_file_wrapper(call, file_security_manager).await
+                            write_file_wrapper(call, file_security_manager, yolo_mode).await
                         })
                     }),
                 });
@@ -426,7 +481,11 @@ impl Agent {
                 let file_security_manager_clone = file_security_manager.clone();
                 tools.insert("edit_file".to_string(), Tool {
                     name: "edit_file".to_string(),
-                    description: "Replace specific text in a file with new text".to_string(),
+                    description: if yolo_mode {
+                        "Edit a file (YOLO MODE - no security checks)".to_string()
+                    } else {
+                        "Replace specific text in a file with new text".to_string()
+                    },
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -447,17 +506,19 @@ impl Agent {
                     }),
                     handler: Box::new(move |call: ToolCall| {
                         let file_security_manager = file_security_manager_clone.clone();
+                        let yolo_mode = yolo_mode;
                         Box::pin(async move {
                             // Create a wrapper function that handles the mutable reference
                             async fn edit_file_wrapper(
                                 call: ToolCall,
                                 file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                                yolo_mode: bool,
                             ) -> Result<ToolResult> {
                                 let mut manager = file_security_manager.write().await;
-                                edit_file(&call, &mut *manager).await
+                                edit_file(&call, &mut *manager, yolo_mode).await
                             }
                             
-                            edit_file_wrapper(call, file_security_manager).await
+                            edit_file_wrapper(call, file_security_manager, yolo_mode).await
                         })
                     }),
                 });
@@ -467,7 +528,11 @@ impl Agent {
                 let file_security_manager_clone = file_security_manager.clone();
                 tools.insert("delete_file".to_string(), Tool {
                     name: "delete_file".to_string(),
-                    description: "Delete a file or directory".to_string(),
+                    description: if yolo_mode {
+                        "Delete a file or directory (YOLO MODE - no security checks)".to_string()
+                    } else {
+                        "Delete a file or directory".to_string()
+                    },
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -480,17 +545,19 @@ impl Agent {
                     }),
                     handler: Box::new(move |call: ToolCall| {
                         let file_security_manager = file_security_manager_clone.clone();
+                        let yolo_mode = yolo_mode;
                         Box::pin(async move {
                             // Create a wrapper function that handles the mutable reference
                             async fn delete_file_wrapper(
                                 call: ToolCall,
                                 file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                                yolo_mode: bool,
                             ) -> Result<ToolResult> {
                                 let mut manager = file_security_manager.write().await;
-                                delete_file(&call, &mut *manager).await
+                                delete_file(&call, &mut *manager, yolo_mode).await
                             }
                             
-                            delete_file_wrapper(call, file_security_manager).await
+                            delete_file_wrapper(call, file_security_manager, yolo_mode).await
                         })
                     }),
                 });
@@ -500,7 +567,11 @@ impl Agent {
                 let file_security_manager_clone = file_security_manager.clone();
                 tools.insert("create_directory".to_string(), Tool {
                     name: "create_directory".to_string(),
-                    description: "Create a directory (and parent directories if needed)".to_string(),
+                    description: if yolo_mode {
+                        "Create a directory (YOLO MODE - no security checks)".to_string()
+                    } else {
+                        "Create a directory (and parent directories if needed)".to_string()
+                    },
                     input_schema: json!({
                         "type": "object",
                         "properties": {
@@ -513,17 +584,19 @@ impl Agent {
                     }),
                     handler: Box::new(move |call: ToolCall| {
                         let file_security_manager = file_security_manager_clone.clone();
+                        let yolo_mode = yolo_mode;
                         Box::pin(async move {
                             // Create a wrapper function that handles the mutable reference
                             async fn create_directory_wrapper(
                                 call: ToolCall,
                                 file_security_manager: Arc<RwLock<FileSecurityManager>>,
+                                yolo_mode: bool,
                             ) -> Result<ToolResult> {
                                 let mut manager = file_security_manager.write().await;
-                                create_directory(&call, &mut *manager).await
+                                create_directory(&call, &mut *manager, yolo_mode).await
                             }
                             
-                            create_directory_wrapper(call, file_security_manager).await
+                            create_directory_wrapper(call, file_security_manager, yolo_mode).await
                         })
                     }),
                 });
@@ -816,7 +889,7 @@ impl Agent {
                         
                         // We need to get a mutable reference to the security manager
                         let mut manager = security_manager.write().await;
-                        match bash(&call_clone, &mut *manager).await {
+                        match bash(&call_clone, &mut *manager, self.yolo_mode).await {
                             Ok(result) => {
                                 debug!("Bash tool executed successfully");
                                 
@@ -891,7 +964,7 @@ impl Agent {
                         let call_clone = call.clone();
                         
                         let mut manager = file_security_manager.write().await;
-                        match write_file(&call_clone, &mut *manager).await {
+                        match write_file(&call_clone, &mut *manager, self.yolo_mode).await {
                             Ok(result) => {
                                 debug!("Write file tool executed successfully");
                                 
@@ -965,7 +1038,7 @@ impl Agent {
                         let call_clone = call.clone();
                         
                         let mut manager = file_security_manager.write().await;
-                        match edit_file(&call_clone, &mut *manager).await {
+                        match edit_file(&call_clone, &mut *manager, self.yolo_mode).await {
                             Ok(result) => {
                                 debug!("Edit file tool executed successfully");
                                 
@@ -1039,7 +1112,7 @@ impl Agent {
                         let call_clone = call.clone();
                         
                         let mut manager = file_security_manager.write().await;
-                        match delete_file(&call_clone, &mut *manager).await {
+                        match delete_file(&call_clone, &mut *manager, self.yolo_mode).await {
                             Ok(result) => {
                                 debug!("Delete file tool executed successfully");
                                 
@@ -1113,7 +1186,7 @@ impl Agent {
                         let call_clone = call.clone();
                         
                         let mut manager = file_security_manager.write().await;
-                        match create_directory(&call_clone, &mut *manager).await {
+                        match create_directory(&call_clone, &mut *manager, self.yolo_mode).await {
                             Ok(result) => {
                                 debug!("Create directory tool executed successfully");
                                 
@@ -1412,7 +1485,7 @@ impl Agent {
         
         // We need to get a mutable reference to the security manager
         let mut manager = security_manager.write().await;
-        let result = bash(&call_clone, &mut *manager).await?;
+        let result = bash(&call_clone, &mut *manager, false).await?;
         
         // Check if permissions were updated and save to config
         if result.content.contains("💾 Note: This command has been added to your allowlist") {

@@ -252,7 +252,6 @@ async fn handle_slash_command(command: &str, agent: &mut Agent, mcp_manager: &Mc
 
 /// Handle MCP commands
 async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<()> {
-    use log::{debug, info, warn, error};
     
     if args.is_empty() {
         print_mcp_help();
@@ -1134,7 +1133,46 @@ fn print_permissions_help() {
     println!();
 }
 
-/// Print help information
+/// Display a large red warning for yolo mode
+fn display_yolo_warning() {
+    println!();
+    println!("{}", "⚠️  WARNING: YOLO MODE ENABLED  ⚠️".red().bold().blink());
+    println!("{}", " ALL SECURITY PERMISSIONS ARE BYPASSED - USE WITH EXTREME CAUTION ".red().bold());
+    println!();
+    println!("{}", " • File operations (read/write/delete) will execute WITHOUT prompts ".red());
+    println!("{}", " • Bash commands will execute WITHOUT permission checks ".red());
+    println!("{}", " • MCP tools will execute WITHOUT security validation ".red());
+    println!("{}", " • No allowlist/denylist filtering will be applied ".red());
+    println!("{}", " • All tool calls are automatically approved ".red());
+    println!();
+    println!("{}", " 🚨 This mode can cause irreversible damage to your system! ".red().bold());
+    println!();
+    println!("{}", " Press Ctrl+C NOW to cancel if this was not intended! ".red().bold());
+    println!();
+    
+    // Add a dramatic pause for effect
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+    println!("{}", "🔥 Proceeding in YOLO mode... You have been warned! 🔥".red().bold());
+    println!();
+}
+
+/// Display YOLO mode warning after MCP configuration is complete
+fn display_mcp_yolo_warning() {
+    println!();
+    println!("{}", "🔌 MCP Configuration Complete - YOLO Mode Active 🔌".red().bold());
+    println!();
+    println!("{}", " ⚠️  MCP TOOLS WILL EXECUTE WITHOUT SECURITY VALIDATION ⚠️ ".red().bold());
+    println!();
+    println!("{}", " • MCP server tools are now available and will execute WITHOUT prompts ".red());
+    println!("{}", " • No permission checks will be applied to MCP tool calls ".red());
+    println!("{}", " • All MCP operations (file access, commands, etc.) are auto-approved ".red());
+    println!("{}", " • External MCP server connections have unrestricted access ".red());
+    println!();
+    println!("{}", " 🚨 MCP tools can potentially access and modify your system! ".red().bold());
+    println!();
+    println!("{}", " 🔥 All MCP servers and their tools are operating in YOLO mode! 🔥".red().bold());
+    println!();
+}
 fn print_help() {
     println!("{}", "🤖 AI Agent - Slash Commands".cyan().bold());
     println!();
@@ -1240,6 +1278,10 @@ struct Cli {
     /// Enable streaming responses
     #[arg(long)]
     stream: bool,
+
+    /// Enable 'yolo' mode - bypass all permission checks for file and tool operations
+    #[arg(long)]
+    yolo: bool,
 }
 
 #[tokio::main]
@@ -1251,6 +1293,11 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     debug!("Starting AI Agent with model: {}", cli.model);
+
+    // Display large red warning if yolo mode is enabled
+    if cli.yolo {
+        display_yolo_warning();
+    }
 
     // Load configuration
     let mut config = Config::load(cli.config.as_deref()).await?;
@@ -1266,6 +1313,11 @@ async fn main() -> Result<()> {
     println!("Using configuration:");
     println!("  Base URL: {}", config.base_url);
     println!("  Model: {}", cli.model);
+    
+    // Show yolo mode status
+    if cli.yolo {
+        println!("  {} YOLO MODE ENABLED - All permission checks bypassed!", "🔥".red().bold());
+    }
     
     // Validate API key without exposing it
     if config.api_key.is_empty() {
@@ -1285,7 +1337,7 @@ async fn main() -> Result<()> {
     let formatter = create_code_formatter()?;
 
     // Create and run agent
-    let mut agent = Agent::new(config.clone(), cli.model);
+    let mut agent = Agent::new(config.clone(), cli.model, cli.yolo);
     
     // Initialize MCP manager
     let mcp_manager = Arc::new(McpManager::new());
@@ -1351,6 +1403,11 @@ async fn main() -> Result<()> {
             error!("  - Some tools may not be available initially");
             error!("  - Tools will be refreshed on demand during use");
         }
+    }
+
+    // Display YOLO mode warning after MCP configuration is complete
+    if cli.yolo {
+        display_mcp_yolo_warning();
     }
 
     // Set system prompt - use command line prompt if provided, otherwise use config default
