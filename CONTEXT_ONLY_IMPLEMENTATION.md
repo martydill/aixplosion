@@ -48,17 +48,17 @@ if !response.is_empty() {
 
 ```bash
 # Single file
-ai-agent "@Cargo.toml"
+aixplosion "@Cargo.toml"
 # Output: ✓ Added context file: Cargo.toml
 
 # Multiple files  
-ai-agent "@src/main.rs @src/lib.rs @README.md"
+aixplosion "@src/main.rs @src/lib.rs @README.md"
 # Output: ✓ Added context file: src/main.rs
 #         ✓ Added context file: src/lib.rs  
 #         ✓ Added context file: README.md
 
 # Invalid file
-ai-agent "@nonexistent.txt"
+aixplosion "@nonexistent.txt"
 # Output: ✗ Failed to add context file 'nonexistent.txt': [error message]
 ```
 
@@ -66,12 +66,12 @@ ai-agent "@nonexistent.txt"
 
 ```bash
 # File + question
-ai-agent "@Cargo.toml What is this project about?"
+aixplosion "@Cargo.toml What is this project about?"
 # Output: ✓ Added context file: Cargo.toml
 #         [AI response about the project]
 
 # Mixed content
-ai-agent "@file1.txt Please explain this"
+aixplosion "@file1.txt Please explain this"
 # Output: ✓ Added context file: file1.txt
 #         [AI response explaining the file]
 ```
@@ -96,7 +96,7 @@ ai-agent "@file1.txt Please explain this"
 ## Interactive Mode Workflow
 
 ```bash
-ai-agent
+aixplosion
 > @package.json
 ✓ Added context file: package.json
 

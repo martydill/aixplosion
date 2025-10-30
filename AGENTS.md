@@ -1,6 +1,6 @@
-# AI Agents Documentation
+# AIxplosions Documentation
 
-This file contains documentation about the available AI agents in this project.
+This file contains documentation about the available AIxplosions in this project.
 
 ## Agent Configuration
 
@@ -11,7 +11,7 @@ This file contains documentation about the available AI agents in this project.
 
 ### Agent Capabilities
 
-The AI agent supports the following features:
+The AIxplosion supports the following features:
 
 1. **Interactive Mode**: Chat with the AI in a terminal interface
 2. **Single Message Mode**: Send a single message and get a response
@@ -37,41 +37,41 @@ The AI agent supports the following features:
 
 ```bash
 # Interactive mode
-ai-agent
+aixplosion
 
 # Single message
-ai-agent -m "Hello, how are you?"
+aixplosion -m "Hello, how are you?"
 
 # Read from stdin
-echo "Help me understand this code" | ai-agent --non-interactive
+echo "Help me understand this code" | aixplosion --non-interactive
 
 # With API key via command line
-ai-agent -k "your-api-key" -m "Your message here"
+aixplosion -k "your-api-key" -m "Your message here"
 
 # With API key from environment variable (RECOMMENDED)
 export ANTHROPIC_AUTH_TOKEN="your-api-key"
-ai-agent -m "Your message here"
+aixplosion -m "Your message here"
 
 # With context files
-ai-agent -f config.toml -f Cargo.toml "Explain this project"
+aixplosion -f config.toml -f Cargo.toml "Explain this project"
 
 # Using @file syntax (NEW!)
-ai-agent "What does @Cargo.toml contain?"
-ai-agent "Compare @src/main.rs and @src/lib.rs"
-ai-agent "@file1.txt @file2.txt"
+aixplosion "What does @Cargo.toml contain?"
+aixplosion "Compare @src/main.rs and @src/lib.rs"
+aixplosion "@file1.txt @file2.txt"
 
 # With system prompts (NEW!)
-ai-agent -s "You are a Rust expert" "Help me with this code"
-ai-agent -s "Act as a code reviewer" -f main.rs "Review this code"
-ai-agent -s "You are a helpful assistant" "Explain this concept"
+aixplosion -s "You are a Rust expert" "Help me with this code"
+aixplosion -s "Act as a code reviewer" -f main.rs "Review this code"
+aixplosion -s "You are a helpful assistant" "Explain this concept"
 
 # With streaming support (NEW!)
-ai-agent --stream -m "Tell me a story"
-ai-agent --stream --non-interactive < input.txt
-ai-agent --stream  # Interactive mode with streaming
+aixplosion --stream -m "Tell me a story"
+aixplosion --stream --non-interactive < input.txt
+aixplosion --stream  # Interactive mode with streaming
 
 # Interactive mode examples
-ai-agent
+aixplosion
 > !dir                    # List directory contents
 > !git status             # Check git status
 > !cargo build            # Build the project
@@ -87,16 +87,16 @@ System prompts allow you to control the AI's behavior, personality, and response
 
 ```bash
 # Set the AI to act as a specific expert
-ai-agent -s "You are a senior Rust developer with 10 years of experience" "Review this code"
+aixplosion -s "You are a senior Rust developer with 10 years of experience" "Review this code"
 
 # Set a specific response style
-ai-agent -s "Respond in a concise, technical manner" "Explain distributed systems"
+aixplosion -s "Respond in a concise, technical manner" "Explain distributed systems"
 
 # Set a specific context or role
-ai-agent -s "You are a code reviewer. Focus on security, performance, and maintainability" -f app.rs "Review this file"
+aixplosion -s "You are a code reviewer. Focus on security, performance, and maintainability" -f app.rs "Review this file"
 
 # Multiple instructions
-ai-agent -s "You are a helpful coding assistant. Always provide code examples and explain your reasoning" "How do I implement a binary tree in Rust?"
+aixplosion -s "You are a helpful coding assistant. Always provide code examples and explain your reasoning" "How do I implement a binary tree in Rust?"
 ```
 
 #### When to Use System Prompts
@@ -116,16 +116,16 @@ The agent can automatically execute shell commands when you ask it to:
 
 ```bash
 # List files in current directory
-ai-agent "List the files in the current directory"
+aixplosion "List the files in the current directory"
 
 # Check git status
-ai-agent "Check the git status"
+aixplosion "Check the git status"
 
 # Run tests
-ai-agent "Run tests and show me the results"
+aixplosion "Run tests and show me the results"
 
 # Execute multiple commands
-ai-agent "Check the current branch and run the build process"
+aixplosion "Check the current branch and run the build process"
 ```
 
 #### 2. Direct Shell Commands (!)
@@ -133,7 +133,7 @@ In interactive mode, you can use `!` commands to execute shell commands directly
 
 ```bash
 # Start interactive mode
-ai-agent
+aixplosion
 
 # Then use shell commands directly
 > !dir
@@ -170,7 +170,7 @@ The agent can be configured via:
 2. **Command Line**:
    - `-k` or `--api-key`: Set API key via command line
 
-3. **Config File**: Located at `~/.config/ai-agent/config.toml` (API keys are excluded for security)
+3. **Config File**: Located at `~/.config/aixplosion/config.toml` (API keys are excluded for security)
 
 ⚠️ **Security Note**: API keys are **never** stored in config files for security reasons. Always use environment variables or command line flags.
 
@@ -200,16 +200,16 @@ The agent supports multiple ways to include files as context:
 #### @file Syntax Examples
 ```bash
 # Single file
-ai-agent "What does @config.toml contain?"
+aixplosion "What does @config.toml contain?"
 
 # Multiple files
-ai-agent "Compare @file1.rs and @file2.rs"
+aixplosion "Compare @file1.rs and @file2.rs"
 
 # File with question
-ai-agent "Explain the Rust code in @src/main.rs"
+aixplosion "Explain the Rust code in @src/main.rs"
 
 # Only file references
-ai-agent "@file1.txt @file2.txt"
+aixplosion "@file1.txt @file2.txt"
 ```
 
 ### Progress Spinner
@@ -239,17 +239,17 @@ The agent now supports streaming responses for real-time feedback as the AI gene
 #### Streaming Examples
 ```bash
 # Enable streaming for single message
-ai-agent --stream -m "Tell me a story"
+aixplosion --stream -m "Tell me a story"
 
 # Enable streaming for stdin
-echo "Explain quantum computing" | ai-agent --stream --non-interactive
+echo "Explain quantum computing" | aixplosion --stream --non-interactive
 
 # Enable streaming in interactive mode
-ai-agent --stream
+aixplosion --stream
 
 # Compare streaming vs non-streaming
-ai-agent -m "What's the weather like?"  # Shows spinner, then formatted response
-ai-agent --stream -m "What's the weather like?"  # Shows real-time response
+aixplosion -m "What's the weather like?"  # Shows spinner, then formatted response
+aixplosion --stream -m "What's the weather like?"  # Shows real-time response
 ```
 
 #### When to Use Streaming
@@ -344,14 +344,14 @@ Streaming can be enabled via:
 #### Streaming Configuration Examples
 ```bash
 # Per-request streaming
-ai-agent --stream -m "Your message"
+aixplosion --stream -m "Your message"
 
 # Interactive mode with streaming
-ai-agent --stream
+aixplosion --stream
 
 # Non-interactive with streaming
-cat input.txt | ai-agent --stream --non-interactive
+cat input.txt | aixplosion --stream --non-interactive
 
 # Combine with other options
-ai-agent --stream -s "You are an expert" -f context.txt "Analyze this"
+aixplosion --stream -s "You are an expert" -f context.txt "Analyze this"
 ```

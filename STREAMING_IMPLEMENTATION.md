@@ -33,16 +33,16 @@ Added streaming support for LLM responses to provide real-time feedback as respo
 
 ```bash
 # Enable streaming for single message
-ai-agent --stream -m "Tell me a story"
+aixplosion --stream -m "Tell me a story"
 
 # Enable streaming for stdin
-echo "Explain quantum computing" | ai-agent --stream --non-interactive
+echo "Explain quantum computing" | aixplosion --stream --non-interactive
 
 # Enable streaming in interactive mode
-ai-agent --stream
+aixplosion --stream
 
 # Regular non-streaming (default)
-ai-agent -m "What's the weather like?"
+aixplosion -m "What's the weather like?"
 ```
 
 ## Benefits

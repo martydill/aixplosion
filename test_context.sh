@@ -17,7 +17,7 @@ echo "✅ Build successful!"
 # Test 1: Help command shows context files info
 echo ""
 echo "📋 Test 1: Help command includes context files info"
-./target/debug/ai-agent --help | grep -A 2 "Context files"
+./target/debug/aixplosion --help | grep -A 2 "Context files"
 if [ $? -eq 0 ]; then
     echo "✅ Help shows context files info"
 else
@@ -37,19 +37,19 @@ fi
 echo ""
 echo "📋 Test 3: Explicit context file"
 echo "Testing with README.md as context..."
-echo "What is this project about?" | ./target/debug/ai-agent -f README.md --non-interactive 2>/dev/null | head -5
+echo "What is this project about?" | ./target/debug/aixplosion -f README.md --non-interactive 2>/dev/null | head -5
 
 # Test 4: Multiple context files
 echo ""
 echo "📋 Test 4: Multiple context files"
 echo "Testing with multiple files..."
-echo "Describe this Rust project" | ./target/debug/ai-agent -f README.md -f Cargo.toml --non-interactive 2>/dev/null | head -5
+echo "Describe this Rust project" | ./target/debug/aixplosion -f README.md -f Cargo.toml --non-interactive 2>/dev/null | head -5
 
 # Test 5: Error handling
 echo ""
 echo "📋 Test 5: Error handling for non-existent file"
 echo "Testing error handling..."
-echo "Test message" | ./target/debug/ai-agent -f nonexistent.md --non-interactive 2>&1 | grep -i "failed\|error" | head -3
+echo "Test message" | ./target/debug/aixplosion -f nonexistent.md --non-interactive 2>&1 | grep -i "failed\|error" | head -3
 
 echo ""
 echo "🎉 Testing completed!"

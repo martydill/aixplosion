@@ -16,6 +16,7 @@ mod formatter;
 mod tool_display;
 mod mcp;
 mod security;
+mod logo;
 
 #[cfg(test)]
 mod test_shell_commands;
@@ -1174,7 +1175,7 @@ fn display_mcp_yolo_warning() {
     println!();
 }
 fn print_help() {
-    println!("{}", "🤖 AI Agent - Slash Commands".cyan().bold());
+    println!("{}", "🤖 AIxplosion - Slash Commands".cyan().bold());
     println!();
     println!("{}", "Available commands:".green().bold());
     println!("  /help         - Show this help message");
@@ -1227,23 +1228,23 @@ fn print_help() {
     println!("  Non-streaming shows a spinner and formats the complete response");
     println!();
     println!("{}", "Examples:".green().bold());
-    println!("  ai-agent -f config.toml \"Explain this configuration\"");
-    println!("  ai-agent \"What does @Cargo.toml contain?\"");
-    println!("  ai-agent \"Compare @file1.rs and @file2.rs\"");
-    println!("  ai-agent \"@file1.txt @file2.txt\"  # Only adds context, no API call");
-    println!("  ai-agent -s \"You are a Rust expert\" \"Help me with this code\"");
-    println!("  ai-agent -s \"Act as a code reviewer\" -f main.rs \"Review this code\"");
-    println!("  ai-agent --stream \"Tell me a story\"  # Stream the response");
+    println!("  aixplosion -f config.toml \"Explain this configuration\"");
+    println!("  aixplosion \"What does @Cargo.toml contain?\"");
+    println!("  aixplosion \"Compare @file1.rs and @file2.rs\"");
+    println!("  aixplosion \"@file1.txt @file2.txt\"  # Only adds context, no API call");
+    println!("  aixplosion -s \"You are a Rust expert\" \"Help me with this code\"");
+    println!("  aixplosion -s \"Act as a code reviewer\" -f main.rs \"Review this code\"");
+    println!("  aixplosion --stream \"Tell me a story\"  # Stream the response");
     println!("  !dir                    # List directory contents");
     println!("  !git status             # Check git status");
     println!("  !cargo build            # Build the project");
     println!();
-    println!("{}", "Any other input will be sent to the AI agent for processing.".dimmed());
+    println!("{}", "Any other input will be sent to the AIxplosion for processing.".dimmed());
     println!();
 }
 
 #[derive(Parser)]
-#[command(name = "ai-agent")]
+#[command(name = "aixplosion")]
 #[command(about = "A CLI coding agent powered by Anthropic AI")]
 #[command(version)]
 struct Cli {
@@ -1292,7 +1293,7 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    debug!("Starting AI Agent with model: {}", cli.model);
+    debug!("Starting AIxplosion with model: {}", cli.model);
 
     // Display large red warning if yolo mode is enabled
     if cli.yolo {
@@ -1465,7 +1466,9 @@ async fn main() -> Result<()> {
         }
     } else {
         // Interactive mode
-        println!("{}", "🤖 AI Agent - Interactive Mode".green().bold());
+        // Display the cool logo on startup
+        logo::display_logo();
+        println!("{}", "🤖 AIxplosion - Interactive Mode".green().bold());
         println!("{}", "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands.".dimmed());
         println!("{}", "For multi-line input, start with quotes (\") or code blocks (```).".dimmed());
         println!();

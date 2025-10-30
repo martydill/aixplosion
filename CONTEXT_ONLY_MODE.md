@@ -7,7 +7,7 @@ This document tests the new context-only mode feature where messages containing 
 ### 1. Single File Reference
 
 ```bash
-ai-agent "@Cargo.toml"
+aixplosion "@Cargo.toml"
 ```
 
 **Expected behavior:**
@@ -20,7 +20,7 @@ ai-agent "@Cargo.toml"
 ### 2. Multiple File References
 
 ```bash
-ai-agent "@src/main.rs @src/lib.rs @README.md"
+aixplosion "@src/main.rs @src/lib.rs @README.md"
 ```
 
 **Expected behavior:**
@@ -32,7 +32,7 @@ ai-agent "@src/main.rs @src/lib.rs @README.md"
 ### 3. File Reference with Question
 
 ```bash
-ai-agent "@Cargo.toml What is this project about?"
+aixplosion "@Cargo.toml What is this project about?"
 ```
 
 **Expected behavior:**
@@ -43,7 +43,7 @@ ai-agent "@Cargo.toml What is this project about?"
 ### 4. Mixed Content
 
 ```bash
-ai-agent "@file1.txt Some text here @file2.txt"
+aixplosion "@file1.txt Some text here @file2.txt"
 ```
 
 **Expected behavior:**
@@ -54,7 +54,7 @@ ai-agent "@file1.txt Some text here @file2.txt"
 ### 5. File Reference with Only Whitespace
 
 ```bash
-ai-agent "@file1.txt    "
+aixplosion "@file1.txt    "
 ```
 
 **Expected behavior:**
@@ -64,7 +64,7 @@ ai-agent "@file1.txt    "
 ### 6. Invalid File Reference
 
 ```bash
-ai-agent "@nonexistent.txt"
+aixplosion "@nonexistent.txt"
 ```
 
 **Expected behavior:**
@@ -74,7 +74,7 @@ ai-agent "@nonexistent.txt"
 ### 7. Mixed Valid and Invalid Files
 
 ```bash
-ai-agent "@valid.txt @nonexistent.txt"
+aixplosion "@valid.txt @nonexistent.txt"
 ```
 
 **Expected behavior:**
@@ -88,7 +88,7 @@ ai-agent "@valid.txt @nonexistent.txt"
 
 ```bash
 # Start interactive mode
-ai-agent
+aixplosion
 
 # Add context files
 > @src/main.rs
@@ -130,7 +130,7 @@ Context from file '/path/to/src/main.rs':
 ### Context Only
 
 ```bash
-echo "@file1.txt @file2.txt" | ai-agent --non-interactive
+echo "@file1.txt @file2.txt" | aixplosion --non-interactive
 ```
 
 **Expected behavior:**
@@ -141,7 +141,7 @@ echo "@file1.txt @file2.txt" | ai-agent --non-interactive
 ### Context with Question
 
 ```bash
-echo "@file1.txt @file2.txt What do these files do?" | ai-agent --non-interactive
+echo "@file1.txt @file2.txt What do these files do?" | aixplosion --non-interactive
 ```
 
 **Expected behavior:**
@@ -154,7 +154,7 @@ echo "@file1.txt @file2.txt What do these files do?" | ai-agent --non-interactiv
 ### Context Only
 
 ```bash
-ai-agent -m "@file1.txt @file2.txt"
+aixplosion -m "@file1.txt @file2.txt"
 ```
 
 **Expected behavior:**
@@ -165,7 +165,7 @@ ai-agent -m "@file1.txt @file2.txt"
 ### Context with Question
 
 ```bash
-ai-agent -m "@file1.txt @file2.txt Explain the difference"
+aixplosion -m "@file1.txt @file2.txt Explain the difference"
 ```
 
 **Expected behavior:**
@@ -178,7 +178,7 @@ ai-agent -m "@file1.txt @file2.txt Explain the difference"
 ### 1. Empty @file syntax
 
 ```bash
-ai-agent "@"
+aixplosion "@"
 ```
 
 **Expected behavior:**
@@ -188,7 +188,7 @@ ai-agent "@"
 ### 2. @file at end with punctuation
 
 ```bash
-ai-agent "@file.txt."
+aixplosion "@file.txt."
 ```
 
 **Expected behavior:**
@@ -198,7 +198,7 @@ ai-agent "@file.txt."
 ### 3. Multiple @ symbols
 
 ```bash
-ai-agent "@@file.txt"
+aixplosion "@@file.txt"
 ```
 
 **Expected behavior:**
@@ -208,7 +208,7 @@ ai-agent "@@file.txt"
 ### 4. File paths with spaces
 
 ```bash
-ai-agent "@\"file with spaces.txt\""
+aixplosion "@\"file with spaces.txt\""
 ```
 
 **Expected behavior:**
@@ -220,7 +220,7 @@ ai-agent "@\"file with spaces.txt\""
 ### Before (Old Behavior)
 
 ```bash
-ai-agent "@file1.txt @file2.txt"
+aixplosion "@file1.txt @file2.txt"
 # Would:
 # 1. Add both files to context
 # 2. Make empty API call
@@ -231,7 +231,7 @@ ai-agent "@file1.txt @file2.txt"
 ### After (New Behavior)
 
 ```bash
-ai-agent "@file1.txt @file2.txt"
+aixplosion "@file1.txt @file2.txt"
 # Now:
 # 1. Add both files to context
 # 2. Detect no actual content
@@ -253,19 +253,19 @@ This feature saves tokens by avoiding unnecessary API calls when users are just 
 
 ```bash
 # Load context
-ai-agent "@config.json @src/main.rs @README.md"
+aixplosion "@config.json @src/main.rs @README.md"
 
 # Ask questions
-ai-agent "How does this application work?"
-ai-agent "What are the main dependencies?"
-ai-agent "Explain the architecture"
+aixplosion "How does this application work?"
+aixplosion "What are the main dependencies?"
+aixplosion "Explain the architecture"
 ```
 
 ### Pattern 2: Incremental Context Building
 
 ```bash
 # Interactive mode
-ai-agent
+aixplosion
 > @package.json
 ✓ Added context file: package.json
 > @src/index.js
@@ -280,11 +280,11 @@ ai-agent
 
 ```bash
 # Load project A context
-ai-agent "@projectA/config.json @projectA/main.js"
+aixplosion "@projectA/config.json @projectA/main.js"
 # Ask questions about project A
 
 # Clear context (start new session)
-ai-agent
+aixplosion
 > @projectB/config.py @projectB/app.py
 # Ask questions about project B
 ```

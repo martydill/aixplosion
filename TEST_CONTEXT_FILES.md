@@ -5,31 +5,31 @@
 ### 1. Basic Functionality
 ```bash
 # Test with explicit context file
-ai-agent -f README.md -m "Summarize the project"
+aixplosion -f README.md -m "Summarize the project"
 
 # Test automatic AGENTS.md inclusion
-ai-agent -m "What agents are available?"
+aixplosion -m "What agents are available?"
 ```
 
 ### 2. Multiple Files
 ```bash
 # Test multiple context files
-ai-agent -f README.md -f Cargo.toml -m "Describe this Rust project"
+aixplosion -f README.md -f Cargo.toml -m "Describe this Rust project"
 ```
 
 ### 3. Error Handling
 ```bash
 # Test with non-existent file
-ai-agent -f nonexistent.md -m "Test error handling"
+aixplosion -f nonexistent.md -m "Test error handling"
 
 # Test with unreadable file (if possible)
-ai-agent -f /root/protected.md -m "Test permission error"
+aixplosion -f /root/protected.md -m "Test permission error"
 ```
 
 ### 4. Interactive Mode
 ```bash
 # Test context files in interactive mode
-ai-agent -f README.md
+aixplosion -f README.md
 > "What is this project about?"
 > "How do I build it?"
 ```
@@ -37,7 +37,7 @@ ai-agent -f README.md
 ### 5. Non-interactive Mode
 ```bash
 # Test with stdin
-echo "Explain the project" | ai-agent -f README.md --non-interactive
+echo "Explain the project" | aixplosion -f README.md --non-interactive
 ```
 
 ## Expected Behavior

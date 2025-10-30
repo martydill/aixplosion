@@ -419,7 +419,7 @@ impl McpConnection {
                     }),
                 },
                 client_info: McpClientInfo {
-                    name: "ai-agent".to_string(),
+                    name: "aixplosion".to_string(),
                     version: "0.1.0".to_string(),
                 },
             },

@@ -1,7 +1,7 @@
 # Context Files Feature
 
 ## Overview
-The AI agent now supports adding files as context to provide additional information to the AI during conversations.
+The AIxplosion now supports adding files as context to provide additional information to the AI during conversations.
 
 ## Usage
 
@@ -16,13 +16,13 @@ The AI agent now supports adding files as context to provide additional informat
 
 ```bash
 # Add specific files as context
-ai-agent -f README.md -f config.toml -m "Explain the project structure"
+aixplosion -f README.md -f config.toml -m "Explain the project structure"
 
 # AGENTS.md will be automatically added if it exists
-ai-agent -m "What agents are available?"
+aixplosion -m "What agents are available?"
 
 # Multiple context files
-ai-agent -f docs/api.md -f examples/sample.rs -m "Show me how to use the API"
+aixplosion -f docs/api.md -f examples/sample.rs -m "Show me how to use the API"
 ```
 
 ## Implementation Details

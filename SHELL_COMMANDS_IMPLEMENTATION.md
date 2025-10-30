@@ -2,7 +2,7 @@
 
 ## Summary
 
-I have successfully implemented the `!` command functionality for the AI agent. This feature allows users to execute shell commands directly in interactive mode by prefixing them with `!`.
+I have successfully implemented the `!` command functionality for the AIxplosion. This feature allows users to execute shell commands directly in interactive mode by prefixing them with `!`.
 
 ## Implementation Details
 
@@ -42,7 +42,7 @@ I have successfully implemented the `!` command functionality for the AI agent. 
 
 ```bash
 # Start interactive mode
-ai-agent
+aixplosion
 
 # Execute shell commands directly
 > !dir                    # List directory (Windows)

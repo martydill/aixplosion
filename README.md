@@ -1,4 +1,4 @@
-# AI Agent
+# AIxplosion
 
 A fully-featured CLI coding agent powered by Anthropic's Claude AI with built-in file management tools.
 
@@ -16,7 +16,7 @@ A fully-featured CLI coding agent powered by Anthropic's Claude AI with built-in
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd ai-agent
+cd aixplosion
 ```
 
 2. Build the project:
@@ -24,13 +24,13 @@ cd ai-agent
 cargo build --release
 ```
 
-3. The binary will be available at `target/release/ai-agent`
+3. The binary will be available at `target/release/aixplosion`
 
 ## Configuration
 
 The agent looks for configuration in the following order:
 1. Command line `--config` argument
-2. `~/.config/ai-agent/config.toml`
+2. `~/.config/aixplosion/config.toml`
 3. Environment variables
 4. Default values
 
@@ -44,7 +44,7 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 ```
 
 2. **Configuration file**:
-Create `~/.config/ai-agent/config.toml`:
+Create `~/.config/aixplosion/config.toml`:
 ```toml
 api_key = "your-api-key-here"
 default_model = "claude-3-sonnet-20240229"
@@ -54,7 +54,7 @@ temperature = 0.7
 
 3. **Command line**:
 ```bash
-ai-agent --api-key "your-api-key-here"
+aixplosion --api-key "your-api-key-here"
 ```
 
 ## Usage
@@ -62,32 +62,32 @@ ai-agent --api-key "your-api-key-here"
 ### Interactive Mode (default)
 
 ```bash
-ai-agent
+aixplosion
 ```
 
-Start chatting with the AI agent. Type `exit` or `quit` to leave.
+Start chatting with the AIxplosion. Type `exit` or `quit` to leave.
 
 ### Single Message Mode
 
 ```bash
-ai-agent --message "Write a hello world function in Rust"
+aixplosion --message "Write a hello world function in Rust"
 ```
 
 ### Non-interactive Mode
 
 ```bash
-echo "Explain this code" | ai-agent --non-interactive
+echo "Explain this code" | aixplosion --non-interactive
 ```
 
 ### Pipe File Content
 
 ```bash
-cat main.rs | ai-agent --non-interactive
+cat main.rs | aixplosion --non-interactive
 ```
 
 ## Built-in Tools
 
-The AI agent has access to the following file system tools:
+The AIxplosion has access to the following file system tools:
 
 - **list_directory**: List contents of a directory
 - **read_file**: Read the contents of a file
@@ -100,7 +100,7 @@ The AI agent has access to the following file system tools:
 
 ```bash
 # Start interactive mode
-ai-agent
+aixplosion
 
 # In the chat, you can ask things like:
 # "List the files in the current directory"
@@ -114,7 +114,7 @@ ai-agent
 
 ```
 USAGE:
-    ai-agent [OPTIONS]
+    aixplosion [OPTIONS]
 
 OPTIONS:
     -m, --message <MESSAGE>         The message to send to the agent

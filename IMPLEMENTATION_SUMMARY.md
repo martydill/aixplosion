@@ -1,7 +1,7 @@
 # @file Syntax Implementation Summary
 
 ## Overview
-Added support for `@path-to-file` syntax to automatically attach file content as context in AI agent messages.
+Added support for `@path-to-file` syntax to automatically attach file content as context in AIxplosion messages.
 
 ## Changes Made
 
@@ -67,19 +67,19 @@ pub fn clean_message(&self, message: &str) -> String
 
 ```bash
 # Single file reference
-ai-agent "What does @Cargo.toml contain?"
+aixplosion "What does @Cargo.toml contain?"
 
 # Multiple file references  
-ai-agent "Compare @file1.rs and @file2.rs"
+aixplosion "Compare @file1.rs and @file2.rs"
 
 # File with question
-ai-agent "Explain the Rust code in @src/main.rs"
+aixplosion "Explain the Rust code in @src/main.rs"
 
 # Only file references
-ai-agent "@file1.txt @file2.txt"
+aixplosion "@file1.txt @file2.txt"
 
 # Mixed with -f flag
-ai-agent -f base.txt "Compare @file1.txt with the base file"
+aixplosion -f base.txt "Compare @file1.txt with the base file"
 ```
 
 ## Testing
@@ -92,11 +92,11 @@ Run `./test_context_syntax.sh` to:
 
 ### Manual Testing Commands
 ```bash
-ai-agent "What does @test_file1.txt contain?"
-ai-agent "Compare @test_file1.txt and @test_file2.txt" 
-ai-agent "Can you explain @test_rust.rs?"
-ai-agent "@test_file1.txt @test_file2.txt"
-ai-agent "What is in @nonexistent_file.txt?"
+aixplosion "What does @test_file1.txt contain?"
+aixplosion "Compare @test_file1.txt and @test_file2.txt" 
+aixplosion "Can you explain @test_rust.rs?"
+aixplosion "@test_file1.txt @test_file2.txt"
+aixplosion "What is in @nonexistent_file.txt?"
 ```
 
 ## Error Handling
@@ -168,4 +168,4 @@ let re = Regex::new(r"@([^\s@]+)").unwrap();
 - ✅ Good error messages
 - ✅ Helpful documentation
 
-The implementation provides a natural, convenient way to reference files directly within AI agent messages while maintaining full compatibility with existing functionality.
+The implementation provides a natural, convenient way to reference files directly within AIxplosion messages while maintaining full compatibility with existing functionality.

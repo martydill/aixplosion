@@ -2,7 +2,7 @@
 
 ## Overview
 
-YOLO (You Only Live Once) mode is a security bypass feature that allows the AI agent to execute file operations and bash commands without any security checks or permission prompts. This is useful for trusted environments where security restrictions would be overly burdensome.
+YOLO (You Only Live Once) mode is a security bypass feature that allows the AIxplosion to execute file operations and bash commands without any security checks or permission prompts. This is useful for trusted environments where security restrictions would be overly burdensome.
 
 ## Implementation Details
 
@@ -16,16 +16,16 @@ YOLO (You Only Live Once) mode is a security bypass feature that allows the AI a
 **Usage Examples:**
 ```bash
 # Single message with YOLO mode
-ai-agent --yolo -m "Delete all temporary files"
+aixplosion --yolo -m "Delete all temporary files"
 
 # Interactive mode with YOLO mode  
-ai-agent --yolo
+aixplosion --yolo
 
 # Non-interactive with YOLO mode
-echo "Create directory and files" | ai-agent --yolo --non-interactive
+echo "Create directory and files" | aixplosion --yolo --non-interactive
 
 # Combined with other flags
-ai-agent --yolo --stream -s "You are a system administrator" "Clean up the system"
+aixplosion --yolo --stream -s "You are a system administrator" "Clean up the system"
 ```
 
 ### 2. Security Bypass Implementation
@@ -145,28 +145,28 @@ ai-agent --yolo --stream -s "You are a system administrator" "Clean up the syste
 #### ✅ Appropriate Use Cases
 ```bash
 # Development environment cleanup
-ai-agent --yolo -m "Clean up all build artifacts and temporary files"
+aixplosion --yolo -m "Clean up all build artifacts and temporary files"
 
 # Automated scripts in controlled environments
-ai-agent --yolo --non-interactive < cleanup_commands.txt
+aixplosion --yolo --non-interactive < cleanup_commands.txt
 
 # Trusted system administration tasks
-ai-agent --yolo -s "You are a sysadmin" "Set up development environment"
+aixplosion --yolo -s "You are a sysadmin" "Set up development environment"
 
 # Bulk file operations in trusted directories
-ai-agent --yolo -m "Reorganize project files according to new structure"
+aixplosion --yolo -m "Reorganize project files according to new structure"
 ```
 
 #### ❌ Inappropriate Use Cases
 ```bash
 # NEVER with untrusted inputs or prompts
-ai-agent --yolo -m "Execute this user-provided command: ${USER_INPUT}"
+aixplosion --yolo -m "Execute this user-provided command: ${USER_INPUT}"
 
 # NEVER in production environments
-ai-agent --yolo -m "Deploy to production servers"
+aixplosion --yolo -m "Deploy to production servers"
 
 # NEVER with external APIs or untrusted data
-curl untrusted-api.com | ai-agent --yolo --non-interactive
+curl untrusted-api.com | aixplosion --yolo --non-interactive
 ```
 
 ## Testing YOLO Mode
@@ -175,20 +175,20 @@ curl untrusted-api.com | ai-agent --yolo --non-interactive
 
 ```bash
 # Test 1: Verify YOLO mode indicator appears
-ai-agent --yolo --help
+aixplosion --yolo --help
 
 # Test 2: File operations without security prompts
-ai-agent --yolo -m "Create a test file called yolo_test.txt with content 'YOLO mode works!'"
+aixplosion --yolo -m "Create a test file called yolo_test.txt with content 'YOLO mode works!'"
 
 # Test 3: Dangerous bash commands without prompts  
-ai-agent --yolo -m "Delete all .tmp files in current directory"
+aixplosion --yolo -m "Delete all .tmp files in current directory"
 
 # Test 4: Multiple operations in sequence
-ai-agent --yolo -m "Create directory, create files inside, then delete them all"
+aixplosion --yolo -m "Create directory, create files inside, then delete them all"
 
 # Test 5: Compare with regular mode
-ai-agent -m "Try to delete system files"  # Should be blocked
-ai-agent --yolo -m "Try to delete system files"  # Should proceed (DANGEROUS!)
+aixplosion -m "Try to delete system files"  # Should be blocked
+aixplosion --yolo -m "Try to delete system files"  # Should proceed (DANGEROUS!)
 ```
 
 ### Expected Behavior

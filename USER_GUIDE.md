@@ -1,6 +1,6 @@
-# AI Agent User Guide
+# AIxplosion User Guide
 
-This guide provides comprehensive documentation for using the AI Agent tool, a powerful terminal-based AI assistant that supports multiple interaction modes, file operations, and advanced features.
+This guide provides comprehensive documentation for using the AIxplosion tool, a powerful terminal-based AI assistant that supports multiple interaction modes, file operations, and advanced features.
 
 ## Table of Contents
 
@@ -24,8 +24,8 @@ This guide provides comprehensive documentation for using the AI Agent tool, a p
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/ai-agent.git
-cd ai-agent
+git clone https://github.com/your-repo/aixplosion.git
+cd aixplosion
 
 # Install dependencies
 npm install
@@ -43,13 +43,13 @@ npm install -g .
 
 ```bash
 # Start interactive mode
-ai-agent
+aixplosion
 
 # Send a single message
-ai-agent -m "Hello, how are you?"
+aixplosion -m "Hello, how are you?"
 
 # Get help
-ai-agent --help
+aixplosion --help
 ```
 
 ## Configuration
@@ -65,7 +65,7 @@ export ANTHROPIC_BASE_URL="https://api.anthropic.com/v1"
 
 ### Configuration File
 
-Create a configuration file at `~/.config/ai-agent/config.toml`:
+Create a configuration file at `~/.config/aixplosion/config.toml`:
 
 ```toml
 base_url = "https://api.anthropic.com/v1"
@@ -95,10 +95,10 @@ temperature = 0.7
 
 ### 1. Interactive Mode
 
-Start a conversation with the AI agent:
+Start a conversation with the AIxplosion:
 
 ```bash
-ai-agent
+aixplosion
 ```
 
 Features:
@@ -111,7 +111,7 @@ Features:
 Send one message and get a response:
 
 ```bash
-ai-agent -m "Explain quantum computing"
+aixplosion -m "Explain quantum computing"
 ```
 
 ### 3. Non-Interactive Mode
@@ -119,7 +119,7 @@ ai-agent -m "Explain quantum computing"
 Read from stdin for scripting:
 
 ```bash
-echo "Help me understand this code" | ai-agent --non-interactive
+echo "Help me understand this code" | aixplosion --non-interactive
 ```
 
 ### 4. Context-Aware Mode
@@ -128,10 +128,10 @@ Include files as context:
 
 ```bash
 # Using command line flags
-ai-agent -f config.toml -f package.json "Explain this project"
+aixplosion -f config.toml -f package.json "Explain this project"
 
 # Using @file syntax
-ai-agent "What does @Cargo.toml contain?"
+aixplosion "What does @Cargo.toml contain?"
 ```
 
 ## File Operations
@@ -143,23 +143,23 @@ The agent supports multiple ways to include files:
 #### Method 1: Command Line Flags
 
 ```bash
-ai-agent -f file1.txt -f file2.rs "Analyze these files"
+aixplosion -f file1.txt -f file2.rs "Analyze these files"
 ```
 
 #### Method 2: @file Syntax (Recommended)
 
 ```bash
 # Single file
-ai-agent "What does @config.json contain?"
+aixplosion "What does @config.json contain?"
 
 # Multiple files
-ai-agent "Compare @src/main.rs and @src/lib.rs"
+aixplosion "Compare @src/main.rs and @src/lib.rs"
 
 # File with specific question
-ai-agent "Explain the authentication logic in @auth.js"
+aixplosion "Explain the authentication logic in @auth.js"
 
 # Multiple files without question
-ai-agent "@package.json @README.md"
+aixplosion "@package.json @README.md"
 ```
 
 #### Method 3: Auto-inclusion
@@ -221,10 +221,10 @@ The agent can execute various tools for file operations:
 
 ```bash
 # Ask the agent to perform file operations
-ai-agent "Read the contents of @src/config.js and create a backup"
+aixplosion "Read the contents of @src/config.js and create a backup"
 
 # Multi-step operations
-ai-agent "List all .rs files in src/ directory, then read main.rs"
+aixplosion "List all .rs files in src/ directory, then read main.rs"
 ```
 
 ### Context Management
@@ -262,7 +262,7 @@ echo $ANTHROPIC_AUTH_TOKEN
 export ANTHROPIC_AUTH_TOKEN="your-api-key"
 
 # Or use command line
-ai-agent -k "your-api-key" -m "test"
+aixplosion -k "your-api-key" -m "test"
 ```
 
 #### 2. File Not Found
@@ -297,7 +297,7 @@ ai-agent -k "your-api-key" -m "test"
 Enable debug output for troubleshooting:
 
 ```bash
-DEBUG=1 ai-agent -m "test message"
+DEBUG=1 aixplosion -m "test message"
 ```
 
 ### Getting Help
@@ -305,7 +305,7 @@ DEBUG=1 ai-agent -m "test message"
 If you encounter issues:
 
 1. Check this guide first
-2. Run `ai-agent --help` for command options
+2. Run `aixplosion --help` for command options
 3. Use `/help` in interactive mode
 4. Check the GitHub issues page
 5. Create a new issue with details about your problem
@@ -345,14 +345,14 @@ If you encounter issues:
 ```bash
 # ✅ RECOMMENDED: Environment variable
 export ANTHROPIC_AUTH_TOKEN="your-api-key"
-ai-agent -m "Hello"
+aixplosion -m "Hello"
 
 # ✅ SECURE: Command line flag
-ai-agent -k "your-api-key" -m "Hello"
+aixplosion -k "your-api-key" -m "Hello"
 
 # ✅ DEVELOPMENT: .env file (add to .gitignore)
 echo 'ANTHROPIC_AUTH_TOKEN="your-api-key"' > .env
-source .env && ai-agent -m "Hello"
+source .env && aixplosion -m "Hello"
 ```
 
 4. ❌ **NEVER DO**:
@@ -367,34 +367,34 @@ api_key = "sk-ant-api03-..."  # SECURITY RISK!
 
 ```bash
 # Analyze a Rust project
-ai-agent "@Cargo.toml @src/main.rs @src/lib.rs Explain this project structure"
+aixplosion "@Cargo.toml @src/main.rs @src/lib.rs Explain this project structure"
 
 # Review Python code
-ai-agent "Find potential bugs in @app.py and suggest improvements"
+aixplosion "Find potential bugs in @app.py and suggest improvements"
 ```
 
 ### Documentation Generation
 
 ```bash
 # Generate README
-ai-agent "@src/index.js @package.json Create a README for this project"
+aixplosion "@src/index.js @package.json Create a README for this project"
 
 # Document API endpoints
-ai-agent "@api/routes.js @api/models.js Document all API endpoints"
+aixplosion "@api/routes.js @api/models.js Document all API endpoints"
 ```
 
 ### Configuration Management
 
 ```bash
 # Compare configurations
-ai-agent "Compare @dev.config.json and @prod.config.json"
+aixplosion "Compare @dev.config.json and @prod.config.json"
 
 # Generate config template
-ai-agent "@config.example.json Create a template configuration file"
+aixplosion "@config.example.json Create a template configuration file"
 ```
 
 ## Conclusion
 
-The AI Agent is a powerful tool that can significantly enhance your development workflow. By mastering its features and following best practices, you can leverage AI assistance for code analysis, documentation, configuration management, and much more.
+The AIxplosion is a powerful tool that can significantly enhance your development workflow. By mastering its features and following best practices, you can leverage AI assistance for code analysis, documentation, configuration management, and much more.
 
 For the most up-to-date information, check the project documentation and GitHub repository.
