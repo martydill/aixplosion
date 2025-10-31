@@ -355,3 +355,6 @@ cat input.txt | aixplosion --stream --non-interactive
 # Combine with other options
 aixplosion --stream -s "You are an expert" -f context.txt "Analyze this"
 ```
+
+#### Rules
+ - Any time you create a doc, it must go in the docs folder. Any time you need to read a doc, look in the docs folder.
