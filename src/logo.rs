@@ -63,6 +63,6 @@ pub fn display_logo() {
     }
     
     // Add a subtitle
-    println!("{}", "🔥 Your Supercharged AIxplosion".bright_yellow().bold());
+    println!("{}", "🔥 Your Supercharged AI Coding Agent".bright_yellow().bold());
     println!();
 }
