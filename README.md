@@ -1,6 +1,8 @@
 # AIxplosion
 
-A fully-featured CLI coding agent powered by Anthropic's Claude AI with built-in file management tools.
+I used AI to build an AI coding agent and then used the AI coding agent to keep building the AI coding agent.
+
+<img width="844" height="514" alt="image" src="https://github.com/user-attachments/assets/de024e06-4fe5-4bc8-95bc-63ff25c9a21e" />
 
 ## Features
 
