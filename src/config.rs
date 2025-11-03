@@ -128,32 +128,4 @@ impl Config {
         info!("Configuration saved to: {} (API key excluded for security)", config_path.display());
         Ok(())
     }
-
-    /// Update MCP configuration and save to file
-    pub async fn update_mcp_config(&mut self, mcp_config: McpConfig) -> Result<()> {
-        self.mcp = mcp_config;
-        self.save(None).await?;
-        Ok(())
-    }
-
-    /// Update bash security configuration and save to file
-    pub async fn update_bash_security(&mut self, bash_security: BashSecurity) -> Result<()> {
-        self.bash_security = bash_security;
-        self.save(None).await?;
-        Ok(())
-    }
-
-  /// Update file security configuration and save to file
-    pub async fn update_file_security(&mut self, file_security: FileSecurity) -> Result<()> {
-        self.file_security = file_security;
-        self.save(None).await?;
-        Ok(())
-    }
-
-    /// Create a sanitized copy of the config for saving (without API key)
-    pub fn sanitized_for_save(&self) -> Self {
-        let mut sanitized = self.clone();
-        sanitized.api_key = String::new(); // Remove API key
-        sanitized
-    }
 }

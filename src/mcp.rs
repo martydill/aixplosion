@@ -714,16 +714,6 @@ impl McpManager {
         Ok(())
     }
 
-    /// Load MCP configuration from unified config file
-    pub async fn load_from_config_file(&self) -> Result<()> {
-        use crate::config::Config;
-        
-        let unified_config = Config::load(None).await?;
-        *self.config.write().await = unified_config.mcp;
-        info!("Loaded MCP configuration from unified config file");
-        Ok(())
-    }
-
     /// Save current MCP configuration to unified config file
     pub async fn save_to_config_file(&self) -> Result<()> {
         use crate::config::Config;
@@ -743,12 +733,6 @@ impl McpManager {
 
     pub async fn load_config(&self) -> Result<McpConfig> {
         Ok(self.config.read().await.clone())
-    }
-
-    pub async fn save_config(&self, config: &McpConfig) -> Result<()> {
-        *self.config.write().await = config.clone();
-        self.save_to_config_file().await?;
-        Ok(())
     }
 
     pub async fn add_server(&self, name: &str, server_config: McpServerConfig) -> Result<()> {
@@ -899,11 +883,6 @@ impl McpManager {
         total_version
     }
 
-    /// Check if tools have changed since the last check
-    pub async fn have_tools_changed(&self, last_version: u64) -> bool {
-        self.get_tools_version().await != last_version
-    }
-
     pub async fn call_tool(&self, server_name: &str, tool_name: &str, arguments: Option<Value>) -> Result<Value> {
         let mut connections = self.connections.write().await;
         if let Some(connection) = connections.get_mut(server_name) {
@@ -970,82 +949,6 @@ impl McpManager {
                 info!("   Server '{}': {} tools", server_name, tools.len());
             }
         }
-        
-        Ok(())
-    }
-
-    /// Get a comprehensive overview of all MCP tools and their parameters
-    pub async fn log_all_tools_overview(&self) -> Result<()> {
-        info!("📊 MCP Tools Overview");
-        info!("====================");
-        
-        let connections = self.connections.read().await;
-        
-        if connections.is_empty() {
-            info!("No MCP servers are currently connected.");
-            return Ok(());
-        }
-        
-        let mut total_tools = 0;
-        
-        for (server_name, connection) in connections.iter() {
-            let tools = connection.get_tools().await;
-            total_tools += tools.len();
-            
-            info!("🔌 Server: {} ({} tools)", server_name, tools.len());
-            
-            if tools.is_empty() {
-                info!("   ⚠️  No tools available");
-                continue;
-            }
-            
-            for (i, tool) in tools.iter().enumerate() {
-                info!("   {}. {}", i + 1, tool.name);
-                
-                if let Some(description) = &tool.description {
-                    info!("      📝 {}", description);
-                } else {
-                    info!("      📝 <No description>");
-                }
-                
-                // Log parameters if available
-                if let Some(schema_obj) = tool.input_schema.as_object() {
-                    if let Some(properties) = schema_obj.get("properties").and_then(|p| p.as_object()) {
-                        if !properties.is_empty() {
-                            info!("      🔧 Parameters:");
-                            for (param_name, param_schema) in properties {
-                                let param_type = param_schema.get("type")
-                                    .and_then(|t| t.as_str())
-                                    .unwrap_or("unknown");
-                                let required = schema_obj.get("required")
-                                    .and_then(|r| r.as_array())
-                                    .map(|reqs| reqs.iter().any(|req| req.as_str() == Some(param_name)))
-                                    .unwrap_or(false);
-                                
-                                let required_marker = if required { " (required)" } else { "" };
-                                info!("         • {} [{}]{}", param_name, param_type, required_marker);
-                                
-                                // Log parameter description if available
-                                if let Some(param_desc) = param_schema.get("description").and_then(|d| d.as_str()) {
-                                    info!("           {}", param_desc);
-                                }
-                            }
-                        } else {
-                            info!("      🔧 Parameters: <No parameters>");
-                        }
-                    } else {
-                        info!("      🔧 Parameters: <Invalid schema>");
-                    }
-                } else {
-                    info!("      🔧 Parameters: <No schema>");
-                }
-                
-                info!(""); // Empty line for readability
-            }
-        }
-        
-        info!("📈 Summary: {} total tools from {} MCP servers", total_tools, connections.len());
-        info!("====================");
         
         Ok(())
     }
