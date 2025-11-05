@@ -1,11 +1,19 @@
 use clap::Parser;
 use colored::*;
 use anyhow::Result;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    terminal,
+    cursor,
+    style::Print,
+    ExecutableCommand, QueueableCommand,
+};
+use std::sync::Arc;
+use std::path::Path;
 
 use log::{debug, info, warn, error};
 use env_logger::Builder;
-use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 
 mod config;
@@ -17,6 +25,7 @@ mod tool_display;
 mod mcp;
 mod security;
 mod logo;
+mod autocomplete;
 
 #[cfg(test)]
 mod test_shell_commands;
@@ -25,8 +34,218 @@ use config::Config;
 use agent::Agent;
 use formatter::create_code_formatter;
 use mcp::McpManager;
-use std::sync::Arc;
 
+
+
+/// Read input with autocompletion support
+fn read_input_with_completion() -> Result<String> {
+    // Enable raw mode for keyboard input
+    terminal::enable_raw_mode()?;
+
+    let mut input = String::new();
+    let mut cursor_pos = 0;
+
+    // Clear any previous input and display fresh prompt
+    io::stdout()
+        .execute(terminal::Clear(terminal::ClearType::CurrentLine))?
+        .execute(cursor::MoveToColumn(0))?
+        .queue(Print("> "))?
+        .flush()?;
+
+    loop {
+        match event::read()? {
+            Event::Key(KeyEvent {
+                code: KeyCode::Enter,
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                // Check if this might be the start of multiline input BEFORE disabling raw mode
+                let trimmed_input = input.trim();
+                if should_start_multiline(trimmed_input) {
+                    // Disable raw mode first
+                    terminal::disable_raw_mode()?;
+
+                    // Clear the current line completely and move to start
+                    io::stdout()
+                        .execute(terminal::Clear(terminal::ClearType::CurrentLine))?
+                        .execute(cursor::MoveToColumn(0))?
+                        .flush()?;
+
+                    // Show the prompt and what we've typed so far
+                    println!("> {}", trimmed_input);
+
+                    // Start multiline input mode with the current input
+                    let multiline_result = read_multiline_input(trimmed_input);
+                    return multiline_result;
+                } else {
+                    // Normal single line input
+                    println!();
+                    terminal::disable_raw_mode()?;
+                    return Ok(input.trim().to_string());
+                }
+            }
+            
+            Event::Key(KeyEvent {
+                code: KeyCode::Tab,
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                // Handle tab completion
+                if let Some(completion) = autocomplete::handle_tab_completion(&input) {
+                    input = completion;
+                    cursor_pos = input.len();
+                }
+            }
+            
+            Event::Key(KeyEvent {
+                code: KeyCode::Backspace,
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                if !input.is_empty() && cursor_pos > 0 {
+                    input.remove(cursor_pos - 1);
+                    cursor_pos -= 1;
+
+                    // For backspace, we need to move cursor back and clear the rest
+                    // This is a simplified approach that avoids complex cursor math
+                    print!("\x08 \x08"); // Backspace, space, backspace
+                    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                }
+            }
+            
+            Event::Key(KeyEvent { 
+                code: KeyCode::Left, 
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                if cursor_pos > 0 {
+                    cursor_pos -= 1;
+                    io::stdout()
+                        .execute(cursor::MoveLeft(1))?
+                        .flush()?;
+                }
+            }
+            
+            Event::Key(KeyEvent { 
+                code: KeyCode::Right, 
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                if cursor_pos < input.len() {
+                    cursor_pos += 1;
+                    io::stdout()
+                        .execute(cursor::MoveRight(1))?
+                        .flush()?;
+                }
+            }
+            
+            Event::Key(KeyEvent { 
+                code: KeyCode::Char(c), 
+                kind: KeyEventKind::Press,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }) if c == 'c' => {
+                // Handle Ctrl+C
+                println!();
+                terminal::disable_raw_mode()?;
+                std::process::exit(0);
+            }
+            
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(c),
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                // Handle all character input, including spaces
+                input.insert(cursor_pos, c);
+                cursor_pos += 1;
+
+                // For simplicity, just print the character and move on
+                // This avoids cursor position calculation issues with line wrapping
+                print!("{}", c);
+                std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            }
+            
+            _ => {}
+        }
+    }
+}
+
+/// Determine if input should start multiline mode
+fn should_start_multiline(input: &str) -> bool {
+    let trimmed = input.trim();
+    
+    // Start multiline if:
+    // 1. Input starts and ends with quotes but has more content
+    // 2. Input starts with code block marker but doesn't end with it
+    // 3. Input starts with quote but doesn't end with quote
+    // 4. Input contains obvious multiline indicators
+    
+    (trimmed.starts_with('"') && !trimmed.ends_with('"') && trimmed.len() > 1) ||
+    (trimmed.starts_with('\'') && !trimmed.ends_with('\'') && trimmed.len() > 1) ||
+    (trimmed.starts_with("```") && !trimmed.ends_with("```")) ||
+    (trimmed.contains('\n')) ||
+    (trimmed.starts_with("```rust") || trimmed.starts_with("```python") || 
+     trimmed.starts_with("```javascript") || trimmed.starts_with("```json"))
+}
+
+/// Read multiline input in normal mode
+fn read_multiline_input(initial_line: &str) -> Result<String> {
+    // Start with the first line that was already entered
+    let mut lines = vec![initial_line.to_string()];
+
+    // Check if we're in a code block
+    let is_code_block = initial_line.trim().starts_with("```");
+    let is_quoted = initial_line.trim().starts_with('"') || initial_line.trim().starts_with('\'');
+
+    // If the initial line is complete (not starting a multiline structure), return it immediately
+    if !is_code_block && !is_quoted && !initial_line.contains('\n') {
+        return Ok(initial_line.to_string());
+    }
+
+    loop {
+        print!("... ");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+
+        let mut line = String::new();
+        match io::stdin().read_line(&mut line) {
+            Ok(0) => {
+                // EOF - end of input
+                break;
+            }
+            Ok(_) => {
+                let line = line.trim_end().to_string();
+
+                // For code blocks, check for ending marker
+                if is_code_block && line.trim().ends_with("```") {
+                    lines.push(line);
+                    break;
+                }
+
+                // For quoted strings, check for closing quote
+                if is_quoted && line.trim().ends_with('"') {
+                    lines.push(line);
+                    break;
+                }
+
+                // Empty line ends multiline input (unless we're in a code block)
+                if line.is_empty() && !is_code_block {
+                    break;
+                }
+
+                // Add the line and continue
+                lines.push(line);
+            }
+            Err(_) => {
+                // Handle EOF or input error gracefully
+                println!("\n{} End of input", "👋".blue());
+                break;
+            }
+        }
+    }
+
+    Ok(lines.join("\n"))
+}
 
 
 /// Process input and handle streaming/non-streaming response
@@ -1470,120 +1689,61 @@ async fn main() -> Result<()> {
         logo::display_logo();
         println!("{}", "🤖 AIxplosion - Interactive Mode".green().bold());
         println!("{}", "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands.".dimmed());
-        println!("{}", "For multi-line input, start with quotes (\") or code blocks (```).".dimmed());
+        println!("{}", "For multi-line input, start with quotes (\") or code blocks (```) and press Enter.".dimmed());
+        println!("{}", "Press Enter on an empty line to finish multi-line input.".dimmed());
         println!();
 
-        loop {
-            print!("> ");
-            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+          loop {
+            let input = match read_input_with_completion() {
+                Ok(input) => input,
+                Err(e) => {
+                    eprintln!("{} Error reading input: {}", "✗".red(), e);
+                    continue;
+                }
+            };
             
-            // Read first line to check if it might be multi-line
-            let mut first_line = String::new();
-            match io::stdin().read_line(&mut first_line) {
-                Ok(0) => {
-                    // EOF
-                    println!("\n{} End of input. Exiting...", "👋".blue());
-                    break;
-                }
-                Ok(_) => {
-                    let first_line = first_line.trim_end().to_string();
-                    
-                    // If first line is empty, continue to next iteration
-                    if first_line.is_empty() {
-                        continue;
-                    }
-                    
-                    // Check for commands first (they can't be multi-line)
-                    if first_line.starts_with('/') || first_line.starts_with('!') || 
-                       first_line == "exit" || first_line == "quit" {
-                        let input = first_line;
-                        
-                        // Check for slash commands first
-                        if input.starts_with('/') {
-                            match handle_slash_command(&input, &mut agent, &mcp_manager).await {
-                                Ok(_) => {}, // Command handled successfully
-                                Err(e) => {
-                                    eprintln!("{} Error handling command: {}", "✗".red(), e);
-                                }
-                            }
-                            continue;
-                        }
-
-                        // Check for shell commands (!)
-                        if input.starts_with('!') {
-                            match handle_shell_command(&input, &mut agent).await {
-                                Ok(_) => {}, // Command handled successfully
-                                Err(e) => {
-                                    eprintln!("{} Error executing shell command: {}", "✗".red(), e);
-                                }
-                            }
-                            continue;
-                        }
-
-                        // Check for traditional exit commands
-                        if input == "exit" || input == "quit" {
-                            // Print final stats before exiting
-                            print_usage_stats(&agent);
-                            println!("{}", "Goodbye! 👋".green());
-                            break;
-                        }
-                    } else {
-                        // For regular messages, process immediately for single line
-                        // For multiline input, user needs to start with a quote or specific indicator
-                        let input = first_line;
-
-                        // Check if this might be the start of multiline input
-                        if input.starts_with('"') || input.starts_with('\'') ||
-                           (input.starts_with("```") && !input.ends_with("```")) {
-                            // Handle multiline input (quotes, code blocks, etc.)
-                            let mut lines = vec![input];
-
-                            loop {
-                                print!("... ");
-                                std::io::Write::flush(&mut std::io::stdout()).unwrap();
-
-                                let mut line = String::new();
-                                match io::stdin().read_line(&mut line) {
-                                    Ok(0) => {
-                                        // EOF
-                                        break;
-                                    }
-                                    Ok(_) => {
-                                        let line = line.trim_end().to_string();
-                                        if line.is_empty() {
-                                            // Empty line signals end of input
-                                            break;
-                                        }
-
-                                        // Check if we've reached the end of a code block
-                                        let is_code_block_end = line.ends_with("```") && (lines.len() > 1 || lines[0].starts_with("```"));
-                                        lines.push(line);
-
-                                        if is_code_block_end {
-                                            break;
-                                        }
-                                    }
-                                    Err(_) => {
-                                        // Handle EOF or input error gracefully
-                                        println!("\n{} End of input. Exiting...", "👋".blue());
-                                        break;
-                                    }
-                                }
-                            }
-
-                            let input = lines.join("\n");
-                            process_input(&input, &mut agent, &formatter, cli.stream).await;
-                        } else {
-                            // Single line input - process immediately
-                            process_input(&input, &mut agent, &formatter, cli.stream).await;
+            // If input is empty, continue to next iteration
+            if input.is_empty() {
+                continue;
+            }
+            
+            // Check for commands first (they can't be multi-line)
+            if input.starts_with('/') || input.starts_with('!') || 
+               input == "exit" || input == "quit" {
+                
+                // Check for slash commands first
+                if input.starts_with('/') {
+                    match handle_slash_command(&input, &mut agent, &mcp_manager).await {
+                        Ok(_) => {}, // Command handled successfully
+                        Err(e) => {
+                            eprintln!("{} Error handling command: {}", "✗".red(), e);
                         }
                     }
+                    continue;
                 }
-                Err(_) => {
-                    // Handle EOF or input error gracefully
-                    println!("\n{} End of input. Exiting...", "👋".blue());
+
+                // Check for shell commands (!)
+                if input.starts_with('!') {
+                    match handle_shell_command(&input, &mut agent).await {
+                        Ok(_) => {}, // Command handled successfully
+                        Err(e) => {
+                            eprintln!("{} Error executing shell command: {}", "✗".red(), e);
+                        }
+                    }
+                    continue;
+                }
+
+                // Check for traditional exit commands
+                if input == "exit" || input == "quit" {
+                    // Print final stats before exiting
+                    print_usage_stats(&agent);
+                    println!("{}", "Goodbye! 👋".green());
                     break;
                 }
+            } else {
+                // For regular messages, process immediately
+                // Multi-line input is now handled within read_input_with_completion()
+                process_input(&input, &mut agent, &formatter, cli.stream).await;
             }
         }
     }
