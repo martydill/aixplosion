@@ -1689,8 +1689,6 @@ async fn main() -> Result<()> {
         logo::display_logo();
         println!("{}", "🤖 AIxplosion - Interactive Mode".green().bold());
         println!("{}", "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands.".dimmed());
-        println!("{}", "For multi-line input, start with quotes (\") or code blocks (```) and press Enter.".dimmed());
-        println!("{}", "Press Enter on an empty line to finish multi-line input.".dimmed());
         println!();
 
           loop {
