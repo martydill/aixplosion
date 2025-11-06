@@ -1783,7 +1783,6 @@ async fn main() -> Result<()> {
         logo::display_logo();
         println!("{}", "🤖 AIxplosion - Interactive Mode".green().bold());
         println!("{}", "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands.".dimmed());
-        println!("{}", "Press ESC during AI conversations to cancel them.".yellow().dimmed());
         println!();
 
         loop {
