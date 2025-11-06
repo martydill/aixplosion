@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 use log::{debug, info, warn, error};
 use crate::mcp::McpManager;
@@ -660,14 +661,15 @@ impl Agent {
         re.replace_all(message, "").trim().to_string()
     }
 
-    pub async fn process_message(&mut self, message: &str) -> Result<String> {
-        self.process_message_with_stream(message, None::<fn(String)>).await
+    pub async fn process_message(&mut self, message: &str, cancellation_flag: Arc<AtomicBool>) -> Result<String> {
+        self.process_message_with_stream(message, None::<fn(String)>, cancellation_flag).await
     }
 
     pub async fn process_message_with_stream<F>(
         &mut self,
         message: &str,
-        on_stream_content: Option<F>
+        on_stream_content: Option<F>,
+        cancellation_flag: Arc<AtomicBool>
     ) -> Result<String>
     where
         F: Fn(String) + Send + Sync + 'static + Clone,
@@ -714,6 +716,11 @@ impl Agent {
         while iteration < max_iterations {
             iteration += 1;
 
+            // Check for cancellation
+            if cancellation_flag.load(Ordering::SeqCst) {
+                return Err(anyhow::anyhow!("CANCELLED"));
+            }
+
             // Get available tools
             
             let available_tools: Vec<Tool> = {
@@ -731,6 +738,7 @@ impl Agent {
                     0.7,
                     self.system_prompt.as_ref(),
                     on_content.clone(),
+                    cancellation_flag.clone(),
                 ).await?
             } else {
                 self.client.create_message(
@@ -740,6 +748,7 @@ impl Agent {
                     4096,
                     0.7,
                     self.system_prompt.as_ref(),
+                    cancellation_flag.clone(),
                 ).await?
             };
 
@@ -780,6 +789,11 @@ impl Agent {
             let tool_results: Vec<ToolResult> = {
                 let mut results = Vec::new();
                 for call in &tool_calls {
+                    // Check for cancellation before executing each tool
+                    if cancellation_flag.load(Ordering::SeqCst) {
+                        return Err(anyhow::anyhow!("CANCELLED"));
+                    }
+                    
                     debug!("Executing tool: {} with ID: {}", call.name, call.id);
                     
                     // Create pretty display for this tool call

@@ -4,6 +4,8 @@ use reqwest::Client;
 use serde_json::Value;
 use log::{debug, error};
 use futures_util::StreamExt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::tools::{Tool, ToolCall};
 
@@ -147,6 +149,7 @@ impl AnthropicClient {
         max_tokens: u32,
         temperature: f32,
         system_prompt: Option<&String>,
+        cancellation_flag: Arc<AtomicBool>,
     ) -> Result<AnthropicResponse> {
         // Try the standard endpoint first, then fall back to alternatives if needed
         let endpoints = vec![
@@ -156,7 +159,7 @@ impl AnthropicClient {
         ];
 
         for endpoint in endpoints.iter() {
-            match self.try_endpoint(endpoint, model, &messages, tools, max_tokens, temperature, system_prompt).await {
+            match self.try_endpoint(endpoint, model, &messages, tools, max_tokens, temperature, system_prompt, cancellation_flag.clone()).await {
                 Ok(response) => {
                     return Ok(response);
                 }
@@ -169,7 +172,7 @@ impl AnthropicClient {
 
         // If all endpoints failed, return the error from the last attempt
         let last_endpoint = &endpoints[endpoints.len() - 1];
-        return self.try_endpoint(last_endpoint, model, &messages, tools, max_tokens, temperature, system_prompt).await;
+        return self.try_endpoint(last_endpoint, model, &messages, tools, max_tokens, temperature, system_prompt, cancellation_flag.clone()).await;
     }
 
     pub async fn create_message_stream<F>(
@@ -181,6 +184,7 @@ impl AnthropicClient {
         temperature: f32,
         system_prompt: Option<&String>,
         on_content: F,
+        cancellation_flag: Arc<AtomicBool>,
     ) -> Result<AnthropicResponse>
     where
         F: Fn(String) + Send + Sync + 'static + Clone,
@@ -193,7 +197,7 @@ impl AnthropicClient {
         ];
 
         for endpoint in endpoints.iter() {
-            match self.try_endpoint_stream(endpoint, model, &messages, tools, max_tokens, temperature, system_prompt, on_content.clone()).await {
+            match self.try_endpoint_stream(endpoint, model, &messages, tools, max_tokens, temperature, system_prompt, on_content.clone(), cancellation_flag.clone()).await {
                 Ok(response) => {
                     return Ok(response);
                 }
@@ -206,7 +210,7 @@ impl AnthropicClient {
 
         // If all endpoints failed, return the error from the last attempt
         let last_endpoint = &endpoints[endpoints.len() - 1];
-        return self.try_endpoint_stream(last_endpoint, model, &messages, tools, max_tokens, temperature, system_prompt, on_content.clone()).await;
+        return self.try_endpoint_stream(last_endpoint, model, &messages, tools, max_tokens, temperature, system_prompt, on_content.clone(), cancellation_flag.clone()).await;
     }
 
     async fn try_endpoint(
@@ -218,6 +222,7 @@ impl AnthropicClient {
         max_tokens: u32,
         temperature: f32,
         system_prompt: Option<&String>,
+        cancellation_flag: Arc<AtomicBool>,
     ) -> Result<AnthropicResponse> {
         let tool_definitions = if tools.is_empty() {
             None
@@ -245,6 +250,11 @@ impl AnthropicClient {
         debug!("Sending message to model: {}", model);
         if let Some(system_prompt) = system_prompt {
             debug!("Using system prompt: {}", system_prompt);
+        }
+
+        // Check for cancellation before making the request
+        if cancellation_flag.load(Ordering::SeqCst) {
+            return Err(anyhow::anyhow!("CANCELLED"));
         }
 
         let response = self.client
@@ -319,6 +329,7 @@ impl AnthropicClient {
         temperature: f32,
         system_prompt: Option<&String>,
         on_content: F,
+        cancellation_flag: Arc<AtomicBool>,
     ) -> Result<AnthropicResponse>
     where
         F: Fn(String) + Send + Sync + 'static + Clone,
@@ -348,6 +359,11 @@ impl AnthropicClient {
         debug!("Request body: {}", serde_json::to_string_pretty(&request)?);
         if let Some(system_prompt) = system_prompt {
             debug!("Using system prompt: {}", system_prompt);
+        }
+
+        // Check for cancellation before making the request
+        if cancellation_flag.load(Ordering::SeqCst) {
+            return Err(anyhow::anyhow!("CANCELLED"));
         }
 
         let response = self.client
@@ -381,6 +397,11 @@ impl AnthropicClient {
         let mut stream = response.bytes_stream();
 
         while let Some(chunk_result) = stream.next().await {
+            // Check for cancellation before processing each chunk
+            if cancellation_flag.load(Ordering::SeqCst) {
+                return Err(anyhow::anyhow!("CANCELLED"));
+            }
+            
             match chunk_result {
                 Ok(chunk) => {
                     if let Ok(chunk_str) = std::str::from_utf8(&chunk) {

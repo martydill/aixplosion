@@ -22,6 +22,7 @@ The AIxplosion supports the following features:
 7. **Progress Spinner**: Visual feedback while waiting for LLM responses
 8. **System Prompts**: Set custom system prompts to control AI behavior and personality
 9. **Streaming Support**: Real-time response streaming for immediate feedback
+10. **Conversation Cancellation**: Press ESC to cancel ongoing AI conversations
 
 ### Available Tools
 
@@ -77,6 +78,7 @@ aixplosion
 > !cargo build            # Build the project
 > /help                   # Show available commands
 > /permissions allow "git *"  # Allow git commands
+> ESC                     # Cancel current AI conversation
 ```
 
 ### System Prompts
@@ -263,6 +265,34 @@ aixplosion --stream -m "What's the weather like?"  # Shows real-time response
 - **Formatted Output**: Non-streaming mode applies syntax highlighting
 - **Debugging**: Easier to capture complete response for troubleshooting
 
+### Conversation Cancellation
+
+The agent supports cancelling ongoing AI conversations using the ESC key:
+
+- **ESC Key**: Press ESC during AI processing to immediately cancel the current conversation
+- **Visual Feedback**: Shows "🛑 Cancelling AI conversation..." when cancellation is triggered
+- **Clean Exit**: Gracefully stops API calls and tool execution
+- **Continue Working**: Returns to the prompt without losing conversation context
+
+#### Cancellation Behavior
+- Works in all modes (interactive, single message, non-interactive)
+- Cancels both streaming and non-streaming responses
+- Stops tool execution that may be in progress
+- Preserves conversation history for continued interaction
+- Shows clear user feedback when cancellation occurs
+
+#### Cancellation Examples
+```bash
+# Start a long-running conversation
+aixplosion "Write a detailed analysis of quantum computing"
+
+# Press ESC during processing to cancel
+# Output: 🛑 Cancelling AI conversation...
+
+# Continue with a new request
+aixplosion "What's the weather like today?"
+```
+
 ### Slash Commands
 
 In interactive mode, you can use these commands:
@@ -274,6 +304,11 @@ In interactive mode, you can use these commands:
 - `/clear` - Clear all conversation context (keeps AGENTS.md if it exists)
 - `/reset-stats` - Reset token usage statistics
 - `/exit` or `/quit` - Exit the program
+
+### Cancellation Commands
+
+- **ESC** - Cancel current AI conversation during processing
+- **Ctrl+C** - Exit the program immediately
 
 ### Shell Commands (!)
 
@@ -331,8 +366,9 @@ The agent includes comprehensive error handling for:
 - Bash command execution failures
 - Invalid file references in @file syntax
 - Streaming connection failures (graceful fallback to non-streaming)
+- Conversation cancellation handling
 
-All errors are displayed with clear, actionable messages to help troubleshoot issues.
+All errors are displayed with clear, actionable messages to help troubleshoot issues. When a conversation is cancelled via ESC, the system provides clear feedback and returns to the prompt gracefully.
 
 ### Configuration for Streaming
 

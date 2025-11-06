@@ -9,6 +9,7 @@ use crossterm::{
     ExecutableCommand, QueueableCommand,
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::path::Path;
 
 use log::{debug, info, warn, error};
@@ -144,6 +145,17 @@ fn read_input_with_completion_and_highlighting(formatter: Option<&formatter::Cod
                 println!();
                 terminal::disable_raw_mode()?;
                 std::process::exit(0);
+            }
+            
+            Event::Key(KeyEvent { 
+                code: KeyCode::Esc, 
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                // Handle ESC key - return cancellation signal
+                println!();
+                terminal::disable_raw_mode()?;
+                return Err(anyhow::anyhow!("CANCELLED"));
             }
             
             Event::Key(KeyEvent {
@@ -306,26 +318,30 @@ fn redraw_input_line_with_highlighting(input: &str, cursor_pos: usize, formatter
 
 
 /// Process input and handle streaming/non-streaming response
-async fn process_input(input: &str, agent: &mut Agent, formatter: &formatter::CodeFormatter, stream: bool) {
+async fn process_input(input: &str, agent: &mut Agent, formatter: &formatter::CodeFormatter, stream: bool, cancellation_flag: Arc<AtomicBool>) {
     // Show spinner while processing (only for non-streaming)
     if stream {
         let result = agent.process_message_with_stream(&input, Some(|content| {
             print!("{}", content);
             std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        })).await;
+        }), cancellation_flag.clone()).await;
         
         match result {
             Ok(_response) => {
                 println!();
             }
             Err(e) => {
-                eprintln!("{}: {}", "Error".red(), e);
+                if e.to_string().contains("CANCELLED") {
+                    // Cancellation handled silently
+                } else {
+                    eprintln!("{}: {}", "Error".red(), e);
+                }
                 println!();
             }
         }
     } else {
         let spinner = create_spinner();
-        let result = agent.process_message(&input).await;
+        let result = agent.process_message(&input, cancellation_flag.clone()).await;
         spinner.finish_and_clear();
         
         match result {
@@ -339,7 +355,11 @@ async fn process_input(input: &str, agent: &mut Agent, formatter: &formatter::Co
                 println!();
             }
             Err(e) => {
-                eprintln!("{}: {}", "Error".red(), e);
+                if e.to_string().contains("CANCELLED") {
+                    // Cancellation handled silently
+                } else {
+                    eprintln!("{}: {}", "Error".red(), e);
+                }
                 println!();
             }
         }
@@ -1466,6 +1486,10 @@ fn print_help() {
     println!("  /exit         - Exit the program");
     println!("  /quit         - Exit the program");
     println!();
+    println!("{}", "Cancellation:".green().bold());
+    println!("  ESC           - Cancel current AI conversation (during processing)");
+    println!("  Ctrl+C        - Exit the program immediately");
+    println!();
     println!("{}", "Shell Commands:".green().bold());
     println!("  !<command>    - Execute a shell command directly (bypasses all security)");
     println!("  Examples: !dir, !ls -la, !git status, !cargo test");
@@ -1514,6 +1538,7 @@ fn print_help() {
     println!("  !dir                    # List directory contents");
     println!("  !git status             # Check git status");
     println!("  !cargo build            # Build the project");
+    println!("  ESC                     # Cancel AI conversation during processing");
     println!();
     println!("{}", "Any other input will be sent to the AIxplosion for processing.".dimmed());
     println!();
@@ -1714,14 +1739,16 @@ async fn main() -> Result<()> {
         
         // Single message mode
         if cli.stream {
+            let cancellation_flag = Arc::new(AtomicBool::new(false));
             let _response = agent.process_message_with_stream(&message, Some(|content| {
                 print!("{}", content);
                 std::io::Write::flush(&mut std::io::stdout()).unwrap();
-            })).await?;
+            }), cancellation_flag).await?;
             print_usage_stats(&agent);
         } else {
+            let cancellation_flag = Arc::new(AtomicBool::new(false));
             let spinner = create_spinner();
-            let response = agent.process_message(&message).await?;
+            let response = agent.process_message(&message, cancellation_flag).await?;
             spinner.finish_and_clear();
             formatter.print_formatted(&response)?;
             print_usage_stats(&agent);
@@ -1736,15 +1763,16 @@ async fn main() -> Result<()> {
         let highlighted_input = formatter.format_input_with_file_highlighting(trimmed_input);
         println!("> {}", highlighted_input);
         
+        let cancellation_flag = Arc::new(AtomicBool::new(false));
         if cli.stream {
             let _response = agent.process_message_with_stream(trimmed_input, Some(|content| {
                 print!("{}", content);
                 std::io::Write::flush(&mut std::io::stdout()).unwrap();
-            })).await?;
+            }), cancellation_flag).await?;
             print_usage_stats(&agent);
         } else {
             let spinner = create_spinner();
-            let response = agent.process_message(trimmed_input).await?;
+            let response = agent.process_message(trimmed_input, cancellation_flag).await?;
             spinner.finish_and_clear();
             formatter.print_formatted(&response)?;
             print_usage_stats(&agent);
@@ -1755,12 +1783,17 @@ async fn main() -> Result<()> {
         logo::display_logo();
         println!("{}", "🤖 AIxplosion - Interactive Mode".green().bold());
         println!("{}", "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands.".dimmed());
+        println!("{}", "Press ESC during AI conversations to cancel them.".yellow().dimmed());
         println!();
 
         loop {
             let input = match read_input_with_completion_and_highlighting(Some(&formatter)) {
                 Ok(input) => input,
                 Err(e) => {
+                    if e.to_string().contains("CANCELLED") {
+                        // User pressed ESC during input, just continue to next prompt
+                        continue;
+                    }
                     eprintln!("{} Error reading input: {}", "✗".red(), e);
                     continue;
                 }
@@ -1770,6 +1803,27 @@ async fn main() -> Result<()> {
             if input.is_empty() {
                 continue;
             }
+            
+            // Create cancellation flag for this conversation
+            let cancellation_flag = Arc::new(AtomicBool::new(false));
+            
+            // Start ESC key listener for this conversation
+            let cancellation_flag_listener = cancellation_flag.clone();
+            tokio::spawn(async move {
+                use crossterm::event;
+                loop {
+                    if event::poll(std::time::Duration::from_millis(100)).unwrap_or(false) {
+                        if let Ok(event::Event::Key(key_event)) = event::read() {
+                            if key_event.code == KeyCode::Esc && key_event.kind == KeyEventKind::Press {
+                                cancellation_flag_listener.store(true, Ordering::SeqCst);
+                                println!("\n{} Cancelling AI conversation...", "🛑".yellow());
+                                break;
+                            }
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            });
             
             // Check for commands first (they can't be multi-line)
             if input.starts_with('/') || input.starts_with('!') || 
@@ -1806,7 +1860,7 @@ async fn main() -> Result<()> {
                 }
             } else {
                 // For regular messages, process the input (highlighting already shown during typing)
-                process_input(&input, &mut agent, &formatter, cli.stream).await;
+                process_input(&input, &mut agent, &formatter, cli.stream, cancellation_flag.clone()).await;
             }
         }
     }
