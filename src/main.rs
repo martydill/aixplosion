@@ -6,7 +6,6 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     terminal,
     cursor,
-    style::Print,
     ExecutableCommand, QueueableCommand,
 };
 use std::sync::Arc;
@@ -28,17 +27,15 @@ mod logo;
 mod autocomplete;
 
 #[cfg(test)]
-mod test_shell_commands;
+mod formatter_tests;
 
 use config::Config;
 use agent::Agent;
 use formatter::create_code_formatter;
 use mcp::McpManager;
 
-
-
-/// Read input with autocompletion support
-fn read_input_with_completion() -> Result<String> {
+/// Read input with autocompletion support and file highlighting
+fn read_input_with_completion_and_highlighting(formatter: Option<&formatter::CodeFormatter>) -> Result<String> {
     // Enable raw mode for keyboard input
     terminal::enable_raw_mode()?;
 
@@ -46,11 +43,7 @@ fn read_input_with_completion() -> Result<String> {
     let mut cursor_pos = 0;
 
     // Clear any previous input and display fresh prompt
-    io::stdout()
-        .execute(terminal::Clear(terminal::ClearType::CurrentLine))?
-        .execute(cursor::MoveToColumn(0))?
-        .queue(Print("> "))?
-        .flush()?;
+    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
 
     loop {
         match event::read()? {
@@ -71,11 +64,16 @@ fn read_input_with_completion() -> Result<String> {
                         .execute(cursor::MoveToColumn(0))?
                         .flush()?;
 
-                    // Show the prompt and what we've typed so far
-                    println!("> {}", trimmed_input);
+                      // Show the prompt and what we've typed so far with file highlighting
+                    if let Some(fmt) = formatter {
+                        let highlighted_input = fmt.format_input_with_file_highlighting(trimmed_input);
+                        println!("> {}", highlighted_input);
+                    } else {
+                        println!("> {}", trimmed_input);
+                    }
 
                     // Start multiline input mode with the current input
-                    let multiline_result = read_multiline_input(trimmed_input);
+                    let multiline_result = read_multiline_input(trimmed_input, None); // Don't double-highlight
                     return multiline_result;
                 } else {
                     // Normal single line input
@@ -94,6 +92,9 @@ fn read_input_with_completion() -> Result<String> {
                 if let Some(completion) = autocomplete::handle_tab_completion(&input) {
                     input = completion;
                     cursor_pos = input.len();
+                    
+                    // Redraw the line with highlighting after completion
+                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
                 }
             }
             
@@ -106,10 +107,8 @@ fn read_input_with_completion() -> Result<String> {
                     input.remove(cursor_pos - 1);
                     cursor_pos -= 1;
 
-                    // For backspace, we need to move cursor back and clear the rest
-                    // This is a simplified approach that avoids complex cursor math
-                    print!("\x08 \x08"); // Backspace, space, backspace
-                    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                    // Redraw the line with highlighting
+                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
                 }
             }
             
@@ -120,9 +119,7 @@ fn read_input_with_completion() -> Result<String> {
             }) => {
                 if cursor_pos > 0 {
                     cursor_pos -= 1;
-                    io::stdout()
-                        .execute(cursor::MoveLeft(1))?
-                        .flush()?;
+                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
                 }
             }
             
@@ -133,9 +130,7 @@ fn read_input_with_completion() -> Result<String> {
             }) => {
                 if cursor_pos < input.len() {
                     cursor_pos += 1;
-                    io::stdout()
-                        .execute(cursor::MoveRight(1))?
-                        .flush()?;
+                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
                 }
             }
             
@@ -160,10 +155,8 @@ fn read_input_with_completion() -> Result<String> {
                 input.insert(cursor_pos, c);
                 cursor_pos += 1;
 
-                // For simplicity, just print the character and move on
-                // This avoids cursor position calculation issues with line wrapping
-                print!("{}", c);
-                std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                // Redraw the entire line with highlighting
+                redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
             }
             
             _ => {}
@@ -190,7 +183,7 @@ fn should_start_multiline(input: &str) -> bool {
 }
 
 /// Read multiline input in normal mode
-fn read_multiline_input(initial_line: &str) -> Result<String> {
+fn read_multiline_input(initial_line: &str, formatter: Option<&formatter::CodeFormatter>) -> Result<String> {
     // Start with the first line that was already entered
     let mut lines = vec![initial_line.to_string()];
 
@@ -244,8 +237,72 @@ fn read_multiline_input(initial_line: &str) -> Result<String> {
         }
     }
 
-    Ok(lines.join("\n"))
+    let final_input = lines.join("\n");
+    
+    // Display the complete multiline input with file highlighting if formatter is available
+    if let Some(fmt) = formatter {
+        let highlighted_input = fmt.format_input_with_file_highlighting(&final_input);
+        // Display the multiline input with proper formatting
+        let input_lines: Vec<&str> = highlighted_input.lines().collect();
+        if input_lines.len() > 1 {
+            for (i, line) in input_lines.iter().enumerate() {
+                if i == 0 {
+                    println!("> {}", line);
+                } else {
+                    println!("... {}", line);
+                }
+            }
+        }
+    }
+
+    Ok(final_input)
 }
+
+/// Redraw the input line with file highlighting and proper cursor positioning
+fn redraw_input_line_with_highlighting(input: &str, cursor_pos: usize, formatter: Option<&formatter::CodeFormatter>) -> Result<()> {
+    use crossterm::{
+        cursor::MoveToColumn,
+        style::{Print, ResetColor},
+        terminal::Clear,
+    };
+    
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    
+    // Clear the current line and move to start
+    stdout
+        .queue(Clear(crossterm::terminal::ClearType::CurrentLine))?
+        .queue(MoveToColumn(0))?;
+    
+    // Display prompt
+    stdout.queue(Print("> "))?;
+    
+    // Store the current cursor position relative to the start of input text
+    let prompt_length = 2; // "> " length
+    
+    // Apply highlighting if formatter is available and print the input
+    if let Some(fmt) = formatter {
+        let highlighted_text = fmt.format_input_with_file_highlighting(input);
+        stdout.queue(Print(highlighted_text))?;
+    } else {
+        stdout.queue(Print(input))?;
+    }
+    
+    // Move cursor to the correct position
+    // We need to account for the fact that ANSI escape codes don't move the cursor
+    // So we calculate the visual position based on the actual characters before cursor
+    let chars_before_cursor = input.chars().take(cursor_pos).count();
+    
+    // Move to the position after the prompt + characters before cursor
+    stdout
+        .queue(MoveToColumn(prompt_length + chars_before_cursor as u16))?
+        .queue(ResetColor)?
+        .flush()?;
+    
+    Ok(())
+}
+
+
 
 
 /// Process input and handle streaming/non-streaming response
@@ -1651,6 +1708,10 @@ async fn main() -> Result<()> {
     let is_interactive = cli.message.is_none() && !cli.non_interactive;
 
     if let Some(message) = cli.message {
+        // Display the message with file highlighting
+        let highlighted_message = formatter.format_input_with_file_highlighting(&message);
+        println!("> {}", highlighted_message);
+        
         // Single message mode
         if cli.stream {
             let _response = agent.process_message_with_stream(&message, Some(|content| {
@@ -1669,16 +1730,21 @@ async fn main() -> Result<()> {
         // Read from stdin
         let mut input = String::new();
         io::stdin().read_to_string(&mut input)?;
+        let trimmed_input = input.trim();
+        
+        // Display the input with file highlighting
+        let highlighted_input = formatter.format_input_with_file_highlighting(trimmed_input);
+        println!("> {}", highlighted_input);
         
         if cli.stream {
-            let _response = agent.process_message_with_stream(&input.trim(), Some(|content| {
+            let _response = agent.process_message_with_stream(trimmed_input, Some(|content| {
                 print!("{}", content);
                 std::io::Write::flush(&mut std::io::stdout()).unwrap();
             })).await?;
             print_usage_stats(&agent);
         } else {
             let spinner = create_spinner();
-            let response = agent.process_message(&input.trim()).await?;
+            let response = agent.process_message(trimmed_input).await?;
             spinner.finish_and_clear();
             formatter.print_formatted(&response)?;
             print_usage_stats(&agent);
@@ -1691,8 +1757,8 @@ async fn main() -> Result<()> {
         println!("{}", "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands.".dimmed());
         println!();
 
-          loop {
-            let input = match read_input_with_completion() {
+        loop {
+            let input = match read_input_with_completion_and_highlighting(Some(&formatter)) {
                 Ok(input) => input,
                 Err(e) => {
                     eprintln!("{} Error reading input: {}", "✗".red(), e);
@@ -1739,8 +1805,7 @@ async fn main() -> Result<()> {
                     break;
                 }
             } else {
-                // For regular messages, process immediately
-                // Multi-line input is now handled within read_input_with_completion()
+                // For regular messages, process the input (highlighting already shown during typing)
                 process_input(&input, &mut agent, &formatter, cli.stream).await;
             }
         }

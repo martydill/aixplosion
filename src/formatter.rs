@@ -5,20 +5,28 @@ use regex::Regex;
 
 pub struct CodeFormatter {
     code_block_regex: Regex,
+    file_regex: Regex,
 }
 
 impl CodeFormatter {
     pub fn new() -> Result<Self> {
         let code_block_regex = Regex::new(r"```(\w*)\n([\s\S]*?)```")?;
+        let file_regex = Regex::new(r"@([^\s@]+)")?;
 
         Ok(Self {
             code_block_regex,
+            file_regex,
         })
     }
 
     pub fn format_response(&self, response: &str) -> Result<String> {
         let formatted = self.format_text_with_code_blocks(response)?;
         Ok(formatted)
+    }
+
+    /// Format response with file highlighting (for user input display)
+    pub fn format_input_with_file_highlighting(&self, input: &str) -> String {
+        self.format_text_with_file_highlighting(input)
     }
 
     fn format_text_with_code_blocks(&self, text: &str) -> Result<String> {
@@ -506,6 +514,35 @@ impl CodeFormatter {
         print!("{}", formatted);
         io::stdout().flush()?;
         Ok(())
+    }
+
+    /// Format text with @file syntax highlighting (standalone function)
+    pub fn format_text_with_file_highlighting(&self, text: &str) -> String {
+        let mut result = String::new();
+        let mut last_end = 0;
+
+        // Find all @file references
+        for caps in self.file_regex.captures_iter(text) {
+            let full_match = caps.get(0).unwrap();
+            let file_path = caps.get(1).unwrap().as_str();
+
+            // Add text before the file reference
+            result.push_str(&text[last_end..full_match.start()]);
+
+            // Add highlighted file reference with background color
+            let highlighted_file = format!(
+                "@{}",
+                file_path.on_bright_blue().white().bold()
+            );
+            result.push_str(&highlighted_file);
+
+            last_end = full_match.end();
+        }
+
+        // Add remaining text after the last file reference
+        result.push_str(&text[last_end..]);
+
+        result
     }
 }
 
