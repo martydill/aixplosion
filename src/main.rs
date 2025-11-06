@@ -35,8 +35,98 @@ use agent::Agent;
 use formatter::create_code_formatter;
 use mcp::McpManager;
 
+/// Input history management
+struct InputHistory {
+    entries: Vec<String>,
+    index: Option<usize>,
+    temp_input: String,
+}
+
+impl InputHistory {
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            index: None,
+            temp_input: String::new(),
+        }
+    }
+    
+    fn add_entry(&mut self, entry: String) {
+        // Don't add empty entries or duplicates of the last entry
+        if entry.trim().is_empty() {
+            return;
+        }
+        
+        if self.entries.is_empty() || self.entries.last() != Some(&entry) {
+            self.entries.push(entry);
+            // Limit history size to prevent memory issues
+            if self.entries.len() > 1000 {
+                self.entries.remove(0);
+            }
+        }
+        
+        // Reset navigation state
+        self.index = None;
+        self.temp_input.clear();
+    }
+    
+    fn navigate_up(&mut self, current_input: &str) -> Option<String> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        
+        match self.index {
+            None => {
+                // First time pressing up - save current input and go to last entry
+                self.temp_input = current_input.to_string();
+                self.index = Some(self.entries.len() - 1);
+                Some(self.entries[self.entries.len() - 1].clone())
+            }
+            Some(index) => {
+                if index > 0 {
+                    // Move to previous entry in history
+                    self.index = Some(index - 1);
+                    Some(self.entries[index - 1].clone())
+                } else {
+                    // Already at the oldest entry
+                    Some(self.entries[0].clone())
+                }
+            }
+        }
+    }
+    
+    fn navigate_down(&mut self) -> Option<String> {
+        match self.index {
+            None => None,
+            Some(index) => {
+                if index < self.entries.len() - 1 {
+                    // Move to next entry in history
+                    self.index = Some(index + 1);
+                    Some(self.entries[index + 1].clone())
+                } else {
+                    // At the end of history - restore current input
+                    self.index = None;
+                    Some(self.temp_input.clone())
+                }
+            }
+        }
+    }
+    
+    fn reset_navigation(&mut self) {
+        self.index = None;
+        self.temp_input.clear();
+    }
+    
+    fn is_navigating(&self) -> bool {
+        self.index.is_some()
+    }
+}
+
 /// Read input with autocompletion support and file highlighting
-fn read_input_with_completion_and_highlighting(formatter: Option<&formatter::CodeFormatter>) -> Result<String> {
+fn read_input_with_completion_and_highlighting(
+    formatter: Option<&formatter::CodeFormatter>, 
+    history: &mut InputHistory
+) -> Result<String> {
     // Enable raw mode for keyboard input
     terminal::enable_raw_mode()?;
 
@@ -77,10 +167,12 @@ fn read_input_with_completion_and_highlighting(formatter: Option<&formatter::Cod
                     let multiline_result = read_multiline_input(trimmed_input, None); // Don't double-highlight
                     return multiline_result;
                 } else {
-                    // Normal single line input
+                    // Normal single line input - add to history
+                    let trimmed_input = input.trim().to_string();
+                    history.add_entry(trimmed_input.clone());
                     println!();
                     terminal::disable_raw_mode()?;
-                    return Ok(input.trim().to_string());
+                    return Ok(trimmed_input);
                 }
             }
             
@@ -105,6 +197,9 @@ fn read_input_with_completion_and_highlighting(formatter: Option<&formatter::Cod
                 ..
             }) => {
                 if !input.is_empty() && cursor_pos > 0 {
+                    // Reset history navigation when user edits input
+                    history.reset_navigation();
+                    
                     input.remove(cursor_pos - 1);
                     cursor_pos -= 1;
 
@@ -131,6 +226,32 @@ fn read_input_with_completion_and_highlighting(formatter: Option<&formatter::Cod
             }) => {
                 if cursor_pos < input.len() {
                     cursor_pos += 1;
+                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+                }
+            }
+            
+            Event::Key(KeyEvent { 
+                code: KeyCode::Up, 
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                // Handle up arrow - navigate to previous history entry
+                if let Some(new_input) = history.navigate_up(&input) {
+                    input = new_input;
+                    cursor_pos = input.len();
+                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+                }
+            }
+            
+            Event::Key(KeyEvent { 
+                code: KeyCode::Down, 
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                // Handle down arrow - navigate to next history entry
+                if let Some(new_input) = history.navigate_down() {
+                    input = new_input;
+                    cursor_pos = input.len();
                     redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
                 }
             }
@@ -164,6 +285,9 @@ fn read_input_with_completion_and_highlighting(formatter: Option<&formatter::Cod
                 ..
             }) => {
                 // Handle all character input, including spaces
+                // Reset history navigation when user starts typing
+                history.reset_navigation();
+                
                 input.insert(cursor_pos, c);
                 cursor_pos += 1;
 
@@ -1486,7 +1610,10 @@ fn print_help() {
     println!("  /exit         - Exit the program");
     println!("  /quit         - Exit the program");
     println!();
-    println!("{}", "Cancellation:".green().bold());
+    println!("{}", "Navigation:".green().bold());
+    println!("  ↑ / ↓ Arrow   - Navigate through input history");
+    println!("  ← / → Arrow   - Move cursor left/right in current input");
+    println!("  Tab           - Auto-complete file paths and commands");
     println!("  ESC           - Cancel current AI conversation (during processing)");
     println!("  Ctrl+C        - Exit the program immediately");
     println!();
@@ -1539,6 +1666,13 @@ fn print_help() {
     println!("  !git status             # Check git status");
     println!("  !cargo build            # Build the project");
     println!("  ESC                     # Cancel AI conversation during processing");
+    println!();
+    println!("{}", "History Navigation:".green().bold());
+    println!("  • Press UP arrow to cycle through previous commands");
+    println!("  • Press DOWN arrow to cycle through more recent commands");
+    println!("  • Start typing to exit history navigation mode");
+    println!("  • History is preserved across the entire session");
+    println!("  • Duplicate and empty commands are not stored");
     println!();
     println!("{}", "Any other input will be sent to the AIxplosion for processing.".dimmed());
     println!();
@@ -1785,8 +1919,11 @@ async fn main() -> Result<()> {
         println!("{}", "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands.".dimmed());
         println!();
 
+        // Initialize shared history for the interactive session
+        let mut input_history = InputHistory::new();
+
         loop {
-            let input = match read_input_with_completion_and_highlighting(Some(&formatter)) {
+            let input = match read_input_with_completion_and_highlighting(Some(&formatter), &mut input_history) {
                 Ok(input) => input,
                 Err(e) => {
                     if e.to_string().contains("CANCELLED") {
