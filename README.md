@@ -2,7 +2,7 @@
 
 I used AI to build an AI coding agent and then used the AI coding agent to keep building the AI coding agent.
 
-<img width="844" height="514" alt="image" src="https://github.com/user-attachments/assets/de024e06-4fe5-4bc8-95bc-63ff25c9a21e" />
+<img width="898" height="571" alt="image" src="https://github.com/user-attachments/assets/324128e6-9bcd-4e78-bb5a-a0657ed23d64" />
 
 ## Features
 
