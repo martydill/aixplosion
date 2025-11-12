@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
@@ -1598,23 +1598,42 @@ impl Agent {
         }
     }
 
-    /// Clear conversation but keep AGENTS.md if it exists in context
+    /// Clear conversation but keep AGENTS.md files if they exist in context
     pub async fn clear_conversation_keep_agents_md(&mut self) -> Result<()> {
         use std::path::Path;
         
-        // Check if AGENTS.md exists in the current directory
-        let agents_md_path = Path::new("AGENTS.md");
-        let has_agents_md = agents_md_path.exists();
+        // Check for AGENTS.md in ~/.aixplosion/ (priority)
+        let home_agents_md = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".aixplosion")
+            .join("AGENTS.md");
         
-        if has_agents_md {
-            debug!("Clearing conversation but keeping AGENTS.md context");
-            // Clear the conversation
-            self.conversation.clear();
-            // Re-add AGENTS.md
-            self.add_context_file("AGENTS.md").await?;
-        } else {
-            debug!("Clearing conversation (no AGENTS.md found)");
-            self.conversation.clear();
+        // Check for AGENTS.md in current directory
+        let local_agents_md = Path::new("AGENTS.md");
+        
+        // Clear the conversation first
+        self.conversation.clear();
+        
+        // Add home directory AGENTS.md if it exists (priority)
+        if home_agents_md.exists() {
+            debug!("Adding AGENTS.md from ~/.aixplosion/ after clearing conversation");
+            match self.add_context_file(home_agents_md.to_str().unwrap()).await {
+                Ok(_) => println!("{} Re-added context file: {}", "✓".green(), home_agents_md.display()),
+                Err(e) => eprintln!("{} Failed to re-add context file '{}': {}", "✗".red(), home_agents_md.display(), e),
+            }
+        }
+        
+        // Also add current directory AGENTS.md if it exists (in addition to home directory version)
+        if local_agents_md.exists() {
+            debug!("Adding AGENTS.md from current directory after clearing conversation");
+            match self.add_context_file("AGENTS.md").await {
+                Ok(_) => println!("{} Re-added context file: {}", "✓".green(), "AGENTS.md"),
+                Err(e) => eprintln!("{} Failed to re-add context file 'AGENTS.md': {}", "✗".red(), e),
+            }
+        }
+        
+        if !home_agents_md.exists() && !local_agents_md.exists() {
+            debug!("Clearing conversation (no AGENTS.md files found)");
         }
         
         Ok(())

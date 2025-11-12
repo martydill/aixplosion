@@ -492,15 +492,26 @@ async fn process_input(input: &str, agent: &mut Agent, formatter: &formatter::Co
 
 /// Check for and add context files
 async fn add_context_files(agent: &mut Agent, context_files: &[String]) -> Result<()> {
-    if context_files.is_empty() {
-        // Automatically add AGENTS.md if it exists
-        if Path::new("AGENTS.md").exists() {
-            debug!("Auto-adding AGENTS.md as context");
-            agent.add_context_file("AGENTS.md").await?;
+    // Always add AGENTS.md from ~/.aixplosion/ if it exists (priority)
+    let home_agents_md = get_home_agents_md_path();
+    if home_agents_md.exists() {
+        debug!("Auto-adding AGENTS.md from ~/.aixplosion/ as context");
+        match agent.add_context_file(home_agents_md.to_str().unwrap()).await {
+            Ok(_) => println!("{} Added context file: {}", "✓".green(), home_agents_md.display()),
+            Err(e) => eprintln!("{} Failed to add context file '{}': {}", "✗".red(), home_agents_md.display(), e),
         }
-        return Ok(());
     }
-
+    
+    // Also add AGENTS.md from current directory if it exists (in addition to home directory version)
+    if Path::new("AGENTS.md").exists() {
+        debug!("Auto-adding AGENTS.md from current directory as context");
+        match agent.add_context_file("AGENTS.md").await {
+            Ok(_) => println!("{} Added context file: {}", "✓".green(), "AGENTS.md"),
+            Err(e) => eprintln!("{} Failed to add context file 'AGENTS.md': {}", "✗".red(), e),
+        }
+    }
+    
+    // Add any additional context files specified by the user
     for file_path in context_files {
         debug!("Adding context file: {}", file_path);
         match agent.add_context_file(file_path).await {
@@ -510,6 +521,14 @@ async fn add_context_files(agent: &mut Agent, context_files: &[String]) -> Resul
     }
 
     Ok(())
+}
+
+/// Get the path to AGENTS.md in the user's home .aixplosion directory
+fn get_home_agents_md_path() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".aixplosion")
+        .join("AGENTS.md")
 }
 
 async fn handle_shell_command(command: &str, _agent: &mut Agent) -> Result<()> {
@@ -1642,7 +1661,8 @@ fn print_help() {
     println!("{}", "Context Files:".green().bold());
     println!("  Use -f or --file to include files as context");
     println!("  Use @path/to/file syntax in messages to auto-include files");
-    println!("  AGENTS.md is automatically included if it exists");
+    println!("  AGENTS.md is automatically included from ~/.aixplosion/AGENTS.md (priority)");
+    println!("  Falls back to ./AGENTS.md if home directory version doesn't exist");
     println!("  Messages with only @file references will NOT make API calls");
     println!();
     println!("{}", "System Prompts:".green().bold());
