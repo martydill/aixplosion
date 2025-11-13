@@ -291,11 +291,6 @@ impl FileSecurityManager {
         println!("  • Read operations (read_file, list_directory) are always allowed");
         println!();
     }
-
-    /// Consume the file security manager and return the updated security settings
-    pub fn into_file_security(self) -> FileSecurity {
-        self.security
-    }
 }
 
 impl BashSecurityManager {
@@ -580,10 +575,5 @@ impl BashSecurityManager {
         println!("  • Choose 'Allowlist with wildcard' for commands with parameters");
         println!("  • Wildcard patterns replace parameters with * (e.g., 'curl example.com' → 'curl *')");
         println!();
-    }
-
-    /// Consume the security manager and return the updated security settings
-    pub fn into_security(self) -> BashSecurity {
-        self.security
     }
 }
