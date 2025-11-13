@@ -611,11 +611,6 @@ impl Agent {
         self.system_prompt = Some(system_prompt);
     }
 
-    /// Get the current system prompt
-    pub fn get_system_prompt(&self) -> Option<&String> {
-        self.system_prompt.as_ref()
-    }
-
     /// Add a file as context to the conversation
     pub async fn add_context_file(&mut self, file_path: &str) -> Result<()> {
         use tokio::fs;
@@ -1360,14 +1355,6 @@ impl Agent {
         }
         debug!("Final response generated ({} chars)", final_response.len());
         Ok(final_response)
-    }
-
-    pub fn clear_conversation(&mut self) {
-        self.conversation.clear();
-    }
-
-    pub fn get_conversation_length(&self) -> usize {
-        self.conversation.len()
     }
 
     pub fn get_token_usage(&self) -> &TokenUsage {
