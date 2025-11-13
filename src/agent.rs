@@ -1492,52 +1492,6 @@ impl Agent {
         println!();
     }
 
-    /// Execute a bash tool with security
-    pub async fn execute_bash_tool(&mut self, tool_call: &ToolCall) -> Result<ToolResult> {
-        let security_manager = self.bash_security_manager.clone();
-        let call_clone = tool_call.clone();
-        
-        // We need to get a mutable reference to the security manager
-        let mut manager = security_manager.write().await;
-        let result = bash(&call_clone, &mut *manager, false).await?;
-        
-        // Check if permissions were updated and save to config
-        if result.content.contains("💾 Note: This command has been added to your allowlist") {
-            info!("Permissions updated, scheduling save to config file");
-            // Get the current security settings to save in background
-            let security_manager_clone = self.bash_security_manager.clone();
-            tokio::spawn(async move {
-                // Load existing config to preserve other settings
-                match crate::config::Config::load(None).await {
-                    Ok(mut existing_config) => {
-                        // Get current security settings
-                        let current_security = security_manager_clone.read().await;
-                        let updated_security = current_security.get_security().clone();
-                        drop(current_security);
-                        
-                        // Update only the bash_security settings
-                        existing_config.bash_security = updated_security;
-                        
-                        // Save the updated config
-                        match existing_config.save(None).await {
-                            Ok(_) => {
-                                info!("Updated bash security settings saved to config (background)");
-                            }
-                            Err(e) => {
-                                warn!("Failed to save bash security settings (background): {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to load config for saving permissions (background): {}", e);
-                    }
-                }
-            });
-        }
-        
-        Ok(result)
-    }
-
     /// Get the bash security manager
     pub fn get_bash_security_manager(&self) -> Arc<RwLock<BashSecurityManager>> {
         self.bash_security_manager.clone()
@@ -1567,34 +1521,6 @@ impl Agent {
             bash_security: current_security,
             file_security: crate::security::FileSecurity::default(),
             mcp: crate::config::McpConfig::default(),
-        }
-    }
-
-    /// Save updated bash security settings to config file
-    async fn save_bash_security_to_config(&self) -> Result<()> {
-        use crate::config::Config;
-        
-        // Load existing config to preserve other settings
-        let mut existing_config = Config::load(None).await?;
-        
-        // Get current security settings from agent
-        let security_manager = self.bash_security_manager.read().await;
-        let current_security = security_manager.get_security().clone();
-        drop(security_manager);
-        
-        // Update only the bash_security settings
-        existing_config.bash_security = current_security;
-        
-        // Save the updated config
-        match existing_config.save(None).await {
-            Ok(_) => {
-                info!("Updated bash security settings saved to config");
-                Ok(())
-            }
-            Err(e) => {
-                error!("Failed to save bash security settings: {}", e);
-                Err(e)
-            }
         }
     }
 

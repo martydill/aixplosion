@@ -116,10 +116,6 @@ impl InputHistory {
         self.index = None;
         self.temp_input.clear();
     }
-    
-    fn is_navigating(&self) -> bool {
-        self.index.is_some()
-    }
 }
 
 /// Read input with autocompletion support and file highlighting
@@ -491,35 +487,6 @@ fn redraw_input_line_fast(input: &str, cursor_pos: usize) -> Result<()> {
 
     Ok(())
 }
-
-/// Ultra-fast redraw that only updates the cursor position without clearing
-fn redraw_input_line_minimal(input: &str, cursor_pos: usize) -> Result<()> {
-    use crossterm::{
-        cursor::MoveToColumn,
-        style::{Print, ResetColor},
-    };
-
-    let stdout = io::stdout();
-    let mut stdout = stdout.lock();
-
-    // Display prompt and input (no clearing - for high-frequency operations)
-    stdout.queue(Print("> "))?;
-    stdout.queue(Print(input))?;
-
-    // Store the current cursor position relative to the start of input text
-    let prompt_length = 2; // "> " length
-    let chars_before_cursor = input.chars().take(cursor_pos).count();
-
-    // Move to the position after the prompt + characters before cursor
-    stdout
-        .queue(MoveToColumn(prompt_length + chars_before_cursor as u16))?
-        .queue(ResetColor)?
-        .flush()?;
-
-    Ok(())
-}
-
-
 
 
 /// Process input and handle streaming/non-streaming response
