@@ -6,6 +6,12 @@ use regex::Regex;
 pub struct CodeFormatter {
     code_block_regex: Regex,
     file_regex: Regex,
+    cache: std::cell::RefCell<InputHighlightCache>,
+}
+
+struct InputHighlightCache {
+    last_input: String,
+    last_result: String,
 }
 
 impl CodeFormatter {
@@ -16,6 +22,10 @@ impl CodeFormatter {
         Ok(Self {
             code_block_regex,
             file_regex,
+            cache: std::cell::RefCell::new(InputHighlightCache {
+                last_input: String::new(),
+                last_result: String::new(),
+            }),
         })
     }
 
@@ -24,9 +34,26 @@ impl CodeFormatter {
         Ok(formatted)
     }
 
-    /// Format response with file highlighting (for user input display)
+    /// Format response with file highlighting (for user input display) with caching
     pub fn format_input_with_file_highlighting(&self, input: &str) -> String {
-        self.format_text_with_file_highlighting(input)
+        // First do a cheap check - if no @ symbol, return as-is (fast path)
+        if !input.contains('@') {
+            return input.to_string();
+        }
+
+        let mut cache = self.cache.borrow_mut();
+
+        // Return cached result if input hasn't changed
+        if cache.last_input == input {
+            return cache.last_result.clone();
+        }
+
+        // Compute new result and cache it
+        let result = self.format_text_with_file_highlighting(input);
+        cache.last_input = input.to_string();
+        cache.last_result = result.clone();
+
+        result
     }
 
     fn format_text_with_code_blocks(&self, text: &str) -> Result<String> {

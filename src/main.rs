@@ -199,39 +199,43 @@ fn read_input_with_completion_and_highlighting(
                 if !input.is_empty() && cursor_pos > 0 {
                     // Reset history navigation when user edits input
                     history.reset_navigation();
-                    
+
                     input.remove(cursor_pos - 1);
                     cursor_pos -= 1;
 
-                    // Redraw the line with highlighting
-                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+                    // Use fast redraw unless @ symbol is present
+                    if input.contains('@') {
+                        redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+                    } else {
+                        redraw_input_line_fast(&input, cursor_pos)?;
+                    }
                 }
             }
             
-            Event::Key(KeyEvent { 
-                code: KeyCode::Left, 
+            Event::Key(KeyEvent {
+                code: KeyCode::Left,
                 kind: KeyEventKind::Press,
                 ..
             }) => {
                 if cursor_pos > 0 {
                     cursor_pos -= 1;
-                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+                    redraw_input_line_fast(&input, cursor_pos)?;
                 }
             }
-            
-            Event::Key(KeyEvent { 
-                code: KeyCode::Right, 
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Right,
                 kind: KeyEventKind::Press,
                 ..
             }) => {
                 if cursor_pos < input.len() {
                     cursor_pos += 1;
-                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+                    redraw_input_line_fast(&input, cursor_pos)?;
                 }
             }
-            
-            Event::Key(KeyEvent { 
-                code: KeyCode::Up, 
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Up,
                 kind: KeyEventKind::Press,
                 ..
             }) => {
@@ -239,12 +243,13 @@ fn read_input_with_completion_and_highlighting(
                 if let Some(new_input) = history.navigate_up(&input) {
                     input = new_input;
                     cursor_pos = input.len();
-                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+                    // Use fast redraw for history navigation to avoid regex overhead
+                    redraw_input_line_fast(&input, cursor_pos)?;
                 }
             }
-            
-            Event::Key(KeyEvent { 
-                code: KeyCode::Down, 
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Down,
                 kind: KeyEventKind::Press,
                 ..
             }) => {
@@ -252,7 +257,8 @@ fn read_input_with_completion_and_highlighting(
                 if let Some(new_input) = history.navigate_down() {
                     input = new_input;
                     cursor_pos = input.len();
-                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+                    // Use fast redraw for history navigation to avoid regex overhead
+                    redraw_input_line_fast(&input, cursor_pos)?;
                 }
             }
             
@@ -287,12 +293,16 @@ fn read_input_with_completion_and_highlighting(
                 // Handle all character input, including spaces
                 // Reset history navigation when user starts typing
                 history.reset_navigation();
-                
+
                 input.insert(cursor_pos, c);
                 cursor_pos += 1;
 
-                // Redraw the entire line with highlighting
-                redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+                // Use fast redraw for most typing, only use highlighting when @ symbol is present
+                if input.contains('@') {
+                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+                } else {
+                    redraw_input_line_fast(&input, cursor_pos)?;
+                }
             }
             
             _ => {}
@@ -303,19 +313,21 @@ fn read_input_with_completion_and_highlighting(
 /// Determine if input should start multiline mode
 fn should_start_multiline(input: &str) -> bool {
     let trimmed = input.trim();
-    
-    // Start multiline if:
-    // 1. Input starts and ends with quotes but has more content
-    // 2. Input starts with code block marker but doesn't end with it
-    // 3. Input starts with quote but doesn't end with quote
-    // 4. Input contains obvious multiline indicators
-    
-    (trimmed.starts_with('"') && !trimmed.ends_with('"') && trimmed.len() > 1) ||
-    (trimmed.starts_with('\'') && !trimmed.ends_with('\'') && trimmed.len() > 1) ||
-    (trimmed.starts_with("```") && !trimmed.ends_with("```")) ||
+
+    // Only start multiline for clear, intentional cases:
+    // 1. Input starts with explicit code block marker (```language) but doesn't end with ```
+    // 2. Input contains actual newlines
+    // 3. Input is an incomplete quoted string with reasonable length (to avoid accidental triggers)
+
+    // Explicit code block start - most reliable multiline indicator
+    (trimmed.starts_with("```") && !trimmed.ends_with("```") && trimmed.len() > 3) ||
+    // Already contains newlines (shouldn't happen in single line input, but just in case)
     (trimmed.contains('\n')) ||
-    (trimmed.starts_with("```rust") || trimmed.starts_with("```python") || 
-     trimmed.starts_with("```javascript") || trimmed.starts_with("```json"))
+    // Incomplete quoted strings, but only if they're reasonably long and look intentional
+    ((trimmed.starts_with('"') || trimmed.starts_with('\'')) &&
+     !trimmed.ends_with('"') && !trimmed.ends_with('\'') &&
+     trimmed.len() > 10 && // Only if substantial content
+     (trimmed.contains(',') || trimmed.contains('{') || trimmed.contains('('))) // Looks like code/data
 }
 
 /// Read multiline input in normal mode
@@ -401,40 +413,109 @@ fn redraw_input_line_with_highlighting(input: &str, cursor_pos: usize, formatter
         style::{Print, ResetColor},
         terminal::Clear,
     };
-    
+
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
-    
+
     // Clear the current line and move to start
     stdout
         .queue(Clear(crossterm::terminal::ClearType::CurrentLine))?
         .queue(MoveToColumn(0))?;
-    
+
     // Display prompt
     stdout.queue(Print("> "))?;
-    
+
     // Store the current cursor position relative to the start of input text
     let prompt_length = 2; // "> " length
-    
-    // Apply highlighting if formatter is available and print the input
+
+    // Only apply highlighting if formatter is available AND input contains @file references
+    // This is a huge optimization - we avoid regex for most input
     if let Some(fmt) = formatter {
-        let highlighted_text = fmt.format_input_with_file_highlighting(input);
-        stdout.queue(Print(highlighted_text))?;
+        if input.contains('@') {
+            let highlighted_text = fmt.format_input_with_file_highlighting(input);
+            stdout.queue(Print(highlighted_text))?;
+        } else {
+            stdout.queue(Print(input))?;
+        }
     } else {
         stdout.queue(Print(input))?;
     }
-    
+
     // Move cursor to the correct position
     // We need to account for the fact that ANSI escape codes don't move the cursor
     // So we calculate the visual position based on the actual characters before cursor
     let chars_before_cursor = input.chars().take(cursor_pos).count();
-    
+
     // Move to the position after the prompt + characters before cursor
     stdout
         .queue(MoveToColumn(prompt_length + chars_before_cursor as u16))?
         .queue(ResetColor)?
         .flush()?;
-    
+
+    Ok(())
+}
+
+/// Fast redraw without highlighting for cursor movements (up/down arrows, etc.)
+fn redraw_input_line_fast(input: &str, cursor_pos: usize) -> Result<()> {
+    use crossterm::{
+        cursor::MoveToColumn,
+        style::{Print, ResetColor},
+        terminal::Clear,
+    };
+
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+
+    // Clear the current line and move to start
+    stdout
+        .queue(Clear(crossterm::terminal::ClearType::CurrentLine))?
+        .queue(MoveToColumn(0))?;
+
+    // Display prompt
+    stdout.queue(Print("> "))?;
+
+    // Print input without highlighting (much faster)
+    stdout.queue(Print(input))?;
+
+    // Store the current cursor position relative to the start of input text
+    let prompt_length = 2; // "> " length
+
+    // Move cursor to the correct position
+    let chars_before_cursor = input.chars().take(cursor_pos).count();
+
+    // Move to the position after the prompt + characters before cursor
+    stdout
+        .queue(MoveToColumn(prompt_length + chars_before_cursor as u16))?
+        .queue(ResetColor)?
+        .flush()?;
+
+    Ok(())
+}
+
+/// Ultra-fast redraw that only updates the cursor position without clearing
+fn redraw_input_line_minimal(input: &str, cursor_pos: usize) -> Result<()> {
+    use crossterm::{
+        cursor::MoveToColumn,
+        style::{Print, ResetColor},
+    };
+
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+
+    // Display prompt and input (no clearing - for high-frequency operations)
+    stdout.queue(Print("> "))?;
+    stdout.queue(Print(input))?;
+
+    // Store the current cursor position relative to the start of input text
+    let prompt_length = 2; // "> " length
+    let chars_before_cursor = input.chars().take(cursor_pos).count();
+
+    // Move to the position after the prompt + characters before cursor
+    stdout
+        .queue(MoveToColumn(prompt_length + chars_before_cursor as u16))?
+        .queue(ResetColor)?
+        .flush()?;
+
     Ok(())
 }
 
@@ -1960,27 +2041,6 @@ async fn main() -> Result<()> {
                 continue;
             }
             
-            // Create cancellation flag for this conversation
-            let cancellation_flag = Arc::new(AtomicBool::new(false));
-            
-            // Start ESC key listener for this conversation
-            let cancellation_flag_listener = cancellation_flag.clone();
-            tokio::spawn(async move {
-                use crossterm::event;
-                loop {
-                    if event::poll(std::time::Duration::from_millis(100)).unwrap_or(false) {
-                        if let Ok(event::Event::Key(key_event)) = event::read() {
-                            if key_event.code == KeyCode::Esc && key_event.kind == KeyEventKind::Press {
-                                cancellation_flag_listener.store(true, Ordering::SeqCst);
-                                println!("\n{} Cancelling AI conversation...", "🛑".yellow());
-                                break;
-                            }
-                        }
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-            });
-            
             // Check for commands first (they can't be multi-line)
             if input.starts_with('/') || input.starts_with('!') || 
                input == "exit" || input == "quit" {
@@ -2015,8 +2075,34 @@ async fn main() -> Result<()> {
                     break;
                 }
             } else {
-                // For regular messages, process the input (highlighting already shown during typing)
-                process_input(&input, &mut agent, &formatter, cli.stream, cancellation_flag.clone()).await;
+                // For regular messages, spawn ESC listener only for AI processing
+                let cancellation_flag_for_processing = Arc::new(AtomicBool::new(false));
+                let cancellation_flag_listener = cancellation_flag_for_processing.clone();
+
+                // Start ESC key listener only during actual AI processing (not for commands)
+                let esc_handle = tokio::spawn(async move {
+                    use crossterm::event;
+                    loop {
+                        // Even longer polling interval since this is only during AI processing
+                        if event::poll(std::time::Duration::from_millis(1000)).unwrap_or(false) {
+                            if let Ok(event::Event::Key(key_event)) = event::read() {
+                                if key_event.code == KeyCode::Esc && key_event.kind == KeyEventKind::Press {
+                                    cancellation_flag_listener.store(true, Ordering::SeqCst);
+                                    println!("\n{} Cancelling AI conversation...", "🛑".yellow());
+                                    break;
+                                }
+                            }
+                        }
+                        // Longer sleep during AI processing
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    }
+                });
+
+                // Process the input (highlighting already shown during typing)
+                process_input(&input, &mut agent, &formatter, cli.stream, cancellation_flag_for_processing.clone()).await;
+
+                // Clean up the ESC listener task
+                esc_handle.abort();
             }
         }
     }
