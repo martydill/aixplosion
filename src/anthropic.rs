@@ -120,12 +120,6 @@ pub struct Usage {
     pub output_tokens: u32,
 }
 
-impl Usage {
-    pub fn total(&self) -> u32 {
-        self.input_tokens + self.output_tokens
-    }
-}
-
 pub struct AnthropicClient {
     client: Client,
     api_key: String,
