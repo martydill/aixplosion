@@ -5,13 +5,18 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
 <img width="898" height="571" alt="image" src="https://github.com/user-attachments/assets/324128e6-9bcd-4e78-bb5a-a0657ed23d64" />
 
 ## Features
+ - Interactive and non-interactive mode
+ - Built-in file editing and bash tools
+ - Direct bash command execution with !
+ - Adding context files with @path_to_file_name
+ - <tab> autocomplete for file paths and commands
+ - MCP support
+ - Local and global AGENTS.md support
+ - Bash command and file editing security model with easy adding of wildcard versions to your allow list and sensible defaults
+ - Yolo mode for living dangerously
+ - Customizable system prompt
+ 
 
-- **Interactive Chat Mode**: Have conversations with Claude AI in your terminal
-- **Tool Calling**: Claude can use built-in file system tools
-- **File Management**: Built-in tools for reading, writing, editing, and deleting files
-- **Configuration**: Persistent configuration with TOML files
-- **Single Message Mode**: Send one-off messages and get responses
-- **Non-interactive Mode**: Pipe input into the agent
 
 ## Installation
 
