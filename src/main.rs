@@ -26,6 +26,7 @@ mod mcp;
 mod security;
 mod logo;
 mod autocomplete;
+mod database;
 
 #[cfg(test)]
 mod formatter_tests;
@@ -34,6 +35,7 @@ use config::Config;
 use agent::Agent;
 use formatter::create_code_formatter;
 use mcp::McpManager;
+use database::{DatabaseManager, get_database_path};
 
 /// Input history management
 struct InputHistory {
@@ -1806,6 +1808,12 @@ async fn main() -> Result<()> {
     // Load configuration
     let mut config = Config::load(cli.config.as_deref()).await?;
 
+    // Initialize database
+    info!("Initializing database...");
+    let db_path = get_database_path()?;
+    let database_manager = DatabaseManager::new(db_path).await?;
+    info!("Database initialized at: {}", database_manager.path().display());
+
     // Override API key if provided via command line (highest priority)
     if let Some(api_key) = cli.api_key {
         config.api_key = api_key;
@@ -1842,15 +1850,19 @@ async fn main() -> Result<()> {
 
     // Create and run agent
     let mut agent = Agent::new(config.clone(), cli.model, cli.yolo);
-    
+
     // Initialize MCP manager
     let mcp_manager = Arc::new(McpManager::new());
-    
+
     // Initialize MCP manager with config from unified config
     mcp_manager.initialize(config.mcp.clone()).await?;
-    
+
     // Set MCP manager in agent
     agent = agent.with_mcp_manager(mcp_manager.clone());
+
+    // Set database manager in agent
+    let database_manager = Arc::new(database_manager);
+    agent = agent.with_database_manager(database_manager.clone());
     
     // Connect to all enabled MCP servers
     info!("Connecting to MCP servers...");
@@ -1931,6 +1943,16 @@ async fn main() -> Result<()> {
 
     // Add context files
     add_context_files(&mut agent, &cli.context_files).await?;
+
+    // Create initial conversation in database
+    match agent.start_new_conversation().await {
+        Ok(conversation_id) => {
+            info!("Started initial conversation: {}", conversation_id);
+        }
+        Err(e) => {
+            warn!("Failed to create initial conversation: {}", e);
+        }
+    }
 
     let is_interactive = cli.message.is_none() && !cli.non_interactive;
 
@@ -2083,6 +2105,9 @@ async fn main() -> Result<()> {
     if let Err(e) = mcp_manager.disconnect_all().await {
         warn!("Failed to disconnect from MCP servers: {}", e);
     }
+
+    // Close database connection
+    database_manager.close().await;
 
     Ok(())
 }

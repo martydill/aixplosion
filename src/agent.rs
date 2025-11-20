@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::anthropic::{AnthropicClient, Message, ContentBlock, Usage};
 use crate::tools::{Tool, ToolResult, get_builtin_tools, bash, write_file, edit_file, delete_file, create_directory, ToolCall};
 use crate::tool_display::{ToolCallDisplay, SimpleToolDisplay, should_use_pretty_output, ToolDisplay};
+use crate::database::DatabaseManager;
 
 #[derive(Debug, Clone)]
 pub struct TokenUsage {
@@ -61,6 +62,8 @@ pub struct Agent {
     bash_security_manager: Arc<RwLock<BashSecurityManager>>,
     file_security_manager: Arc<RwLock<FileSecurityManager>>,
     yolo_mode: bool,
+    database_manager: Option<Arc<DatabaseManager>>,
+    current_conversation_id: Option<String>,
 }
 
 impl Agent {
@@ -132,11 +135,18 @@ impl Agent {
             bash_security_manager,
             file_security_manager,
             yolo_mode,
+            database_manager: None,
+            current_conversation_id: None,
         }
     }
 
     pub fn with_mcp_manager(mut self, mcp_manager: Arc<McpManager>) -> Self {
         self.mcp_manager = Some(mcp_manager);
+        self
+    }
+
+    pub fn with_database_manager(mut self, database_manager: Arc<DatabaseManager>) -> Self {
+        self.database_manager = Some(database_manager);
         self
     }
 
@@ -696,8 +706,13 @@ impl Agent {
         // Add cleaned user message to conversation
         self.conversation.push(Message {
             role: "user".to_string(),
-            content: vec![ContentBlock::text(cleaned_message)],
+            content: vec![ContentBlock::text(cleaned_message.clone())],
         });
+
+        // Save user message to database
+        if let Err(e) = self.save_message_to_conversation("user", &cleaned_message, 0).await {
+            warn!("Failed to save user message to database: {}", e);
+        }
 
         // Refresh MCP tools before processing the message (only if they have changed)
         if let Err(e) = self.refresh_mcp_tools().await {
@@ -754,6 +769,14 @@ impl Agent {
                       self.token_usage.total_tokens(),
                       self.token_usage.total_input_tokens,
                       self.token_usage.total_output_tokens);
+
+                // Update usage statistics in database
+                if let Err(e) = self.update_database_usage_stats(
+                    usage.input_tokens as i32,
+                    usage.output_tokens as i32
+                ).await {
+                    warn!("Failed to update database usage stats: {}", e);
+                }
             }
 
             // Extract and output the text response from this API call
@@ -1326,8 +1349,17 @@ impl Agent {
 
             self.conversation.push(Message {
                 role: "assistant".to_string(),
-                content: assistant_content,
+                content: assistant_content.clone(),
             });
+
+            // Save assistant response to database
+            if let Err(e) = self.save_message_to_conversation(
+                "assistant",
+                &self.client.create_response_content(&assistant_content),
+                response.usage.as_ref().map(|u| u.output_tokens).unwrap_or(0) as i32
+            ).await {
+                warn!("Failed to save assistant message to database: {}", e);
+            }
 
             // Add tool results to conversation
             for result in tool_results {
@@ -1352,6 +1384,11 @@ impl Agent {
                 role: "assistant".to_string(),
                 content: vec![ContentBlock::text(final_response.clone())],
             });
+
+            // Save final assistant response to database
+            if let Err(e) = self.save_message_to_conversation("assistant", &final_response, 0).await {
+                warn!("Failed to save final assistant message to database: {}", e);
+            }
         }
         debug!("Final response generated ({} chars)", final_response.len());
         Ok(final_response)
@@ -1512,6 +1549,44 @@ impl Agent {
     }
 
     /// Clear conversation but keep AGENTS.md files if they exist in context
+    /// Create a new conversation in the database and start tracking it
+    pub async fn start_new_conversation(&mut self) -> Result<String> {
+        if let Some(database_manager) = &self.database_manager {
+            // Create new conversation in database
+            let conversation_id = database_manager.create_conversation(
+                self.system_prompt.clone(),
+                &self.model
+            ).await?;
+
+            // Update current conversation tracking
+            self.current_conversation_id = Some(conversation_id.clone());
+
+            info!("Started new conversation: {}", conversation_id);
+            Ok(conversation_id)
+        } else {
+            // Fallback: just generate a conversation ID without database
+            let conversation_id = uuid::Uuid::new_v4().to_string();
+            self.current_conversation_id = Some(conversation_id.clone());
+            Ok(conversation_id)
+        }
+    }
+
+    /// Save a message to the current conversation in the database
+    pub async fn save_message_to_conversation(&mut self, role: &str, content: &str, tokens: i32) -> Result<()> {
+        if let (Some(database_manager), Some(conversation_id)) = (&self.database_manager, &self.current_conversation_id) {
+            database_manager.add_message(conversation_id, role, content, tokens).await?;
+        }
+        Ok(())
+    }
+
+    /// Update usage statistics in the database
+    pub async fn update_database_usage_stats(&mut self, input_tokens: i32, output_tokens: i32) -> Result<()> {
+        if let Some(database_manager) = &self.database_manager {
+            database_manager.update_usage_stats(input_tokens, output_tokens).await?;
+        }
+        Ok(())
+    }
+
     pub async fn clear_conversation_keep_agents_md(&mut self) -> Result<()> {
         use std::path::Path;
         
@@ -1526,7 +1601,11 @@ impl Agent {
         
         // Clear the conversation first
         self.conversation.clear();
-        
+
+        // Start a new conversation in the database
+        let new_conversation_id = self.start_new_conversation().await?;
+        debug!("Started new conversation {} after clearing", new_conversation_id);
+
         // Add home directory AGENTS.md if it exists (priority)
         if home_agents_md.exists() {
             debug!("Adding AGENTS.md from ~/.aixplosion/ after clearing conversation");
