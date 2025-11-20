@@ -20,12 +20,12 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
 
 
 ## Usage
-
+```
 export ANTHROPIC_AUTH_TOKEN="your-api-key"
 export ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic" 
 
 cargo run -- --stream
-
+```
 
 
 ## License
