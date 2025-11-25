@@ -1,10 +1,10 @@
-use serde::{Deserialize, Serialize};
-use anyhow::Result;
-use std::path::PathBuf;
-use std::collections::HashMap;
-use tokio::fs;
 use crate::security::{BashSecurity, FileSecurity};
+use anyhow::Result;
 use log::info;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use tokio::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
@@ -43,7 +43,7 @@ pub struct Config {
     pub file_security: FileSecurity,
     pub mcp: McpConfig,
 }
-const DEFAULT_SYSTEM_PROMPT : &str = r#"
+const DEFAULT_SYSTEM_PROMPT: &str = r#"
 You are an expert in software development. Your job is to help the user build awesome software.
 
 Everything you do must follow all best practices for architecture, design, security, and performance.
@@ -59,7 +59,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             api_key: std::env::var("ANTHROPIC_AUTH_TOKEN").unwrap_or_default(),
-            base_url: std::env::var("ANTHROPIC_BASE_URL").unwrap_or_else(|_| "https://api.anthropic.com/v1".to_string()),
+            base_url: std::env::var("ANTHROPIC_BASE_URL")
+                .unwrap_or_else(|_| "https://api.anthropic.com/v1".to_string()),
             default_model: "glm-4.6".to_string(),
             max_tokens: 4096,
             temperature: 0.7,
@@ -81,7 +82,6 @@ impl Config {
 
     /// Load configuration from file and merge with environment variables
     pub async fn load(path: Option<&str>) -> Result<Self> {
-        
         let config_path = path
             .map(PathBuf::from)
             .unwrap_or_else(Self::default_config_path);
@@ -89,22 +89,25 @@ impl Config {
         let mut config = if config_path.exists() {
             let content = fs::read_to_string(&config_path).await?;
             let mut config: Config = toml::from_str(&content)?;
-            
+
             // Ensure API key is never loaded from config file
             if !config.api_key.is_empty() {
                 info!("API key found in config file - ignoring for security. Use environment variables or command line.");
                 config.api_key = String::new();
             }
-            
+
             config
         } else {
-            info!("No config file found at {}, using defaults", config_path.display());
+            info!(
+                "No config file found at {}, using defaults",
+                config_path.display()
+            );
             Config::default()
         };
-        
+
         // Always prioritize environment variables for API key
         config.api_key = std::env::var("ANTHROPIC_AUTH_TOKEN").unwrap_or_default();
-        
+
         Ok(config)
     }
 
@@ -122,10 +125,13 @@ impl Config {
         // Create a copy of the config without the API key for saving
         let mut config_for_save = self.clone();
         config_for_save.api_key = String::new(); // Clear API key before saving
-        
+
         let content = toml::to_string_pretty(&config_for_save)?;
         fs::write(&config_path, content).await?;
-        info!("Configuration saved to: {} (API key excluded for security)", config_path.display());
+        info!(
+            "Configuration saved to: {} (API key excluded for security)",
+            config_path.display()
+        );
         Ok(())
     }
 }

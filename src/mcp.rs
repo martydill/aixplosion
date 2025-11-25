@@ -1,21 +1,21 @@
+use anyhow::Result;
+use futures_util::SinkExt;
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use anyhow::Result;
 use std::collections::HashMap;
+use std::env;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::process::{Child, Command as TokioCommand};
-use tokio::sync::{Mutex, RwLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+use tokio::process::{Child, Command as TokioCommand};
+use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use futures_util::SinkExt;
-use log::{debug, info, warn, error};
-use std::env;
 
 // Re-export from config module to maintain compatibility
-pub use crate::config::{McpServerConfig, McpConfig};
+pub use crate::config::{McpConfig, McpServerConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method")]
@@ -30,7 +30,7 @@ pub struct McpRequest {
 #[serde(tag = "method", content = "params")]
 pub enum McpMethod {
     #[serde(rename = "initialize")]
-    Initialize { 
+    Initialize {
         protocol_version: String,
         capabilities: McpClientCapabilities,
         client_info: McpClientInfo,
@@ -38,7 +38,7 @@ pub enum McpMethod {
     #[serde(rename = "tools/list")]
     ListTools,
     #[serde(rename = "tools/call")]
-    CallTool { 
+    CallTool {
         name: String,
         arguments: Option<Value>,
     },
@@ -94,7 +94,8 @@ pub struct McpTool {
 pub struct McpConnection {
     pub name: String,
     pub process: Option<Child>,
-    pub websocket: Option<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>>,
+    pub websocket:
+        Option<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>>,
     pub reader: Option<BufReader<tokio::process::ChildStdout>>,
     pub writer: Option<tokio::process::ChildStdin>,
     pub request_id: u64,
@@ -122,7 +123,7 @@ impl McpConnection {
     fn log_tool_details(&self, tool: &McpTool) {
         info!("📋 Tool Details:");
         info!("   Name: {}", tool.name);
-        
+
         if let Some(description) = &tool.description {
             info!("   Description: {}", description);
         } else {
@@ -137,19 +138,25 @@ impl McpConnection {
                 } else {
                     info!("   Parameters ({}):", properties.len());
                     for (param_name, param_schema) in properties {
-                        let param_type = param_schema.get("type")
+                        let param_type = param_schema
+                            .get("type")
                             .and_then(|t| t.as_str())
                             .unwrap_or("unknown");
-                        let param_desc = param_schema.get("description")
+                        let param_desc = param_schema
+                            .get("description")
                             .and_then(|d| d.as_str())
                             .unwrap_or("<No description>");
-                        let required = schema_obj.get("required")
+                        let required = schema_obj
+                            .get("required")
                             .and_then(|r| r.as_array())
                             .map(|reqs| reqs.iter().any(|req| req.as_str() == Some(param_name)))
                             .unwrap_or(false);
-                        
+
                         let required_marker = if required { " (required)" } else { "" };
-                        info!("     • {} [{}]{}: {}", param_name, param_type, required_marker, param_desc);
+                        info!(
+                            "     • {} [{}]{}: {}",
+                            param_name, param_type, required_marker, param_desc
+                        );
                     }
                 }
             } else {
@@ -158,17 +165,26 @@ impl McpConnection {
         } else {
             info!("   Parameters: <Invalid schema>");
         }
-        
-        info!("   Raw Schema: {}", serde_json::to_string(&tool.input_schema).unwrap_or_else(|_| "<Invalid JSON>".to_string()));
+
+        info!(
+            "   Raw Schema: {}",
+            serde_json::to_string(&tool.input_schema)
+                .unwrap_or_else(|_| "<Invalid JSON>".to_string())
+        );
     }
 
-      pub async fn connect_stdio(&mut self, command: &str, args: &[String], env: &HashMap<String, String>) -> Result<()> {
+    pub async fn connect_stdio(
+        &mut self,
+        command: &str,
+        args: &[String],
+        env: &HashMap<String, String>,
+    ) -> Result<()> {
         info!("Starting MCP server: {} {}", command, args.join(" "));
         debug!("MCP server details:");
         debug!("  Command: {}", command);
         debug!("  Args: {:?}", args);
         debug!("  Environment variables: {}", env.len());
-        
+
         // Handle Windows-specific command resolution
         let (cmd, cmd_args) = if cfg!(target_os = "windows") {
             // On Windows, try to resolve the command properly
@@ -186,9 +202,10 @@ impl McpConnection {
         } else {
             (command.to_string(), args.to_vec())
         };
-        
+
         let mut cmd_process = TokioCommand::new(&cmd);
-        cmd_process.args(&cmd_args)
+        cmd_process
+            .args(&cmd_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -199,12 +216,18 @@ impl McpConnection {
 
         // Add more detailed error logging for debugging
         debug!("Executing command: {} with args: {:?}", cmd, cmd_args);
-        
+
         let mut child = cmd_process.spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn MCP server process '{}': {}\nPlease ensure:\n1. The command exists and is executable\n2. All required dependencies are installed\n3. The command is in your PATH\n4. On Windows: Node.js and npm are properly installed", cmd, e))?;
-        
-        let stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("Failed to get stdin from child process"))?;
-        let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("Failed to get stdout from child process"))?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get stdin from child process"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get stdout from child process"))?;
 
         self.reader = Some(BufReader::new(stdout));
         self.writer = Some(stdin);
@@ -232,7 +255,7 @@ impl McpConnection {
                         }
 
                         debug!("Received from MCP server {}: {}", name, buffer.trim());
-                        
+
                         match serde_json::from_str::<McpResponse>(&buffer.trim()) {
                             Ok(response) => {
                                 if let Some(id) = &response.id {
@@ -243,14 +266,25 @@ impl McpConnection {
                                 } else if let Some(result) = &response.result {
                                     // Handle notifications
                                     if let Some(tools_list) = result.get("tools") {
-                                        debug!("Received tools via notification from {}: {}", name, serde_json::to_string_pretty(tools_list).unwrap_or_else(|_| "Invalid JSON".to_string()));
-                                        
+                                        debug!(
+                                            "Received tools via notification from {}: {}",
+                                            name,
+                                            serde_json::to_string_pretty(tools_list)
+                                                .unwrap_or_else(|_| "Invalid JSON".to_string())
+                                        );
+
                                         // Try to parse tools with better error handling
-                                        match serde_json::from_value::<Vec<Value>>(tools_list.clone()) {
+                                        match serde_json::from_value::<Vec<Value>>(
+                                            tools_list.clone(),
+                                        ) {
                                             Ok(raw_tools) => {
                                                 let mut parsed_tools = Vec::new();
-                                                for (i, raw_tool) in raw_tools.into_iter().enumerate() {
-                                                    match serde_json::from_value::<McpTool>(raw_tool.clone()) {
+                                                for (i, raw_tool) in
+                                                    raw_tools.into_iter().enumerate()
+                                                {
+                                                    match serde_json::from_value::<McpTool>(
+                                                        raw_tool.clone(),
+                                                    ) {
                                                         Ok(tool) => {
                                                             debug!("Successfully parsed tool: {} from {}", tool.name, name);
                                                             parsed_tools.push(tool);
@@ -258,12 +292,18 @@ impl McpConnection {
                                                         Err(e) => {
                                                             warn!("Failed to parse tool {} from server '{}' (index: {}): {}. Tool data: {}", 
                                                                   i, name, i, e, serde_json::to_string_pretty(&raw_tool).unwrap_or_else(|_| "Invalid JSON".to_string()));
-                                                            
+
                                                             // Try to create a minimal tool with the available data
-                                                            if let Some(tool_name) = raw_tool.get("name").and_then(|v| v.as_str()) {
+                                                            if let Some(tool_name) = raw_tool
+                                                                .get("name")
+                                                                .and_then(|v| v.as_str())
+                                                            {
                                                                 let fallback_tool = McpTool {
                                                                     name: tool_name.to_string(),
-                                                                    description: raw_tool.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                                                    description: raw_tool
+                                                                        .get("description")
+                                                                        .and_then(|v| v.as_str())
+                                                                        .map(|s| s.to_string()),
                                                                     input_schema: json!({
                                                                         "type": "object",
                                                                         "properties": {},
@@ -290,10 +330,20 @@ impl McpConnection {
                                 }
                             }
                             Err(e) => {
-                                warn!("Failed to parse MCP response from {}: {}. Response: {}", name, e, buffer.trim());
-                                error!("MCP server '{}' sent invalid JSON data. This may indicate:", name);
+                                warn!(
+                                    "Failed to parse MCP response from {}: {}. Response: {}",
+                                    name,
+                                    e,
+                                    buffer.trim()
+                                );
+                                error!(
+                                    "MCP server '{}' sent invalid JSON data. This may indicate:",
+                                    name
+                                );
                                 error!("1. Server is not following MCP protocol correctly");
-                                error!("2. Server process is crashing or outputting error messages");
+                                error!(
+                                    "2. Server process is crashing or outputting error messages"
+                                );
                                 error!("3. Version mismatch between client and server");
                                 debug!("Raw response that failed to parse: {}", buffer.trim());
                             }
@@ -302,7 +352,10 @@ impl McpConnection {
                     }
                     Err(e) => {
                         error!("Error reading from MCP server {}: {}", name, e);
-                        error!("MCP server {} connection broken - tools may be unavailable", name);
+                        error!(
+                            "MCP server {} connection broken - tools may be unavailable",
+                            name
+                        );
                         break;
                     }
                 }
@@ -312,14 +365,23 @@ impl McpConnection {
         // Initialize connection
         match self.initialize().await {
             Ok(_) => {
-                info!("MCP server '{}' initialization completed successfully", self.name);
+                info!(
+                    "MCP server '{}' initialization completed successfully",
+                    self.name
+                );
 
                 // Verify the process is still running after initialization
                 if let Some(ref mut process) = self.process {
                     match process.try_wait() {
                         Ok(Some(status)) => {
-                            error!("MCP server '{}' process exited unexpectedly with status: {}", self.name, status);
-                            return Err(anyhow::anyhow!("MCP server '{}' process exited during initialization", self.name));
+                            error!(
+                                "MCP server '{}' process exited unexpectedly with status: {}",
+                                self.name, status
+                            );
+                            return Err(anyhow::anyhow!(
+                                "MCP server '{}' process exited during initialization",
+                                self.name
+                            ));
                         }
                         Ok(None) => {
                             debug!("MCP server '{}' process is running normally", self.name);
@@ -338,7 +400,10 @@ impl McpConnection {
                 if let Some(ref mut process) = self.process {
                     match process.try_wait() {
                         Ok(Some(status)) => {
-                            error!("MCP server '{}' process exited with status: {}", self.name, status);
+                            error!(
+                                "MCP server '{}' process exited with status: {}",
+                                self.name, status
+                            );
                         }
                         Ok(None) => {
                             debug!("MCP server '{}' process is still running but initialization failed", self.name);
@@ -375,7 +440,7 @@ impl McpConnection {
         for path in &common_paths {
             let expanded_path = env::var("APPDATA").unwrap_or_default();
             let full_path = path.replace("%APPDATA%", &expanded_path);
-            
+
             if Path::new(&full_path).exists() {
                 info!("Found npx at: {}", full_path);
                 return Ok(full_path);
@@ -393,12 +458,14 @@ impl McpConnection {
             }
         }
 
-        Err(anyhow::anyhow!("npx not found. Please install Node.js and npm from https://nodejs.org/"))
+        Err(anyhow::anyhow!(
+            "npx not found. Please install Node.js and npm from https://nodejs.org/"
+        ))
     }
 
     pub async fn connect_websocket(&mut self, url: &str) -> Result<()> {
         info!("Connecting to MCP server via WebSocket: {}", url);
-        
+
         let (ws_stream, _) = connect_async(url).await?;
         self.websocket = Some(ws_stream);
 
@@ -426,9 +493,12 @@ impl McpConnection {
         };
 
         let response = self.send_request(init_request).await?;
-        
+
         if response.error.is_some() {
-            return Err(anyhow::anyhow!("MCP initialization failed: {:?}", response.error));
+            return Err(anyhow::anyhow!(
+                "MCP initialization failed: {:?}",
+                response.error
+            ));
         }
 
         // Send initialized notification
@@ -442,14 +512,14 @@ impl McpConnection {
 
         // Load tools
         self.load_tools().await?;
-        
+
         info!("MCP server {} initialized successfully", self.name);
         Ok(())
     }
 
     async fn load_tools(&mut self) -> Result<()> {
         info!("Loading tools from MCP server '{}'...", self.name);
-        
+
         let tools_request = McpRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(self.next_id()),
@@ -459,50 +529,85 @@ impl McpConnection {
         // Add timeout for tools loading to prevent hanging
         let response_result = tokio::time::timeout(
             std::time::Duration::from_secs(10), // 10 second timeout for tools loading
-            self.send_request(tools_request)
-        ).await;
-        
+            self.send_request(tools_request),
+        )
+        .await;
+
         let response = match response_result {
             Ok(Ok(response)) => response,
             Ok(Err(e)) => {
-                error!("Failed to send tools request to MCP server '{}': {}", self.name, e);
+                error!(
+                    "Failed to send tools request to MCP server '{}': {}",
+                    self.name, e
+                );
                 return Err(e);
             }
             Err(_) => {
-                error!("MCP server '{}' tools loading timed out after 10 seconds", self.name);
-                return Err(anyhow::anyhow!("Tools loading timed out for MCP server '{}'", self.name));
+                error!(
+                    "MCP server '{}' tools loading timed out after 10 seconds",
+                    self.name
+                );
+                return Err(anyhow::anyhow!(
+                    "Tools loading timed out for MCP server '{}'",
+                    self.name
+                ));
             }
         };
-        
+
         if let Some(error) = response.error {
-            error!("Failed to list tools from MCP server '{}': {:?}", self.name, error);
+            error!(
+                "Failed to list tools from MCP server '{}': {:?}",
+                self.name, error
+            );
             return Err(anyhow::anyhow!("Failed to list tools: {:?}", error));
         }
 
         if let Some(result) = response.result {
             if let Some(tools_value) = result.get("tools") {
-                debug!("Raw tools response from {}: {}", self.name, serde_json::to_string_pretty(tools_value)?);
-                
+                debug!(
+                    "Raw tools response from {}: {}",
+                    self.name,
+                    serde_json::to_string_pretty(tools_value)?
+                );
+
                 // Try to parse tools with better error handling
                 match serde_json::from_value::<Vec<Value>>(tools_value.clone()) {
                     Ok(raw_tools) => {
-                        info!("MCP server '{}' returned {} tools", self.name, raw_tools.len());
-                        
+                        info!(
+                            "MCP server '{}' returned {} tools",
+                            self.name,
+                            raw_tools.len()
+                        );
+
                         let mut parsed_tools = Vec::new();
                         for (i, raw_tool) in raw_tools.into_iter().enumerate() {
                             // Log the raw tool data before parsing
-                            debug!("Raw tool data {} from server '{}': {}", i, self.name, serde_json::to_string_pretty(&raw_tool).unwrap_or_else(|_| "Invalid JSON".to_string()));
-                            
+                            debug!(
+                                "Raw tool data {} from server '{}': {}",
+                                i,
+                                self.name,
+                                serde_json::to_string_pretty(&raw_tool)
+                                    .unwrap_or_else(|_| "Invalid JSON".to_string())
+                            );
+
                             // Check if inputSchema exists and what its value is
                             if let Some(input_schema) = raw_tool.get("inputSchema") {
-                                debug!("  inputSchema field found: {}", serde_json::to_string_pretty(input_schema).unwrap_or_else(|_| "Invalid JSON".to_string()));
+                                debug!(
+                                    "  inputSchema field found: {}",
+                                    serde_json::to_string_pretty(input_schema)
+                                        .unwrap_or_else(|_| "Invalid JSON".to_string())
+                                );
                                 if input_schema.is_null() {
                                     debug!("  inputSchema is null - will need fallback");
                                 } else {
                                     debug!("  inputSchema has valid data");
                                 }
                             } else if let Some(input_schema) = raw_tool.get("input_schema") {
-                                debug!("  input_schema field found (snake_case): {}", serde_json::to_string_pretty(input_schema).unwrap_or_else(|_| "Invalid JSON".to_string()));
+                                debug!(
+                                    "  input_schema field found (snake_case): {}",
+                                    serde_json::to_string_pretty(input_schema)
+                                        .unwrap_or_else(|_| "Invalid JSON".to_string())
+                                );
                                 if input_schema.is_null() {
                                     debug!("  input_schema is null - will need fallback");
                                 } else {
@@ -511,24 +616,39 @@ impl McpConnection {
                             } else {
                                 debug!("  No input schema field found - will use serde default");
                             }
-                            
+
                             match serde_json::from_value::<McpTool>(raw_tool.clone()) {
                                 Ok(tool) => {
-                                    debug!("Successfully parsed tool: {} from {}", tool.name, self.name);
-                                    debug!("  Parsed schema: {}", serde_json::to_string(&tool.input_schema).unwrap_or_else(|_| "Invalid JSON".to_string()));
-                                    info!("✓ Loaded tool: {} from server '{}'", tool.name, self.name);
+                                    debug!(
+                                        "Successfully parsed tool: {} from {}",
+                                        tool.name, self.name
+                                    );
+                                    debug!(
+                                        "  Parsed schema: {}",
+                                        serde_json::to_string(&tool.input_schema)
+                                            .unwrap_or_else(|_| "Invalid JSON".to_string())
+                                    );
+                                    info!(
+                                        "✓ Loaded tool: {} from server '{}'",
+                                        tool.name, self.name
+                                    );
                                     self.log_tool_details(&tool);
                                     parsed_tools.push(tool);
                                 }
                                 Err(e) => {
                                     warn!("Failed to parse tool {} from server '{}' (index: {}): {}. Tool data: {}", 
                                           i, self.name, i, e, serde_json::to_string_pretty(&raw_tool).unwrap_or_else(|_| "Invalid JSON".to_string()));
-                                    
+
                                     // Try to create a minimal tool with the available data
-                                    if let Some(name) = raw_tool.get("name").and_then(|v| v.as_str()) {
+                                    if let Some(name) =
+                                        raw_tool.get("name").and_then(|v| v.as_str())
+                                    {
                                         let fallback_tool = McpTool {
                                             name: name.to_string(),
-                                            description: raw_tool.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                            description: raw_tool
+                                                .get("description")
+                                                .and_then(|v| v.as_str())
+                                                .map(|s| s.to_string()),
                                             input_schema: json!({
                                                 "type": "object",
                                                 "properties": {},
@@ -542,24 +662,43 @@ impl McpConnection {
                                 }
                             }
                         }
-                        
+
                         *self.tools.write().await = parsed_tools;
                         // Increment version for this connection
                         let mut version = self.tools_version.write().await;
                         *version += 1;
-                        
-                        info!("✅ Successfully loaded {} tools from MCP server '{}'", self.tools.read().await.len(), self.name);
+
+                        info!(
+                            "✅ Successfully loaded {} tools from MCP server '{}'",
+                            self.tools.read().await.len(),
+                            self.name
+                        );
                     }
                     Err(e) => {
-                        warn!("Failed to parse tools array from {}: {}. Raw response: {}", self.name, e, serde_json::to_string_pretty(tools_value)?);
-                        return Err(anyhow::anyhow!("Invalid tools response format from MCP server '{}': {}", self.name, e));
+                        warn!(
+                            "Failed to parse tools array from {}: {}. Raw response: {}",
+                            self.name,
+                            e,
+                            serde_json::to_string_pretty(tools_value)?
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Invalid tools response format from MCP server '{}': {}",
+                            self.name,
+                            e
+                        ));
                     }
                 }
             } else {
-                warn!("No 'tools' field found in response from MCP server '{}'", self.name);
+                warn!(
+                    "No 'tools' field found in response from MCP server '{}'",
+                    self.name
+                );
             }
         } else {
-            warn!("No result found in tools response from MCP server '{}'", self.name);
+            warn!(
+                "No result found in tools response from MCP server '{}'",
+                self.name
+            );
         }
 
         Ok(())
@@ -570,23 +709,34 @@ impl McpConnection {
         if let Some(ref mut process) = self.process {
             match process.try_wait() {
                 Ok(Some(_)) => {
-                    return Err(anyhow::anyhow!("MCP server '{}' process has terminated", self.name));
+                    return Err(anyhow::anyhow!(
+                        "MCP server '{}' process has terminated",
+                        self.name
+                    ));
                 }
                 Ok(None) => {
                     // Process is still running, good
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("Failed to check MCP server '{}' status: {}", self.name, e));
+                    return Err(anyhow::anyhow!(
+                        "Failed to check MCP server '{}' status: {}",
+                        self.name,
+                        e
+                    ));
                 }
             }
         }
 
         // Log the tool call with details
         info!("🔧 Calling MCP tool '{}' on server '{}'", name, self.name);
-        
+
         if let Some(ref args) = arguments {
             if !args.is_null() {
-                info!("   Arguments: {}", serde_json::to_string_pretty(args).unwrap_or_else(|_| "<Invalid JSON>".to_string()));
+                info!(
+                    "   Arguments: {}",
+                    serde_json::to_string_pretty(args)
+                        .unwrap_or_else(|_| "<Invalid JSON>".to_string())
+                );
             } else {
                 info!("   Arguments: <No arguments>");
             }
@@ -606,14 +756,24 @@ impl McpConnection {
         let response = self.send_request(tool_request).await?;
 
         if let Some(error) = response.error {
-            error!("❌ MCP tool '{}' failed on server '{}': {:?}", name, self.name, error);
+            error!(
+                "❌ MCP tool '{}' failed on server '{}': {:?}",
+                name, self.name, error
+            );
             return Err(anyhow::anyhow!("Tool call failed: {:?}", error));
         }
 
-        info!("✅ MCP tool '{}' completed successfully on server '{}'", name, self.name);
-        
+        info!(
+            "✅ MCP tool '{}' completed successfully on server '{}'",
+            name, self.name
+        );
+
         if let Some(ref result) = response.result {
-            debug!("   Result: {}", serde_json::to_string_pretty(result).unwrap_or_else(|_| "<Invalid JSON>".to_string()));
+            debug!(
+                "   Result: {}",
+                serde_json::to_string_pretty(result)
+                    .unwrap_or_else(|_| "<Invalid JSON>".to_string())
+            );
         }
 
         Ok(response.result.unwrap_or(json!({})))
@@ -622,7 +782,7 @@ impl McpConnection {
     async fn send_request(&mut self, request: McpRequest) -> Result<McpResponse> {
         let id = request.id.clone().unwrap();
         let request_json = serde_json::to_string(&request)?;
-        
+
         debug!("Sending MCP request to {}: {}", self.name, request_json);
 
         // Create response channel
@@ -643,18 +803,22 @@ impl McpConnection {
         // Wait for response with timeout
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(30), // 30 second timeout
-            rx
-        ).await
-            .map_err(|_| anyhow::anyhow!("MCP server '{}' timed out after 30 seconds", self.name))?
-            .map_err(|_| anyhow::anyhow!("MCP server '{}' response channel was dropped", self.name))?;
+            rx,
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("MCP server '{}' timed out after 30 seconds", self.name))?
+        .map_err(|_| anyhow::anyhow!("MCP server '{}' response channel was dropped", self.name))?;
 
         Ok(response)
     }
 
     async fn send_notification(&mut self, notification: McpRequest) -> Result<()> {
         let notification_json = serde_json::to_string(&notification)?;
-        
-        debug!("Sending MCP notification to {}: {}", self.name, notification_json);
+
+        debug!(
+            "Sending MCP notification to {}: {}",
+            self.name, notification_json
+        );
 
         if let Some(writer) = &mut self.writer {
             writer.write_all(notification_json.as_bytes()).await?;
@@ -683,7 +847,7 @@ impl McpConnection {
         if let Some(mut process) = self.process.take() {
             let _ = process.kill().await;
         }
-        
+
         if let Some(mut websocket) = self.websocket.take() {
             let _ = websocket.close(None).await;
         }
@@ -710,21 +874,24 @@ impl McpManager {
     /// Initialize with MCP configuration from unified config
     pub async fn initialize(&self, mcp_config: McpConfig) -> Result<()> {
         *self.config.write().await = mcp_config;
-        info!("MCP manager initialized with {} servers", self.config.read().await.servers.len());
+        info!(
+            "MCP manager initialized with {} servers",
+            self.config.read().await.servers.len()
+        );
         Ok(())
     }
 
     /// Save current MCP configuration to unified config file
     pub async fn save_to_config_file(&self) -> Result<()> {
         use crate::config::Config;
-        
+
         // Load existing unified config to preserve other settings
         let mut unified_config = Config::load(None).await?;
-        
+
         // Update MCP configuration
         let current_mcp_config = self.config.read().await.clone();
         unified_config.mcp = current_mcp_config;
-        
+
         // Save unified config
         unified_config.save(None).await?;
         info!("Saved MCP configuration to unified config file");
@@ -748,19 +915,21 @@ impl McpManager {
         config.servers.remove(name);
         drop(config);
         self.save_to_config_file().await?;
-        
+
         // Disconnect if connected
         let mut connections = self.connections.write().await;
         if let Some(mut connection) = connections.remove(name) {
             let _ = connection.disconnect().await;
         }
-        
+
         Ok(())
     }
 
     pub async fn connect_server(&self, name: &str) -> Result<()> {
         let config = self.load_config().await?;
-        let server_config = config.servers.get(name)
+        let server_config = config
+            .servers
+            .get(name)
             .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in configuration", name))?;
 
         if !server_config.enabled {
@@ -769,7 +938,7 @@ impl McpManager {
 
         info!("🔌 Connecting to MCP server: {}", name);
         info!("   Configuration:");
-        
+
         if let Some(url) = &server_config.url {
             info!("     Type: WebSocket");
             info!("     URL: {}", url);
@@ -799,21 +968,31 @@ impl McpManager {
             let env_vars = server_config.env.as_ref().cloned().unwrap_or_default();
             connection.connect_stdio(command, args, &env_vars).await?;
         } else {
-            return Err(anyhow::anyhow!("Server '{}' has no command or URL configured", name));
+            return Err(anyhow::anyhow!(
+                "Server '{}' has no command or URL configured",
+                name
+            ));
         }
 
-        self.connections.write().await.insert(name.to_string(), connection);
+        self.connections
+            .write()
+            .await
+            .insert(name.to_string(), connection);
         info!("✅ Successfully connected to MCP server: {}", name);
-        
+
         // Log summary of available tools
         if let Some(connection) = self.connections.read().await.get(name) {
             let tools = connection.get_tools().await;
             info!("📊 Available tools from '{}': {}", name, tools.len());
             for tool in &tools {
-                info!("   • {} - {}", tool.name, tool.description.as_deref().unwrap_or("<No description>"));
+                info!(
+                    "   • {} - {}",
+                    tool.name,
+                    tool.description.as_deref().unwrap_or("<No description>")
+                );
             }
         }
-        
+
         Ok(())
     }
 
@@ -835,27 +1014,27 @@ impl McpManager {
     pub async fn list_servers(&self) -> Result<Vec<(String, McpServerConfig, bool)>> {
         let config = self.config.read().await;
         let connections = self.connections.read().await;
-        
+
         let mut servers = Vec::new();
         for (name, server_config) in config.servers.iter() {
             let connected = connections.contains_key(name);
             servers.push((name.clone(), server_config.clone(), connected));
         }
-        
+
         Ok(servers)
     }
 
     pub async fn get_all_tools(&self) -> Result<Vec<(String, McpTool)>> {
         let connections = self.connections.read().await;
         let mut all_tools = Vec::new();
-        
+
         for (name, connection) in connections.iter() {
             let tools = connection.get_tools().await;
             for tool in tools {
                 all_tools.push((name.clone(), tool));
             }
         }
-        
+
         Ok(all_tools)
     }
 
@@ -863,11 +1042,11 @@ impl McpManager {
         let connections = self.connections.read().await;
         let server_names: Vec<String> = connections.keys().cloned().collect();
         drop(connections);
-        
+
         for name in server_names {
             let _ = self.disconnect_server(&name).await;
         }
-        
+
         Ok(())
     }
 
@@ -875,15 +1054,20 @@ impl McpManager {
     pub async fn get_tools_version(&self) -> u64 {
         let connections = self.connections.read().await;
         let mut total_version = 0u64;
-        
+
         for connection in connections.values() {
             total_version = total_version.wrapping_add(connection.get_tools_version().await);
         }
-        
+
         total_version
     }
 
-    pub async fn call_tool(&self, server_name: &str, tool_name: &str, arguments: Option<Value>) -> Result<Value> {
+    pub async fn call_tool(
+        &self,
+        server_name: &str,
+        tool_name: &str,
+        arguments: Option<Value>,
+    ) -> Result<Value> {
         let mut connections = self.connections.write().await;
         if let Some(connection) = connections.get_mut(server_name) {
             connection.call_tool(tool_name, arguments).await
@@ -896,20 +1080,21 @@ impl McpManager {
         let config = self.config.read().await;
         let mut connected_count = 0;
         let mut failed_count = 0;
-        
+
         info!("🌐 Connecting to all enabled MCP servers...");
         info!("   Total servers configured: {}", config.servers.len());
-        
+
         for (name, server_config) in config.servers.iter() {
             if server_config.enabled {
                 info!("   Attempting to connect to: {}", name);
-                
+
                 // Add timeout for individual server connections
                 let connect_result = tokio::time::timeout(
                     std::time::Duration::from_secs(10), // 10 second timeout per server
-                    self.connect_server(name)
-                ).await;
-                
+                    self.connect_server(name),
+                )
+                .await;
+
                 match connect_result {
                     Ok(Ok(_)) => {
                         connected_count += 1;
@@ -921,35 +1106,47 @@ impl McpManager {
                     }
                     Err(_) => {
                         failed_count += 1;
-                        warn!("⏰ MCP server '{}' connection timed out after 10 seconds", name);
+                        warn!(
+                            "⏰ MCP server '{}' connection timed out after 10 seconds",
+                            name
+                        );
                     }
                 }
             } else {
                 info!("⏭️  Skipping disabled server: {}", name);
             }
         }
-        
+
         info!("📊 MCP Connection Summary:");
         info!("   Successfully connected: {}", connected_count);
         info!("   Failed connections: {}", failed_count);
-        info!("   Skipped (disabled): {}", config.servers.len() - connected_count - failed_count);
-        
+        info!(
+            "   Skipped (disabled): {}",
+            config.servers.len() - connected_count - failed_count
+        );
+
         if connected_count > 0 {
             // Log total tools available across all servers
             let all_tools = self.get_all_tools().await?;
-            info!("🛠️  Total tools available across all MCP servers: {}", all_tools.len());
-            
+            info!(
+                "🛠️  Total tools available across all MCP servers: {}",
+                all_tools.len()
+            );
+
             // Group tools by server for better organization
             let mut tools_by_server = std::collections::HashMap::new();
             for (server_name, tool) in all_tools {
-                tools_by_server.entry(server_name).or_insert_with(Vec::new).push(tool);
+                tools_by_server
+                    .entry(server_name)
+                    .or_insert_with(Vec::new)
+                    .push(tool);
             }
-            
+
             for (server_name, tools) in tools_by_server {
                 info!("   Server '{}': {} tools", server_name, tools.len());
             }
         }
-        
+
         Ok(())
     }
 }

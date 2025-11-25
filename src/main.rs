@@ -1,41 +1,40 @@
+use anyhow::Result;
 use clap::Parser;
 use colored::*;
-use anyhow::Result;
-use std::io::{self, Read, Write};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-    terminal,
     cursor,
-    ExecutableCommand, QueueableCommand,
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    terminal, ExecutableCommand, QueueableCommand,
 };
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::io::{self, Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-use log::{debug, info, warn, error};
 use env_logger::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
+use log::{debug, error, info, warn};
 
-mod config;
-mod anthropic;
-mod tools;
 mod agent;
+mod anthropic;
+mod autocomplete;
+mod config;
+mod database;
 mod formatter;
-mod tool_display;
+mod logo;
 mod mcp;
 mod security;
-mod logo;
-mod autocomplete;
-mod database;
+mod tool_display;
+mod tools;
 
 #[cfg(test)]
 mod formatter_tests;
 
-use config::Config;
 use agent::Agent;
+use config::Config;
+use database::{get_database_path, DatabaseManager};
 use formatter::create_code_formatter;
 use mcp::McpManager;
-use database::{DatabaseManager, get_database_path};
 
 /// Input history management
 struct InputHistory {
@@ -52,13 +51,13 @@ impl InputHistory {
             temp_input: String::new(),
         }
     }
-    
+
     fn add_entry(&mut self, entry: String) {
         // Don't add empty entries or duplicates of the last entry
         if entry.trim().is_empty() {
             return;
         }
-        
+
         if self.entries.is_empty() || self.entries.last() != Some(&entry) {
             self.entries.push(entry);
             // Limit history size to prevent memory issues
@@ -66,17 +65,17 @@ impl InputHistory {
                 self.entries.remove(0);
             }
         }
-        
+
         // Reset navigation state
         self.index = None;
         self.temp_input.clear();
     }
-    
+
     fn navigate_up(&mut self, current_input: &str) -> Option<String> {
         if self.entries.is_empty() {
             return None;
         }
-        
+
         match self.index {
             None => {
                 // First time pressing up - save current input and go to last entry
@@ -96,7 +95,7 @@ impl InputHistory {
             }
         }
     }
-    
+
     fn navigate_down(&mut self) -> Option<String> {
         match self.index {
             None => None,
@@ -113,7 +112,7 @@ impl InputHistory {
             }
         }
     }
-    
+
     fn reset_navigation(&mut self) {
         self.index = None;
         self.temp_input.clear();
@@ -122,8 +121,8 @@ impl InputHistory {
 
 /// Read input with autocompletion support and file highlighting
 fn read_input_with_completion_and_highlighting(
-    formatter: Option<&formatter::CodeFormatter>, 
-    history: &mut InputHistory
+    formatter: Option<&formatter::CodeFormatter>,
+    history: &mut InputHistory,
 ) -> Result<String> {
     // Enable raw mode for keyboard input
     terminal::enable_raw_mode()?;
@@ -153,9 +152,10 @@ fn read_input_with_completion_and_highlighting(
                         .execute(cursor::MoveToColumn(0))?
                         .flush()?;
 
-                      // Show the prompt and what we've typed so far with file highlighting
+                    // Show the prompt and what we've typed so far with file highlighting
                     if let Some(fmt) = formatter {
-                        let highlighted_input = fmt.format_input_with_file_highlighting(trimmed_input);
+                        let highlighted_input =
+                            fmt.format_input_with_file_highlighting(trimmed_input);
                         println!("> {}", highlighted_input);
                     } else {
                         println!("> {}", trimmed_input);
@@ -173,7 +173,7 @@ fn read_input_with_completion_and_highlighting(
                     return Ok(trimmed_input);
                 }
             }
-            
+
             Event::Key(KeyEvent {
                 code: KeyCode::Tab,
                 kind: KeyEventKind::Press,
@@ -183,12 +183,12 @@ fn read_input_with_completion_and_highlighting(
                 if let Some(completion) = autocomplete::handle_tab_completion(&input) {
                     input = completion;
                     cursor_pos = input.len();
-                    
+
                     // Redraw the line with highlighting after completion
                     redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
                 }
             }
-            
+
             Event::Key(KeyEvent {
                 code: KeyCode::Backspace,
                 kind: KeyEventKind::Press,
@@ -209,7 +209,7 @@ fn read_input_with_completion_and_highlighting(
                     }
                 }
             }
-            
+
             Event::Key(KeyEvent {
                 code: KeyCode::Left,
                 kind: KeyEventKind::Press,
@@ -259,9 +259,9 @@ fn read_input_with_completion_and_highlighting(
                     redraw_input_line_fast(&input, cursor_pos)?;
                 }
             }
-            
-            Event::Key(KeyEvent { 
-                code: KeyCode::Char(c), 
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(c),
                 kind: KeyEventKind::Press,
                 modifiers: KeyModifiers::CONTROL,
                 ..
@@ -271,9 +271,9 @@ fn read_input_with_completion_and_highlighting(
                 terminal::disable_raw_mode()?;
                 std::process::exit(0);
             }
-            
-            Event::Key(KeyEvent { 
-                code: KeyCode::Esc, 
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Esc,
                 kind: KeyEventKind::Press,
                 ..
             }) => {
@@ -282,7 +282,7 @@ fn read_input_with_completion_and_highlighting(
                 terminal::disable_raw_mode()?;
                 return Err(anyhow::anyhow!("CANCELLED"));
             }
-            
+
             Event::Key(KeyEvent {
                 code: KeyCode::Char(c),
                 kind: KeyEventKind::Press,
@@ -302,7 +302,7 @@ fn read_input_with_completion_and_highlighting(
                     redraw_input_line_fast(&input, cursor_pos)?;
                 }
             }
-            
+
             _ => {}
         }
     }
@@ -329,7 +329,10 @@ fn should_start_multiline(input: &str) -> bool {
 }
 
 /// Read multiline input in normal mode
-fn read_multiline_input(initial_line: &str, formatter: Option<&formatter::CodeFormatter>) -> Result<String> {
+fn read_multiline_input(
+    initial_line: &str,
+    formatter: Option<&formatter::CodeFormatter>,
+) -> Result<String> {
     // Start with the first line that was already entered
     let mut lines = vec![initial_line.to_string()];
 
@@ -384,7 +387,7 @@ fn read_multiline_input(initial_line: &str, formatter: Option<&formatter::CodeFo
     }
 
     let final_input = lines.join("\n");
-    
+
     // Display the complete multiline input with file highlighting if formatter is available
     if let Some(fmt) = formatter {
         let highlighted_input = fmt.format_input_with_file_highlighting(&final_input);
@@ -405,7 +408,11 @@ fn read_multiline_input(initial_line: &str, formatter: Option<&formatter::CodeFo
 }
 
 /// Redraw the input line with file highlighting and proper cursor positioning
-fn redraw_input_line_with_highlighting(input: &str, cursor_pos: usize, formatter: Option<&formatter::CodeFormatter>) -> Result<()> {
+fn redraw_input_line_with_highlighting(
+    input: &str,
+    cursor_pos: usize,
+    formatter: Option<&formatter::CodeFormatter>,
+) -> Result<()> {
     use crossterm::{
         cursor::MoveToColumn,
         style::{Print, ResetColor},
@@ -490,16 +497,27 @@ fn redraw_input_line_fast(input: &str, cursor_pos: usize) -> Result<()> {
     Ok(())
 }
 
-
 /// Process input and handle streaming/non-streaming response
-async fn process_input(input: &str, agent: &mut Agent, formatter: &formatter::CodeFormatter, stream: bool, cancellation_flag: Arc<AtomicBool>) {
+async fn process_input(
+    input: &str,
+    agent: &mut Agent,
+    formatter: &formatter::CodeFormatter,
+    stream: bool,
+    cancellation_flag: Arc<AtomicBool>,
+) {
     // Show spinner while processing (only for non-streaming)
     if stream {
-        let result = agent.process_message_with_stream(&input, Some(|content| {
-            print!("{}", content);
-            std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        }), cancellation_flag.clone()).await;
-        
+        let result = agent
+            .process_message_with_stream(
+                &input,
+                Some(|content| {
+                    print!("{}", content);
+                    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                }),
+                cancellation_flag.clone(),
+            )
+            .await;
+
         match result {
             Ok(_response) => {
                 println!();
@@ -515,9 +533,11 @@ async fn process_input(input: &str, agent: &mut Agent, formatter: &formatter::Co
         }
     } else {
         let spinner = create_spinner();
-        let result = agent.process_message(&input, cancellation_flag.clone()).await;
+        let result = agent
+            .process_message(&input, cancellation_flag.clone())
+            .await;
         spinner.finish_and_clear();
-        
+
         match result {
             Ok(response) => {
                 // Only print response if it's not empty (i.e., not just @file references)
@@ -546,27 +566,48 @@ async fn add_context_files(agent: &mut Agent, context_files: &[String]) -> Resul
     let home_agents_md = get_home_agents_md_path();
     if home_agents_md.exists() {
         debug!("Auto-adding AGENTS.md from ~/.aixplosion/ as context");
-        match agent.add_context_file(home_agents_md.to_str().unwrap()).await {
-            Ok(_) => println!("{} Added context file: {}", "✓".green(), home_agents_md.display()),
-            Err(e) => eprintln!("{} Failed to add context file '{}': {}", "✗".red(), home_agents_md.display(), e),
+        match agent
+            .add_context_file(home_agents_md.to_str().unwrap())
+            .await
+        {
+            Ok(_) => println!(
+                "{} Added context file: {}",
+                "✓".green(),
+                home_agents_md.display()
+            ),
+            Err(e) => eprintln!(
+                "{} Failed to add context file '{}': {}",
+                "✗".red(),
+                home_agents_md.display(),
+                e
+            ),
         }
     }
-    
+
     // Also add AGENTS.md from current directory if it exists (in addition to home directory version)
     if Path::new("AGENTS.md").exists() {
         debug!("Auto-adding AGENTS.md from current directory as context");
         match agent.add_context_file("AGENTS.md").await {
             Ok(_) => println!("{} Added context file: {}", "✓".green(), "AGENTS.md"),
-            Err(e) => eprintln!("{} Failed to add context file 'AGENTS.md': {}", "✗".red(), e),
+            Err(e) => eprintln!(
+                "{} Failed to add context file 'AGENTS.md': {}",
+                "✗".red(),
+                e
+            ),
         }
     }
-    
+
     // Add any additional context files specified by the user
     for file_path in context_files {
         debug!("Adding context file: {}", file_path);
         match agent.add_context_file(file_path).await {
             Ok(_) => println!("{} Added context file: {}", "✓".green(), file_path),
-            Err(e) => eprintln!("{} Failed to add context file '{}': {}", "✗".red(), file_path, e),
+            Err(e) => eprintln!(
+                "{} Failed to add context file '{}': {}",
+                "✗".red(),
+                file_path,
+                e
+            ),
         }
     }
 
@@ -584,15 +625,18 @@ fn get_home_agents_md_path() -> std::path::PathBuf {
 async fn handle_shell_command(command: &str, _agent: &mut Agent) -> Result<()> {
     // Extract the shell command by removing the '!' prefix
     let shell_command = command.trim_start_matches('!').trim();
-    
+
     if shell_command.is_empty() {
-        println!("{} Usage: !<command> - Execute a shell command", "⚠️".yellow());
+        println!(
+            "{} Usage: !<command> - Execute a shell command",
+            "⚠️".yellow()
+        );
         println!("{} Examples: !dir, !ls -la, !git status", "💡".blue());
         return Ok(());
     }
 
     println!("{} Executing: {}", "🔧".blue(), shell_command);
-    
+
     // Create a tool call for the bash command
     let tool_call = tools::ToolCall {
         id: "shell_command".to_string(),
@@ -604,24 +648,29 @@ async fn handle_shell_command(command: &str, _agent: &mut Agent) -> Result<()> {
 
     // Execute the bash command directly without permission checks
     // This bypasses the security manager for ! commands
-    execute_bash_command_directly(&tool_call).await.map(|result| {
-        if result.is_error {
-            println!("{} Command failed:", "❌".red());
-            println!("{}", result.content.red());
-        } else {
-            println!("{}", result.content);
-        }
-    }).map_err(|e| {
-        eprintln!("{} Error executing shell command: {}", "✗".red(), e);
-        e
-    })?;
+    execute_bash_command_directly(&tool_call)
+        .await
+        .map(|result| {
+            if result.is_error {
+                println!("{} Command failed:", "❌".red());
+                println!("{}", result.content.red());
+            } else {
+                println!("{}", result.content);
+            }
+        })
+        .map_err(|e| {
+            eprintln!("{} Error executing shell command: {}", "✗".red(), e);
+            e
+        })?;
 
     Ok(())
 }
 
 /// Execute a bash command directly without security checks (for ! commands)
 async fn execute_bash_command_directly(tool_call: &tools::ToolCall) -> Result<tools::ToolResult> {
-    let command = tool_call.arguments.get("command")
+    let command = tool_call
+        .arguments
+        .get("command")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'command' argument"))?
         .to_string();
@@ -645,18 +694,26 @@ async fn execute_bash_command_directly(tool_call: &tools::ToolCall) -> Result<to
                 .args(["-c", &command_clone])
                 .output()
         }
-    }).await
+    })
+    .await
     {
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            
+
             let content = if !stderr.is_empty() {
-                format!("Exit code: {}\nStdout:\n{}\nStderr:\n{}", 
-                    output.status.code().unwrap_or(-1), stdout, stderr)
+                format!(
+                    "Exit code: {}\nStdout:\n{}\nStderr:\n{}",
+                    output.status.code().unwrap_or(-1),
+                    stdout,
+                    stderr
+                )
             } else {
-                format!("Exit code: {}\nOutput:\n{}", 
-                    output.status.code().unwrap_or(-1), stdout)
+                format!(
+                    "Exit code: {}\nOutput:\n{}",
+                    output.status.code().unwrap_or(-1),
+                    stdout
+                )
             };
 
             Ok(tools::ToolResult {
@@ -674,14 +731,18 @@ async fn execute_bash_command_directly(tool_call: &tools::ToolCall) -> Result<to
             tool_use_id,
             content: format!("Task join error: {}", e),
             is_error: true,
-        })
+        }),
     }
 }
 
-async fn handle_slash_command(command: &str, agent: &mut Agent, mcp_manager: &McpManager) -> Result<bool> {
+async fn handle_slash_command(
+    command: &str,
+    agent: &mut Agent,
+    mcp_manager: &McpManager,
+) -> Result<bool> {
     let parts: Vec<&str> = command.trim().split(' ').collect();
     let cmd = parts[0];
-    
+
     match cmd {
         "/help" => {
             print_help();
@@ -698,7 +759,11 @@ async fn handle_slash_command(command: &str, agent: &mut Agent, mcp_manager: &Mc
         "/clear" => {
             match agent.clear_conversation_keep_agents_md().await {
                 Ok(_) => {
-                    println!("{}", "🧹 Conversation context cleared! (AGENTS.md preserved if it existed)".green());
+                    println!(
+                        "{}",
+                        "🧹 Conversation context cleared! (AGENTS.md preserved if it existed)"
+                            .green()
+                    );
                 }
                 Err(e) => {
                     eprintln!("{} Failed to clear context: {}", "✗".red(), e);
@@ -734,7 +799,11 @@ async fn handle_slash_command(command: &str, agent: &mut Agent, mcp_manager: &Mc
             std::process::exit(0);
         }
         _ => {
-            println!("{} Unknown command: {}. Type /help for available commands.", "⚠️".yellow(), cmd);
+            println!(
+                "{} Unknown command: {}. Type /help for available commands.",
+                "⚠️".yellow(),
+                cmd
+            );
             Ok(true) // Command was handled (as unknown)
         }
     }
@@ -742,87 +811,96 @@ async fn handle_slash_command(command: &str, agent: &mut Agent, mcp_manager: &Mc
 
 /// Handle MCP commands
 async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<()> {
-    
     if args.is_empty() {
         print_mcp_help();
         return Ok(());
     }
 
     match args[0] {
-        "list" => {
-            match mcp_manager.list_servers().await {
-                Ok(servers) => {
-                    println!("{}", "🔌 MCP Servers".cyan().bold());
-                    println!();
-                    if servers.is_empty() {
-                        println!("{}", "No MCP servers configured.".yellow());
-                        return Ok(());
-                    }
-                    
-                    for (name, config, connected) in servers {
-                        let status = if connected { 
-                            "✅ Connected".green().to_string() 
-                        } else if config.enabled { 
-                            "❌ Disconnected".red().to_string() 
-                        } else { 
-                            "⏸️ Disabled".yellow().to_string() 
-                        };
-                        
-                        println!("{} {} ({})", 
-                            "Server:".bold(), 
-                            name.cyan(), 
-                            status
-                        );
-                        
-                        if let Some(command) = &config.command {
-                            println!("  Command: {}", command);
-                        }
-                        if let Some(args) = &config.args {
-                            println!("  Args: {}", args.join(" "));
-                        }
-                        if let Some(url) = &config.url {
-                            println!("  URL: {}", url);
-                        }
-                        
-                        if connected {
-                            if let Ok(tools) = mcp_manager.get_all_tools().await {
-                                let server_tools: Vec<_> = tools.iter()
-                                    .filter(|(server_name, _)| server_name == &name)
-                                    .collect();
-                                println!("  Tools: {} available", server_tools.len());
-                            }
-                        }
-                        println!();
-                    }
+        "list" => match mcp_manager.list_servers().await {
+            Ok(servers) => {
+                println!("{}", "🔌 MCP Servers".cyan().bold());
+                println!();
+                if servers.is_empty() {
+                    println!("{}", "No MCP servers configured.".yellow());
+                    return Ok(());
                 }
-                Err(e) => {
-                    eprintln!("{} Failed to list MCP servers: {}", "✗".red(), e);
+
+                for (name, config, connected) in servers {
+                    let status = if connected {
+                        "✅ Connected".green().to_string()
+                    } else if config.enabled {
+                        "❌ Disconnected".red().to_string()
+                    } else {
+                        "⏸️ Disabled".yellow().to_string()
+                    };
+
+                    println!("{} {} ({})", "Server:".bold(), name.cyan(), status);
+
+                    if let Some(command) = &config.command {
+                        println!("  Command: {}", command);
+                    }
+                    if let Some(args) = &config.args {
+                        println!("  Args: {}", args.join(" "));
+                    }
+                    if let Some(url) = &config.url {
+                        println!("  URL: {}", url);
+                    }
+
+                    if connected {
+                        if let Ok(tools) = mcp_manager.get_all_tools().await {
+                            let server_tools: Vec<_> = tools
+                                .iter()
+                                .filter(|(server_name, _)| server_name == &name)
+                                .collect();
+                            println!("  Tools: {} available", server_tools.len());
+                        }
+                    }
+                    println!();
                 }
             }
-        }
+            Err(e) => {
+                eprintln!("{} Failed to list MCP servers: {}", "✗".red(), e);
+            }
+        },
         "connect" => {
             if args.len() < 2 {
                 println!("{} Usage: /mcp connect <server_name>", "⚠️".yellow());
                 return Ok(());
             }
-            
-            println!("{} Connecting to MCP server: {}", "🔌".blue(), args[1].cyan());
-            
+
+            println!(
+                "{} Connecting to MCP server: {}",
+                "🔌".blue(),
+                args[1].cyan()
+            );
+
             match mcp_manager.connect_server(args[1]).await {
                 Ok(_) => {
-                    println!("{} Successfully connected to MCP server: {}", "✅".green(), args[1].cyan());
-                    
+                    println!(
+                        "{} Successfully connected to MCP server: {}",
+                        "✅".green(),
+                        args[1].cyan()
+                    );
+
                     // Try to list available tools
                     match mcp_manager.get_all_tools().await {
                         Ok(tools) => {
-                            let server_tools: Vec<_> = tools.iter()
+                            let server_tools: Vec<_> = tools
+                                .iter()
                                 .filter(|(server_name, _)| server_name == args[1])
                                 .collect();
                             if !server_tools.is_empty() {
                                 println!("{} Available tools: {}", "🛠️".blue(), server_tools.len());
                                 for (_, tool) in server_tools {
-                                    println!("  - {} {}", tool.name.bold(), 
-                                        tool.description.as_ref().unwrap_or(&"".to_string()).dimmed());
+                                    println!(
+                                        "  - {} {}",
+                                        tool.name.bold(),
+                                        tool.description
+                                            .as_ref()
+                                            .unwrap_or(&"".to_string())
+                                            .dimmed()
+                                    );
                                 }
                             }
                         }
@@ -832,7 +910,12 @@ async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<(
                     }
                 }
                 Err(e) => {
-                    eprintln!("{} Failed to connect to MCP server '{}': {}", "✗".red(), args[1], e);
+                    eprintln!(
+                        "{} Failed to connect to MCP server '{}': {}",
+                        "✗".red(),
+                        args[1],
+                        e
+                    );
                     println!("{} Troubleshooting:", "💡".yellow());
                     println!("  1. Check if the server is properly configured: /mcp list");
                     println!("  2. Verify the command/URL is correct");
@@ -847,13 +930,22 @@ async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<(
                 println!("{} Usage: /mcp disconnect <server_name>", "⚠️".yellow());
                 return Ok(());
             }
-            
+
             match mcp_manager.disconnect_server(args[1]).await {
                 Ok(_) => {
-                    println!("{} Disconnected from MCP server: {}", "🔌".yellow(), args[1].cyan());
+                    println!(
+                        "{} Disconnected from MCP server: {}",
+                        "🔌".yellow(),
+                        args[1].cyan()
+                    );
                 }
                 Err(e) => {
-                    eprintln!("{} Failed to disconnect from MCP server '{}': {}", "✗".red(), args[1], e);
+                    eprintln!(
+                        "{} Failed to disconnect from MCP server '{}': {}",
+                        "✗".red(),
+                        args[1],
+                        e
+                    );
                 }
             }
         }
@@ -862,91 +954,121 @@ async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<(
                 println!("{} Usage: /mcp reconnect <server_name>", "⚠️".yellow());
                 return Ok(());
             }
-            
+
             match mcp_manager.reconnect_server(args[1]).await {
                 Ok(_) => {
-                    println!("{} Reconnected to MCP server: {}", "🔄".blue(), args[1].cyan());
+                    println!(
+                        "{} Reconnected to MCP server: {}",
+                        "🔄".blue(),
+                        args[1].cyan()
+                    );
                 }
                 Err(e) => {
-                    eprintln!("{} Failed to reconnect to MCP server '{}': {}", "✗".red(), args[1], e);
+                    eprintln!(
+                        "{} Failed to reconnect to MCP server '{}': {}",
+                        "✗".red(),
+                        args[1],
+                        e
+                    );
                 }
             }
         }
-        "tools" => {
-            match mcp_manager.get_all_tools().await {
-                Ok(tools) => {
-                    println!("{}", "🛠️  MCP Tools".cyan().bold());
-                    println!();
-                    
-                    if tools.is_empty() {
-                        println!("{}", "No MCP tools available. Connect to a server first.".yellow());
-                        return Ok(());
-                    }
-                    
-                    let mut by_server = std::collections::HashMap::new();
-                    for (server_name, tool) in tools {
-                        by_server.entry(server_name).or_insert_with(Vec::new).push(tool);
-                    }
-                    
-                    for (server_name, server_tools) in by_server {
-                        println!("{} {}:", "Server:".bold(), server_name.cyan());
-                        for tool in server_tools {
-                            println!("  🛠️  {}", tool.name.bold());
-                            if let Some(description) = &tool.description {
-                                println!("     {}", description.dimmed());
-                            }
+        "tools" => match mcp_manager.get_all_tools().await {
+            Ok(tools) => {
+                println!("{}", "🛠️  MCP Tools".cyan().bold());
+                println!();
+
+                if tools.is_empty() {
+                    println!(
+                        "{}",
+                        "No MCP tools available. Connect to a server first.".yellow()
+                    );
+                    return Ok(());
+                }
+
+                let mut by_server = std::collections::HashMap::new();
+                for (server_name, tool) in tools {
+                    by_server
+                        .entry(server_name)
+                        .or_insert_with(Vec::new)
+                        .push(tool);
+                }
+
+                for (server_name, server_tools) in by_server {
+                    println!("{} {}:", "Server:".bold(), server_name.cyan());
+                    for tool in server_tools {
+                        println!("  🛠️  {}", tool.name.bold());
+                        if let Some(description) = &tool.description {
+                            println!("     {}", description.dimmed());
                         }
-                        println!();
                     }
-                }
-                Err(e) => {
-                    eprintln!("{} Failed to list MCP tools: {}", "✗".red(), e);
+                    println!();
                 }
             }
-        }
+            Err(e) => {
+                eprintln!("{} Failed to list MCP tools: {}", "✗".red(), e);
+            }
+        },
         "add" => {
             if args.len() < 4 {
-                println!("{} Usage: /mcp add <name> stdio <command> [args...]", "⚠️".yellow());
+                println!(
+                    "{} Usage: /mcp add <name> stdio <command> [args...]",
+                    "⚠️".yellow()
+                );
                 println!("{} Usage: /mcp add <name> ws <url>", "⚠️".yellow());
                 println!();
                 println!("{}", "Examples:".green().bold());
-                println!("  /mcp add myserver stdio npx -y @modelcontextprotocol/server-filesystem");
+                println!(
+                    "  /mcp add myserver stdio npx -y @modelcontextprotocol/server-filesystem"
+                );
                 println!("  /mcp add websocket ws://localhost:8080");
                 return Ok(());
             }
-            
+
             let name = args[1];
             let connection_type = args[2];
-            
+
             if connection_type == "stdio" {
                 let command = args[3];
                 let server_args: Vec<String> = args[4..].iter().map(|s| s.to_string()).collect();
-                
+
                 // Validate that we have a proper command
                 if command.is_empty() {
                     println!("{} Command cannot be empty", "⚠️".yellow());
                     return Ok(());
                 }
-                
+
                 let server_config = mcp::McpServerConfig {
                     name: name.to_string(),
                     command: Some(command.to_string()),
-                    args: if server_args.is_empty() { None } else { Some(server_args) },
+                    args: if server_args.is_empty() {
+                        None
+                    } else {
+                        Some(server_args)
+                    },
                     url: None,
                     env: None,
                     enabled: true,
                 };
-                
+
                 println!("{} Adding MCP server: {}", "🔧".blue(), name.cyan());
                 println!("  Command: {}", command);
                 if !args[4..].is_empty() {
                     println!("  Args: {}", args[4..].join(" "));
                 }
-                
+
                 match mcp_manager.add_server(name, server_config).await {
                     Ok(_) => {
-                        println!("{} Successfully added MCP server: {}", "✅".green(), name.cyan());
-                        println!("{} Use '/mcp connect {}' to connect to this server", "💡".blue(), name);
+                        println!(
+                            "{} Successfully added MCP server: {}",
+                            "✅".green(),
+                            name.cyan()
+                        );
+                        println!(
+                            "{} Use '/mcp connect {}' to connect to this server",
+                            "💡".blue(),
+                            name
+                        );
                     }
                     Err(e) => {
                         eprintln!("{} Failed to add MCP server '{}': {}", "✗".red(), name, e);
@@ -959,13 +1081,13 @@ async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<(
                 }
             } else if connection_type == "ws" || connection_type == "websocket" {
                 let url = args[3];
-                
+
                 // Basic URL validation
                 if !url.starts_with("ws://") && !url.starts_with("wss://") {
                     println!("{} URL must start with ws:// or wss://", "⚠️".yellow());
                     return Ok(());
                 }
-                
+
                 let server_config = mcp::McpServerConfig {
                     name: name.to_string(),
                     command: None,
@@ -974,14 +1096,22 @@ async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<(
                     env: None,
                     enabled: true,
                 };
-                
+
                 println!("{} Adding MCP server: {}", "🔧".blue(), name.cyan());
                 println!("  URL: {}", url);
-                
+
                 match mcp_manager.add_server(name, server_config).await {
                     Ok(_) => {
-                        println!("{} Successfully added MCP server: {}", "✅".green(), name.cyan());
-                        println!("{} Use '/mcp connect {}' to connect to this server", "💡".blue(), name);
+                        println!(
+                            "{} Successfully added MCP server: {}",
+                            "✅".green(),
+                            name.cyan()
+                        );
+                        println!(
+                            "{} Use '/mcp connect {}' to connect to this server",
+                            "💡".blue(),
+                            name
+                        );
                     }
                     Err(e) => {
                         eprintln!("{} Failed to add MCP server '{}': {}", "✗".red(), name, e);
@@ -999,57 +1129,74 @@ async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<(
                 println!("{} Usage: /mcp remove <server_name>", "⚠️".yellow());
                 return Ok(());
             }
-            
+
             match mcp_manager.remove_server(args[1]).await {
                 Ok(_) => {
                     println!("{} Removed MCP server: {}", "🗑️".red(), args[1].cyan());
                 }
                 Err(e) => {
-                    eprintln!("{} Failed to remove MCP server '{}': {}", "✗".red(), args[1], e);
+                    eprintln!(
+                        "{} Failed to remove MCP server '{}': {}",
+                        "✗".red(),
+                        args[1],
+                        e
+                    );
                 }
             }
         }
-        "connect-all" => {
-            match mcp_manager.connect_all_enabled().await {
-                Ok(_) => {
-                    println!("{} Attempted to connect to all enabled MCP servers", "🔄".blue());
-                }
-                Err(e) => {
-                    eprintln!("{} Failed to connect to MCP servers: {}", "✗".red(), e);
-                }
+        "connect-all" => match mcp_manager.connect_all_enabled().await {
+            Ok(_) => {
+                println!(
+                    "{} Attempted to connect to all enabled MCP servers",
+                    "🔄".blue()
+                );
             }
-        }
-      "test" => {
+            Err(e) => {
+                eprintln!("{} Failed to connect to MCP servers: {}", "✗".red(), e);
+            }
+        },
+        "test" => {
             if args.len() < 2 {
                 println!("{} Usage: /mcp test <command>", "⚠️".yellow());
-                println!("{} Test if a command is available and executable", "💡".blue());
+                println!(
+                    "{} Test if a command is available and executable",
+                    "💡".blue()
+                );
                 return Ok(());
             }
-            
+
             let command = args[1];
             println!("{} Testing command: {}", "🧪".blue(), command.cyan());
-            
+
             // Try to run the command with --version or --help to test if it exists
             let test_args = if command == "npx" {
                 vec!["--version".to_string()]
             } else {
                 vec!["--version".to_string()]
             };
-            
+
             match tokio::process::Command::new(command)
                 .args(&test_args)
                 .output()
-                .await 
+                .await
             {
                 Ok(output) => {
                     if output.status.success() {
-                        println!("{} Command '{}' is available and executable", "✅".green(), command);
+                        println!(
+                            "{} Command '{}' is available and executable",
+                            "✅".green(),
+                            command
+                        );
                         if !output.stdout.is_empty() {
                             let version = String::from_utf8_lossy(&output.stdout);
                             println!("  Version: {}", version.trim());
                         }
                     } else {
-                        println!("{} Command '{}' exists but failed to execute", "⚠️".yellow(), command);
+                        println!(
+                            "{} Command '{}' exists but failed to execute",
+                            "⚠️".yellow(),
+                            command
+                        );
                         if !output.stderr.is_empty() {
                             let error = String::from_utf8_lossy(&output.stderr);
                             println!("  Error: {}", error.trim());
@@ -1057,7 +1204,11 @@ async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<(
                     }
                 }
                 Err(e) => {
-                    println!("{} Command '{}' not found or not executable", "✗".red(), command);
+                    println!(
+                        "{} Command '{}' not found or not executable",
+                        "✗".red(),
+                        command
+                    );
                     println!("  Error: {}", e);
                     println!("{} Suggestions:", "💡".blue());
                     println!("  - Install the command/tool if missing");
@@ -1066,22 +1217,20 @@ async fn handle_mcp_command(args: &[&str], mcp_manager: &McpManager) -> Result<(
                 }
             }
         }
-        "disconnect-all" => {
-            match mcp_manager.disconnect_all().await {
-                Ok(_) => {
-                    println!("{} Disconnected from all MCP servers", "🔌".yellow());
-                }
-                Err(e) => {
-                    eprintln!("{} Failed to disconnect from MCP servers: {}", "✗".red(), e);
-                }
+        "disconnect-all" => match mcp_manager.disconnect_all().await {
+            Ok(_) => {
+                println!("{} Disconnected from all MCP servers", "🔌".yellow());
             }
-        }
+            Err(e) => {
+                eprintln!("{} Failed to disconnect from MCP servers: {}", "✗".red(), e);
+            }
+        },
         _ => {
             println!("{} Unknown MCP command: {}", "⚠️".yellow(), args[0]);
             print_mcp_help();
         }
     }
-    
+
     Ok(())
 }
 
@@ -1126,12 +1275,12 @@ fn print_usage_stats(agent: &Agent) {
     println!("  Output tokens: {}", usage.total_output_tokens);
     println!("  Total tokens: {}", usage.total_tokens());
     println!();
-    
+
     if usage.request_count > 0 {
         let avg_input = usage.total_input_tokens as f64 / usage.request_count as f64;
         let avg_output = usage.total_output_tokens as f64 / usage.request_count as f64;
         let avg_total = usage.total_tokens() as f64 / usage.request_count as f64;
-        
+
         println!("{}", "Average per request:".green().bold());
         println!("  Input tokens:  {:.1}", avg_input);
         println!("  Output tokens: {:.1}", avg_output);
@@ -1147,7 +1296,7 @@ fn create_spinner() -> ProgressBar {
         ProgressStyle::default_spinner()
             .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
             .template("{spinner:.green} {msg}")
-            .unwrap()
+            .unwrap(),
     );
     spinner.set_message("Thinking...");
     spinner.enable_steady_tick(std::time::Duration::from_millis(100));
@@ -1157,7 +1306,7 @@ fn create_spinner() -> ProgressBar {
 /// Handle permissions commands
 async fn handle_permissions_command(args: &[&str], agent: &mut Agent) -> Result<()> {
     use crate::security::PermissionResult;
-    
+
     if args.is_empty() {
         // Display current permissions with full details
         let security_manager_ref = agent.get_bash_security_manager().clone();
@@ -1177,11 +1326,11 @@ async fn handle_permissions_command(args: &[&str], agent: &mut Agent) -> Result<
                 println!("{} Usage: /permissions test <command>", "⚠️".yellow());
                 return Ok(());
             }
-            
+
             let command = args[1..].join(" ");
             let security_manager_ref = agent.get_bash_security_manager().clone();
             let security_manager = security_manager_ref.read().await;
-            
+
             match security_manager.check_command_permission(&command) {
                 PermissionResult::Allowed => {
                     println!("{} Command '{}' is ALLOWED", "✅".green(), command);
@@ -1190,27 +1339,34 @@ async fn handle_permissions_command(args: &[&str], agent: &mut Agent) -> Result<
                     println!("{} Command '{}' is DENIED", "❌".red(), command);
                 }
                 PermissionResult::RequiresPermission => {
-                    println!("{} Command '{}' requires permission", "❓".yellow(), command);
+                    println!(
+                        "{} Command '{}' requires permission",
+                        "❓".yellow(),
+                        command
+                    );
                 }
             }
         }
         "allow" => {
             if args.len() < 2 {
-                println!("{} Usage: /permissions allow <command_pattern>", "⚠️".yellow());
+                println!(
+                    "{} Usage: /permissions allow <command_pattern>",
+                    "⚠️".yellow()
+                );
                 println!("{} Examples:", "💡".blue());
                 println!("  /permissions allow 'git *'");
                 println!("  /permissions allow 'cargo test'");
                 println!("  /permissions allow 'ls -la'");
                 return Ok(());
             }
-            
+
             let command = args[1..].join(" ");
             let security_manager_ref = agent.get_bash_security_manager().clone();
             let mut security_manager = security_manager_ref.write().await;
-            
+
             security_manager.add_to_allowlist(command.clone());
             println!("{} Added '{}' to allowlist", "✅".green(), command);
-            
+
             // Save to config
             if let Err(e) = save_permissions_to_config(&agent).await {
                 println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
@@ -1218,21 +1374,24 @@ async fn handle_permissions_command(args: &[&str], agent: &mut Agent) -> Result<
         }
         "deny" => {
             if args.len() < 2 {
-                println!("{} Usage: /permissions deny <command_pattern>", "⚠️".yellow());
+                println!(
+                    "{} Usage: /permissions deny <command_pattern>",
+                    "⚠️".yellow()
+                );
                 println!("{} Examples:", "💡".blue());
                 println!("  /permissions deny 'rm *'");
                 println!("  /permissions deny 'sudo *'");
                 println!("  /permissions deny 'format'");
                 return Ok(());
             }
-            
+
             let command = args[1..].join(" ");
             let security_manager_ref = agent.get_bash_security_manager().clone();
             let mut security_manager = security_manager_ref.write().await;
-            
+
             security_manager.add_to_denylist(command.clone());
             println!("{} Added '{}' to denylist", "❌".red(), command);
-            
+
             // Save to config
             if let Err(e) = save_permissions_to_config(&agent).await {
                 println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
@@ -1240,44 +1399,58 @@ async fn handle_permissions_command(args: &[&str], agent: &mut Agent) -> Result<
         }
         "remove-allow" => {
             if args.len() < 2 {
-                println!("{} Usage: /permissions remove-allow <command_pattern>", "⚠️".yellow());
+                println!(
+                    "{} Usage: /permissions remove-allow <command_pattern>",
+                    "⚠️".yellow()
+                );
                 return Ok(());
             }
-            
+
             let command = args[1..].join(" ");
             let security_manager_ref = agent.get_bash_security_manager().clone();
             let mut security_manager = security_manager_ref.write().await;
-            
+
             if security_manager.remove_from_allowlist(&command) {
                 println!("{} Removed '{}' from allowlist", "🗑️".yellow(), command);
-                
+
                 // Save to config
                 if let Err(e) = save_permissions_to_config(&agent).await {
                     println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
                 }
             } else {
-                println!("{} Command '{}' not found in allowlist", "⚠️".yellow(), command);
+                println!(
+                    "{} Command '{}' not found in allowlist",
+                    "⚠️".yellow(),
+                    command
+                );
             }
         }
         "remove-deny" => {
             if args.len() < 2 {
-                println!("{} Usage: /permissions remove-deny <command_pattern>", "⚠️".yellow());
+                println!(
+                    "{} Usage: /permissions remove-deny <command_pattern>",
+                    "⚠️".yellow()
+                );
                 return Ok(());
             }
-            
+
             let command = args[1..].join(" ");
             let security_manager_ref = agent.get_bash_security_manager().clone();
             let mut security_manager = security_manager_ref.write().await;
-            
+
             if security_manager.remove_from_denylist(&command) {
                 println!("{} Removed '{}' from denylist", "🗑️".yellow(), command);
-                
+
                 // Save to config
                 if let Err(e) = save_permissions_to_config(&agent).await {
                     println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
                 }
             } else {
-                println!("{} Command '{}' not found in denylist", "⚠️".yellow(), command);
+                println!(
+                    "{} Command '{}' not found in denylist",
+                    "⚠️".yellow(),
+                    command
+                );
             }
         }
         "enable" => {
@@ -1287,7 +1460,7 @@ async fn handle_permissions_command(args: &[&str], agent: &mut Agent) -> Result<
             security.enabled = true;
             security_manager.update_security(security);
             println!("{} Bash security enabled", "✅".green());
-            
+
             // Save to config
             if let Err(e) = save_permissions_to_config(&agent).await {
                 println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
@@ -1300,8 +1473,11 @@ async fn handle_permissions_command(args: &[&str], agent: &mut Agent) -> Result<
             security.enabled = false;
             security_manager.update_security(security);
             println!("{} Bash security disabled", "⚠️".yellow());
-            println!("{} Warning: This allows any bash command to be executed!", "⚠️".red().bold());
-            
+            println!(
+                "{} Warning: This allows any bash command to be executed!",
+                "⚠️".red().bold()
+            );
+
             // Save to config
             if let Err(e) = save_permissions_to_config(&agent).await {
                 println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
@@ -1314,7 +1490,7 @@ async fn handle_permissions_command(args: &[&str], agent: &mut Agent) -> Result<
             security.ask_for_permission = true;
             security_manager.update_security(security);
             println!("{} Ask for permission enabled", "✅".green());
-            
+
             // Save to config
             if let Err(e) = save_permissions_to_config(&agent).await {
                 println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
@@ -1328,7 +1504,7 @@ async fn handle_permissions_command(args: &[&str], agent: &mut Agent) -> Result<
             security_manager.update_security(security);
             println!("{} Ask for permission disabled", "⚠️".yellow());
             println!("{} Unknown commands will be denied by default", "⚠️".red());
-            
+
             // Save to config
             if let Err(e) = save_permissions_to_config(&agent).await {
                 println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
@@ -1353,23 +1529,23 @@ async fn handle_permissions_command(args: &[&str], agent: &mut Agent) -> Result<
             println!("  /permissions ask-off       - Disable asking for permission");
         }
     }
-    
+
     Ok(())
 }
 
 /// Save current permissions to unified config file
 async fn save_permissions_to_config(agent: &Agent) -> Result<()> {
     use crate::config::Config;
-    
+
     // Load existing config to preserve other settings
     let mut existing_config = Config::load(None).await?;
-    
+
     // Get current security settings from agent
     let updated_config = agent.get_config_for_save().await;
-    
+
     // Update only the bash_security settings
     existing_config.bash_security = updated_config.bash_security;
-    
+
     // Save the updated config
     match existing_config.save(None).await {
         Ok(_) => {
@@ -1379,14 +1555,14 @@ async fn save_permissions_to_config(agent: &Agent) -> Result<()> {
             println!("{} Failed to save permissions: {}", "⚠️".yellow(), e);
         }
     }
-    
+
     Ok(())
 }
 
 /// Handle file permissions commands
 async fn handle_file_permissions_command(args: &[&str], agent: &mut Agent) -> Result<()> {
     use crate::security::FilePermissionResult;
-    
+
     if args.is_empty() {
         // Display current file permissions with full details
         let file_security_manager_ref = agent.get_file_security_manager().clone();
@@ -1403,25 +1579,46 @@ async fn handle_file_permissions_command(args: &[&str], agent: &mut Agent) -> Re
         }
         "test" => {
             if args.len() < 3 {
-                println!("{} Usage: /file-permissions test <operation> <path>", "⚠️".yellow());
-                println!("{} Operations: write_file, edit_file, delete_file, create_directory", "💡".blue());
+                println!(
+                    "{} Usage: /file-permissions test <operation> <path>",
+                    "⚠️".yellow()
+                );
+                println!(
+                    "{} Operations: write_file, edit_file, delete_file, create_directory",
+                    "💡".blue()
+                );
                 return Ok(());
             }
-            
+
             let operation = args[1];
             let path = args[2..].join(" ");
             let file_security_manager_ref = agent.get_file_security_manager().clone();
             let mut file_security_manager = file_security_manager_ref.write().await;
-            
+
             match file_security_manager.check_file_permission(operation, &path) {
                 FilePermissionResult::Allowed => {
-                    println!("{} File operation '{}' on '{}' is ALLOWED", "✅".green(), operation, path);
+                    println!(
+                        "{} File operation '{}' on '{}' is ALLOWED",
+                        "✅".green(),
+                        operation,
+                        path
+                    );
                 }
                 FilePermissionResult::Denied => {
-                    println!("{} File operation '{}' on '{}' is DENIED", "❌".red(), operation, path);
+                    println!(
+                        "{} File operation '{}' on '{}' is DENIED",
+                        "❌".red(),
+                        operation,
+                        path
+                    );
                 }
                 FilePermissionResult::RequiresPermission => {
-                    println!("{} File operation '{}' on '{}' requires permission", "❓".yellow(), operation, path);
+                    println!(
+                        "{} File operation '{}' on '{}' requires permission",
+                        "❓".yellow(),
+                        operation,
+                        path
+                    );
                 }
             }
         }
@@ -1432,7 +1629,7 @@ async fn handle_file_permissions_command(args: &[&str], agent: &mut Agent) -> Re
             security.enabled = true;
             file_security_manager.update_file_security(security);
             println!("{} File security enabled", "✅".green());
-            
+
             // Save to config
             if let Err(e) = save_file_permissions_to_config(&agent).await {
                 println!("{} Failed to save file permissions: {}", "⚠️".yellow(), e);
@@ -1445,8 +1642,11 @@ async fn handle_file_permissions_command(args: &[&str], agent: &mut Agent) -> Re
             security.enabled = false;
             file_security_manager.update_file_security(security);
             println!("{} File security disabled", "⚠️".yellow());
-            println!("{} Warning: This allows any file operation to be executed!", "⚠️".red().bold());
-            
+            println!(
+                "{} Warning: This allows any file operation to be executed!",
+                "⚠️".red().bold()
+            );
+
             // Save to config
             if let Err(e) = save_file_permissions_to_config(&agent).await {
                 println!("{} Failed to save file permissions: {}", "⚠️".yellow(), e);
@@ -1459,7 +1659,7 @@ async fn handle_file_permissions_command(args: &[&str], agent: &mut Agent) -> Re
             security.ask_for_permission = true;
             file_security_manager.update_file_security(security);
             println!("{} Ask for file permission enabled", "✅".green());
-            
+
             // Save to config
             if let Err(e) = save_file_permissions_to_config(&agent).await {
                 println!("{} Failed to save file permissions: {}", "⚠️".yellow(), e);
@@ -1472,8 +1672,11 @@ async fn handle_file_permissions_command(args: &[&str], agent: &mut Agent) -> Re
             security.ask_for_permission = false;
             file_security_manager.update_file_security(security);
             println!("{} Ask for file permission disabled", "⚠️".yellow());
-            println!("{} All file operations will be allowed by default", "⚠️".red());
-            
+            println!(
+                "{} All file operations will be allowed by default",
+                "⚠️".red()
+            );
+
             // Save to config
             if let Err(e) = save_file_permissions_to_config(&agent).await {
                 println!("{} Failed to save file permissions: {}", "⚠️".yellow(), e);
@@ -1484,13 +1687,20 @@ async fn handle_file_permissions_command(args: &[&str], agent: &mut Agent) -> Re
             let mut file_security_manager = file_security_manager_ref.write().await;
             file_security_manager.reset_session_permissions();
             println!("{} Session file permissions reset", "🔄".blue());
-            println!("{} File operations will require permission again", "💡".blue());
+            println!(
+                "{} File operations will require permission again",
+                "💡".blue()
+            );
         }
         "help" => {
             print_file_permissions_help();
         }
         _ => {
-            println!("{} Unknown file permissions command: {}", "⚠️".yellow(), args[0]);
+            println!(
+                "{} Unknown file permissions command: {}",
+                "⚠️".yellow(),
+                args[0]
+            );
             println!("{} Available commands:", "💡".yellow());
             println!("  /file-permissions                - Show current file permissions");
             println!("  /file-permissions help          - Show file permissions help");
@@ -1502,25 +1712,25 @@ async fn handle_file_permissions_command(args: &[&str], agent: &mut Agent) -> Re
             println!("  /file-permissions reset-session - Reset session permissions");
         }
     }
-    
+
     Ok(())
 }
 
 /// Save current file permissions to unified config file
 async fn save_file_permissions_to_config(agent: &Agent) -> Result<()> {
     use crate::config::Config;
-    
+
     // Load existing config to preserve other settings
     let mut existing_config = Config::load(None).await?;
-    
+
     // Get current file security settings from agent
     let file_security_manager_ref = agent.get_file_security_manager().clone();
     let file_security_manager = file_security_manager_ref.read().await;
     let updated_file_security = file_security_manager.get_file_security().clone();
-    
+
     // Update only the file_security settings
     existing_config.file_security = updated_file_security;
-    
+
     // Save the updated config
     match existing_config.save(None).await {
         Ok(_) => {
@@ -1530,7 +1740,7 @@ async fn save_file_permissions_to_config(agent: &Agent) -> Result<()> {
             println!("{} Failed to save file permissions: {}", "⚠️".yellow(), e);
         }
     }
-    
+
     Ok(())
 }
 
@@ -1539,7 +1749,9 @@ fn print_file_permissions_help() {
     println!("{}", "🔒 File Permissions Commands".cyan().bold());
     println!();
     println!("{}", "View File Permissions:".green().bold());
-    println!("  /file-permissions                - Show current file permissions and security settings");
+    println!(
+        "  /file-permissions                - Show current file permissions and security settings"
+    );
     println!("  /file-permissions show          - Alias for /file-permissions");
     println!("  /file-permissions list          - Alias for /file-permissions");
     println!("  /file-permissions help          - Show this help message");
@@ -1576,7 +1788,7 @@ fn print_file_permissions_help() {
     println!("  /file-permissions reset-session");
     println!();
 }
-  /// Print permissions help information
+/// Print permissions help information
 fn print_permissions_help() {
     println!("{}", "🔒 Permissions Commands".cyan().bold());
     println!();
@@ -1626,41 +1838,108 @@ fn print_permissions_help() {
 /// Display a large red warning for yolo mode
 fn display_yolo_warning() {
     println!();
-    println!("{}", "⚠️  WARNING: YOLO MODE ENABLED  ⚠️".red().bold().blink());
-    println!("{}", " ALL SECURITY PERMISSIONS ARE BYPASSED - USE WITH EXTREME CAUTION ".red().bold());
+    println!(
+        "{}",
+        "⚠️  WARNING: YOLO MODE ENABLED  ⚠️".red().bold().blink()
+    );
+    println!(
+        "{}",
+        " ALL SECURITY PERMISSIONS ARE BYPASSED - USE WITH EXTREME CAUTION "
+            .red()
+            .bold()
+    );
     println!();
-    println!("{}", " • File operations (read/write/delete) will execute WITHOUT prompts ".red());
-    println!("{}", " • Bash commands will execute WITHOUT permission checks ".red());
-    println!("{}", " • MCP tools will execute WITHOUT security validation ".red());
-    println!("{}", " • No allowlist/denylist filtering will be applied ".red());
+    println!(
+        "{}",
+        " • File operations (read/write/delete) will execute WITHOUT prompts ".red()
+    );
+    println!(
+        "{}",
+        " • Bash commands will execute WITHOUT permission checks ".red()
+    );
+    println!(
+        "{}",
+        " • MCP tools will execute WITHOUT security validation ".red()
+    );
+    println!(
+        "{}",
+        " • No allowlist/denylist filtering will be applied ".red()
+    );
     println!("{}", " • All tool calls are automatically approved ".red());
     println!();
-    println!("{}", " 🚨 This mode can cause irreversible damage to your system! ".red().bold());
+    println!(
+        "{}",
+        " 🚨 This mode can cause irreversible damage to your system! "
+            .red()
+            .bold()
+    );
     println!();
-    println!("{}", " Press Ctrl+C NOW to cancel if this was not intended! ".red().bold());
+    println!(
+        "{}",
+        " Press Ctrl+C NOW to cancel if this was not intended! "
+            .red()
+            .bold()
+    );
     println!();
-    
+
     // Add a dramatic pause for effect
     std::thread::sleep(std::time::Duration::from_millis(2000));
-    println!("{}", "🔥 Proceeding in YOLO mode... You have been warned! 🔥".red().bold());
+    println!(
+        "{}",
+        "🔥 Proceeding in YOLO mode... You have been warned! 🔥"
+            .red()
+            .bold()
+    );
     println!();
 }
 
 /// Display YOLO mode warning after MCP configuration is complete
 fn display_mcp_yolo_warning() {
     println!();
-    println!("{}", "🔌 MCP Configuration Complete - YOLO Mode Active 🔌".red().bold());
+    println!(
+        "{}",
+        "🔌 MCP Configuration Complete - YOLO Mode Active 🔌"
+            .red()
+            .bold()
+    );
     println!();
-    println!("{}", " ⚠️  MCP TOOLS WILL EXECUTE WITHOUT SECURITY VALIDATION ⚠️ ".red().bold());
+    println!(
+        "{}",
+        " ⚠️  MCP TOOLS WILL EXECUTE WITHOUT SECURITY VALIDATION ⚠️ "
+            .red()
+            .bold()
+    );
     println!();
-    println!("{}", " • MCP server tools are now available and will execute WITHOUT prompts ".red());
-    println!("{}", " • No permission checks will be applied to MCP tool calls ".red());
-    println!("{}", " • All MCP operations (file access, commands, etc.) are auto-approved ".red());
-    println!("{}", " • External MCP server connections have unrestricted access ".red());
+    println!(
+        "{}",
+        " • MCP server tools are now available and will execute WITHOUT prompts ".red()
+    );
+    println!(
+        "{}",
+        " • No permission checks will be applied to MCP tool calls ".red()
+    );
+    println!(
+        "{}",
+        " • All MCP operations (file access, commands, etc.) are auto-approved ".red()
+    );
+    println!(
+        "{}",
+        " • External MCP server connections have unrestricted access ".red()
+    );
     println!();
-    println!("{}", " 🚨 MCP tools can potentially access and modify your system! ".red().bold());
+    println!(
+        "{}",
+        " 🚨 MCP tools can potentially access and modify your system! "
+            .red()
+            .bold()
+    );
     println!();
-    println!("{}", " 🔥 All MCP servers and their tools are operating in YOLO mode! 🔥".red().bold());
+    println!(
+        "{}",
+        " 🔥 All MCP servers and their tools are operating in YOLO mode! 🔥"
+            .red()
+            .bold()
+    );
     println!();
 }
 fn print_help() {
@@ -1744,7 +2023,10 @@ fn print_help() {
     println!("  • History is preserved across the entire session");
     println!("  • Duplicate and empty commands are not stored");
     println!();
-    println!("{}", "Any other input will be sent to the AIxplosion for processing.".dimmed());
+    println!(
+        "{}",
+        "Any other input will be sent to the AIxplosion for processing.".dimmed()
+    );
     println!();
 }
 
@@ -1812,7 +2094,10 @@ async fn main() -> Result<()> {
     info!("Initializing database...");
     let db_path = get_database_path()?;
     let database_manager = DatabaseManager::new(db_path).await?;
-    info!("Database initialized at: {}", database_manager.path().display());
+    info!(
+        "Database initialized at: {}",
+        database_manager.path().display()
+    );
 
     // Override API key if provided via command line (highest priority)
     if let Some(api_key) = cli.api_key {
@@ -1825,24 +2110,36 @@ async fn main() -> Result<()> {
     println!("Using configuration:");
     println!("  Base URL: {}", config.base_url);
     println!("  Model: {}", cli.model);
-    
+
     // Show yolo mode status
     if cli.yolo {
-        println!("  {} YOLO MODE ENABLED - All permission checks bypassed!", "🔥".red().bold());
+        println!(
+            "  {} YOLO MODE ENABLED - All permission checks bypassed!",
+            "🔥".red().bold()
+        );
     }
-    
+
     // Validate API key without exposing it
     if config.api_key.is_empty() {
         eprintln!("{}", "Error: API key is required. Set it via environment variable ANTHROPIC_AUTH_TOKEN or use --api-key".red());
-        eprintln!("Create a config file at {} or set ANTHROPIC_AUTH_TOKEN environment variable",
-                 Config::default_config_path().display());
+        eprintln!(
+            "Create a config file at {} or set ANTHROPIC_AUTH_TOKEN environment variable",
+            Config::default_config_path().display()
+        );
         std::process::exit(1);
     } else {
-        println!("  API Key: {}", if config.api_key.len() > 10 { 
-            format!("{}... ({} chars)", &config.api_key[..8], config.api_key.len())
-        } else { 
-            "configured".to_string() 
-        });
+        println!(
+            "  API Key: {}",
+            if config.api_key.len() > 10 {
+                format!(
+                    "{}... ({} chars)",
+                    &config.api_key[..8],
+                    config.api_key.len()
+                )
+            } else {
+                "configured".to_string()
+            }
+        );
     }
 
     // Create code formatter
@@ -1863,14 +2160,15 @@ async fn main() -> Result<()> {
     // Set database manager in agent
     let database_manager = Arc::new(database_manager);
     agent = agent.with_database_manager(database_manager.clone());
-    
+
     // Connect to all enabled MCP servers
     info!("Connecting to MCP servers...");
     let mcp_connect_result = tokio::time::timeout(
         std::time::Duration::from_secs(30), // 30 second timeout for MCP connections
-        mcp_manager.connect_all_enabled()
-    ).await;
-    
+        mcp_manager.connect_all_enabled(),
+    )
+    .await;
+
     match mcp_connect_result {
         Ok(Ok(_)) => {
             info!("MCP servers connected successfully");
@@ -1897,9 +2195,10 @@ async fn main() -> Result<()> {
     info!("Refreshing MCP tools...");
     let mcp_refresh_result = tokio::time::timeout(
         std::time::Duration::from_secs(15), // 15 second timeout for MCP tools refresh
-        agent.force_refresh_mcp_tools()
-    ).await;
-    
+        agent.force_refresh_mcp_tools(),
+    )
+    .await;
+
     match mcp_refresh_result {
         Ok(Ok(_)) => {
             info!("MCP tools loaded successfully");
@@ -1930,7 +2229,11 @@ async fn main() -> Result<()> {
     match &cli.system_prompt {
         Some(system_prompt) => {
             agent.set_system_prompt(system_prompt.clone());
-            println!("{} Using custom system prompt: {}", "✓".green(), system_prompt);
+            println!(
+                "{} Using custom system prompt: {}",
+                "✓".green(),
+                system_prompt
+            );
         }
         None => {
             // Use config's default system prompt if available
@@ -1960,14 +2263,20 @@ async fn main() -> Result<()> {
         // Display the message with file highlighting
         let highlighted_message = formatter.format_input_with_file_highlighting(&message);
         println!("> {}", highlighted_message);
-        
+
         // Single message mode
         if cli.stream {
             let cancellation_flag = Arc::new(AtomicBool::new(false));
-            let _response = agent.process_message_with_stream(&message, Some(|content| {
-                print!("{}", content);
-                std::io::Write::flush(&mut std::io::stdout()).unwrap();
-            }), cancellation_flag).await?;
+            let _response = agent
+                .process_message_with_stream(
+                    &message,
+                    Some(|content| {
+                        print!("{}", content);
+                        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                    }),
+                    cancellation_flag,
+                )
+                .await?;
             print_usage_stats(&agent);
         } else {
             let cancellation_flag = Arc::new(AtomicBool::new(false));
@@ -1982,21 +2291,29 @@ async fn main() -> Result<()> {
         let mut input = String::new();
         io::stdin().read_to_string(&mut input)?;
         let trimmed_input = input.trim();
-        
+
         // Display the input with file highlighting
         let highlighted_input = formatter.format_input_with_file_highlighting(trimmed_input);
         println!("> {}", highlighted_input);
-        
+
         let cancellation_flag = Arc::new(AtomicBool::new(false));
         if cli.stream {
-            let _response = agent.process_message_with_stream(trimmed_input, Some(|content| {
-                print!("{}", content);
-                std::io::Write::flush(&mut std::io::stdout()).unwrap();
-            }), cancellation_flag).await?;
+            let _response = agent
+                .process_message_with_stream(
+                    trimmed_input,
+                    Some(|content| {
+                        print!("{}", content);
+                        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                    }),
+                    cancellation_flag,
+                )
+                .await?;
             print_usage_stats(&agent);
         } else {
             let spinner = create_spinner();
-            let response = agent.process_message(trimmed_input, cancellation_flag).await?;
+            let response = agent
+                .process_message(trimmed_input, cancellation_flag)
+                .await?;
             spinner.finish_and_clear();
             formatter.print_formatted(&response)?;
             print_usage_stats(&agent);
@@ -2006,14 +2323,21 @@ async fn main() -> Result<()> {
         // Display the cool logo on startup
         logo::display_logo();
         println!("{}", "🤖 AIxplosion - Interactive Mode".green().bold());
-        println!("{}", "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands.".dimmed());
+        println!(
+            "{}",
+            "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands."
+                .dimmed()
+        );
         println!();
 
         // Initialize shared history for the interactive session
         let mut input_history = InputHistory::new();
 
         loop {
-            let input = match read_input_with_completion_and_highlighting(Some(&formatter), &mut input_history) {
+            let input = match read_input_with_completion_and_highlighting(
+                Some(&formatter),
+                &mut input_history,
+            ) {
                 Ok(input) => input,
                 Err(e) => {
                     if e.to_string().contains("CANCELLED") {
@@ -2024,20 +2348,22 @@ async fn main() -> Result<()> {
                     continue;
                 }
             };
-            
+
             // If input is empty, continue to next iteration
             if input.is_empty() {
                 continue;
             }
-            
+
             // Check for commands first (they can't be multi-line)
-            if input.starts_with('/') || input.starts_with('!') || 
-               input == "exit" || input == "quit" {
-                
+            if input.starts_with('/')
+                || input.starts_with('!')
+                || input == "exit"
+                || input == "quit"
+            {
                 // Check for slash commands first
                 if input.starts_with('/') {
                     match handle_slash_command(&input, &mut agent, &mcp_manager).await {
-                        Ok(_) => {}, // Command handled successfully
+                        Ok(_) => {} // Command handled successfully
                         Err(e) => {
                             eprintln!("{} Error handling command: {}", "✗".red(), e);
                         }
@@ -2048,7 +2374,7 @@ async fn main() -> Result<()> {
                 // Check for shell commands (!)
                 if input.starts_with('!') {
                     match handle_shell_command(&input, &mut agent).await {
-                        Ok(_) => {}, // Command handled successfully
+                        Ok(_) => {} // Command handled successfully
                         Err(e) => {
                             eprintln!("{} Error executing shell command: {}", "✗".red(), e);
                         }
@@ -2075,7 +2401,9 @@ async fn main() -> Result<()> {
                         // Even longer polling interval since this is only during AI processing
                         if event::poll(std::time::Duration::from_millis(1000)).unwrap_or(false) {
                             if let Ok(event::Event::Key(key_event)) = event::read() {
-                                if key_event.code == KeyCode::Esc && key_event.kind == KeyEventKind::Press {
+                                if key_event.code == KeyCode::Esc
+                                    && key_event.kind == KeyEventKind::Press
+                                {
                                     cancellation_flag_listener.store(true, Ordering::SeqCst);
                                     println!("\n{} Cancelling AI conversation...", "🛑".yellow());
                                     break;
@@ -2088,7 +2416,14 @@ async fn main() -> Result<()> {
                 });
 
                 // Process the input (highlighting already shown during typing)
-                process_input(&input, &mut agent, &formatter, cli.stream, cancellation_flag_for_processing.clone()).await;
+                process_input(
+                    &input,
+                    &mut agent,
+                    &formatter,
+                    cli.stream,
+                    cancellation_flag_for_processing.clone(),
+                )
+                .await;
 
                 // Clean up the ESC listener task
                 esc_handle.abort();

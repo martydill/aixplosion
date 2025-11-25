@@ -1,13 +1,7 @@
+use crossterm::{cursor, style::Print, terminal, ExecutableCommand, QueueableCommand};
 use std::fs;
-use std::path::Path;
 use std::io::Write;
-use crossterm::{
-    terminal,
-    cursor,
-    style::Print,
-    ExecutableCommand,
-    QueueableCommand,
-};
+use std::path::Path;
 
 /// Get completion suggestions based on current input
 pub fn get_completion(input: &str) -> Option<String> {
@@ -15,8 +9,17 @@ pub fn get_completion(input: &str) -> Option<String> {
 
     // Command completions
     let commands = vec![
-        "/help", "/stats", "/usage", "/context", "/clear", "/reset-stats",
-        "/permissions", "/file-permissions", "/mcp", "/exit", "/quit"
+        "/help",
+        "/stats",
+        "/usage",
+        "/context",
+        "/clear",
+        "/reset-stats",
+        "/permissions",
+        "/file-permissions",
+        "/mcp",
+        "/exit",
+        "/quit",
     ];
 
     // File completion for @ syntax
@@ -38,8 +41,17 @@ pub fn get_completion(input: &str) -> Option<String> {
     if input.starts_with("/mcp ") {
         let mcp_part = &input[5..];
         let mcp_commands = vec![
-            "list", "add", "remove", "connect", "disconnect", "reconnect",
-            "tools", "connect-all", "disconnect-all", "test", "help"
+            "list",
+            "add",
+            "remove",
+            "connect",
+            "disconnect",
+            "reconnect",
+            "tools",
+            "connect-all",
+            "disconnect-all",
+            "test",
+            "help",
         ];
 
         for cmd in mcp_commands {
@@ -53,8 +65,18 @@ pub fn get_completion(input: &str) -> Option<String> {
     if input.starts_with("/permissions ") {
         let perm_part = &input[13..];
         let perm_commands = vec![
-            "show", "list", "test", "allow", "deny", "remove-allow",
-            "remove-deny", "enable", "disable", "ask-on", "ask-off", "help"
+            "show",
+            "list",
+            "test",
+            "allow",
+            "deny",
+            "remove-allow",
+            "remove-deny",
+            "enable",
+            "disable",
+            "ask-on",
+            "ask-off",
+            "help",
         ];
 
         for cmd in perm_commands {
@@ -67,8 +89,15 @@ pub fn get_completion(input: &str) -> Option<String> {
     if input.starts_with("/file-permissions ") {
         let perm_part = &input[18..];
         let perm_commands = vec![
-            "show", "list", "test", "enable", "disable", "ask-on",
-            "ask-off", "reset-session", "help"
+            "show",
+            "list",
+            "test",
+            "enable",
+            "disable",
+            "ask-on",
+            "ask-off",
+            "reset-session",
+            "help",
         ];
 
         for cmd in perm_commands {

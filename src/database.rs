@@ -1,10 +1,10 @@
 use anyhow::Result;
-use sqlx::{SqlitePool, Row};
+use chrono::{DateTime, Utc};
+use log::{debug, info};
+use sqlx::{Row, SqlitePool};
 use std::path::PathBuf;
 use std::str::FromStr;
-use log::{debug, info};
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 /// Database manager for AIxplosion
 pub struct DatabaseManager {
@@ -16,7 +16,7 @@ impl DatabaseManager {
     /// Create a new database manager with the specified database path
     pub async fn new(db_path: PathBuf) -> Result<Self> {
         info!("Initializing database at: {}", db_path.display());
-        
+
         // Create parent directories if they don't exist
         if let Some(parent) = db_path.parent() {
             tokio::fs::create_dir_all(parent).await?;
@@ -42,7 +42,11 @@ impl DatabaseManager {
                     tokio::fs::remove_file(&db_path).await?;
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("Cannot create database file at {}: {}", db_path_str, e));
+                    return Err(anyhow::anyhow!(
+                        "Cannot create database file at {}: {}",
+                        db_path_str,
+                        e
+                    ));
                 }
             }
         } else {
@@ -54,20 +58,26 @@ impl DatabaseManager {
             .create_if_missing(true);
 
         let pool = SqlitePool::connect_with(connect_opts).await?;
-        
-        let manager = Self { pool, db_path: db_path.clone() };
-        
+
+        let manager = Self {
+            pool,
+            db_path: db_path.clone(),
+        };
+
         // Run migrations
         manager.run_migrations().await?;
-        
-        info!("Database initialized successfully at: {}", db_path.display());
+
+        info!(
+            "Database initialized successfully at: {}",
+            db_path.display()
+        );
         Ok(manager)
     }
 
     /// Run database migrations to create necessary tables
     async fn run_migrations(&self) -> Result<()> {
         debug!("Running database migrations...");
-        
+
         // Create conversations table
         sqlx::query(
             r#"
@@ -80,7 +90,7 @@ impl DatabaseManager {
                 total_tokens INTEGER DEFAULT 0,
                 request_count INTEGER DEFAULT 0
             )
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await?;
@@ -97,7 +107,7 @@ impl DatabaseManager {
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             )
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await?;
@@ -114,7 +124,7 @@ impl DatabaseManager {
                 added_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             )
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await?;
@@ -134,7 +144,7 @@ impl DatabaseManager {
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
                 FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL
             )
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await?;
@@ -152,15 +162,17 @@ impl DatabaseManager {
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
-            "#
+            "#,
         )
         .execute(&self.pool)
         .await?;
 
         // Create indexes for better performance
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)",
+        )
+        .execute(&self.pool)
+        .await?;
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)")
             .execute(&self.pool)
@@ -202,49 +214,52 @@ impl DatabaseManager {
 /// Create a slug from a directory path
 pub fn create_slug_from_path(path: &str) -> String {
     use regex::Regex;
-    
+
     // Normalize the path by replacing backslashes with forward slashes
     let normalized_path = path.replace('\\', "/");
-    
+
     // Extract the last few directory names to create a reasonable slug
-    let path_parts: Vec<&str> = normalized_path.split('/').filter(|s| !s.is_empty()).collect();
-    
+    let path_parts: Vec<&str> = normalized_path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+
     // Take the last 2-3 parts to create the slug
     let relevant_parts: Vec<&str> = if path_parts.len() > 3 {
         path_parts[path_parts.len() - 3..].to_vec()
     } else {
         path_parts
     };
-    
+
     let base_slug = relevant_parts.join("_");
-    
+
     // Clean up the slug:
     // 1. Replace invalid characters with underscores
     // 2. Remove consecutive underscores
     // 3. Convert to lowercase
     // 4. Limit length
-    
+
     let re = Regex::new(r"[^a-zA-Z0-9_]").unwrap();
     let cleaned = re.replace_all(&base_slug, "_");
-    
+
     let re_consecutive = Regex::new(r"_+").unwrap();
     let deduped = re_consecutive.replace_all(&cleaned, "_");
-    
+
     let mut slug = deduped.to_lowercase();
-    
+
     // Remove leading and trailing underscores
     slug = slug.trim_matches('_').to_string();
-    
+
     // Limit length to 100 characters
     if slug.len() > 100 {
         slug.truncate(100);
     }
-    
+
     // Ensure slug is not empty
     if slug.is_empty() {
         slug = "default".to_string();
     }
-    
+
     slug
 }
 
@@ -273,11 +288,18 @@ pub struct Message {
 
 impl DatabaseManager {
     /// Create a new conversation in the database
-    pub async fn create_conversation(&self, system_prompt: Option<String>, model: &str) -> Result<String> {
+    pub async fn create_conversation(
+        &self,
+        system_prompt: Option<String>,
+        model: &str,
+    ) -> Result<String> {
         let conversation_id = Uuid::new_v4().to_string();
         let now = Utc::now();
 
-        debug!("Creating new conversation: {} with model: {}", conversation_id, model);
+        debug!(
+            "Creating new conversation: {} with model: {}",
+            conversation_id, model
+        );
 
         sqlx::query(
             r#"
@@ -298,12 +320,20 @@ impl DatabaseManager {
     }
 
     /// Add a message to a conversation
-    pub async fn add_message(&self, conversation_id: &str, role: &str, content: &str, tokens: i32) -> Result<String> {
+    pub async fn add_message(
+        &self,
+        conversation_id: &str,
+        role: &str,
+        content: &str,
+        tokens: i32,
+    ) -> Result<String> {
         let message_id = Uuid::new_v4().to_string();
         let now = Utc::now();
 
-        debug!("Adding message {} to conversation {}: {} ({} tokens)",
-               message_id, conversation_id, role, tokens);
+        debug!(
+            "Adding message {} to conversation {}: {} ({} tokens)",
+            message_id, conversation_id, role, tokens
+        );
 
         // Begin transaction
         let mut tx = self.pool.begin().await?;
@@ -313,7 +343,7 @@ impl DatabaseManager {
             r#"
             INSERT INTO messages (id, conversation_id, role, content, tokens, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(&message_id)
         .bind(conversation_id)
@@ -332,7 +362,7 @@ impl DatabaseManager {
                 request_count = request_count + ?,
                 updated_at = ?
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(tokens)
         .bind(if role == "user" { 1 } else { 0 })
@@ -354,7 +384,7 @@ impl DatabaseManager {
             SELECT id, created_at, updated_at, system_prompt, model, total_tokens, request_count
             FROM conversations
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(conversation_id)
         .fetch_optional(&self.pool)
@@ -383,20 +413,23 @@ impl DatabaseManager {
             FROM messages
             WHERE conversation_id = ?
             ORDER BY created_at ASC
-            "#
+            "#,
         )
         .bind(conversation_id)
         .fetch_all(&self.pool)
         .await?;
 
-        let messages = rows.into_iter().map(|row| Message {
-            id: row.get("id"),
-            conversation_id: row.get("conversation_id"),
-            role: row.get("role"),
-            content: row.get("content"),
-            tokens: row.get("tokens"),
-            created_at: row.get("created_at"),
-        }).collect();
+        let messages = rows
+            .into_iter()
+            .map(|row| Message {
+                id: row.get("id"),
+                conversation_id: row.get("conversation_id"),
+                role: row.get("role"),
+                content: row.get("content"),
+                tokens: row.get("tokens"),
+                created_at: row.get("created_at"),
+            })
+            .collect();
 
         Ok(messages)
     }
@@ -409,21 +442,24 @@ impl DatabaseManager {
             FROM conversations
             ORDER BY updated_at DESC
             LIMIT ?
-            "#
+            "#,
         )
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
 
-        let conversations = rows.into_iter().map(|row| Conversation {
-            id: row.get("id"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
-            system_prompt: row.get("system_prompt"),
-            model: row.get("model"),
-            total_tokens: row.get("total_tokens"),
-            request_count: row.get("request_count"),
-        }).collect();
+        let conversations = rows
+            .into_iter()
+            .map(|row| Conversation {
+                id: row.get("id"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                system_prompt: row.get("system_prompt"),
+                model: row.get("model"),
+                total_tokens: row.get("total_tokens"),
+                request_count: row.get("request_count"),
+            })
+            .collect();
 
         Ok(conversations)
     }
@@ -434,8 +470,10 @@ impl DatabaseManager {
         let usage_id = Uuid::new_v4().to_string();
         let now = Utc::now();
 
-        debug!("Updating usage stats for {} - input: {}, output: {} tokens",
-               today, input_tokens, output_tokens);
+        debug!(
+            "Updating usage stats for {} - input: {}, output: {} tokens",
+            today, input_tokens, output_tokens
+        );
 
         // Try to update existing record first, then insert if it doesn't exist
         let result = sqlx::query(
@@ -447,7 +485,7 @@ impl DatabaseManager {
                 total_tokens = total_tokens + ? + ?,
                 updated_at = ?
             WHERE date = ?
-            "#
+            "#,
         )
         .bind(input_tokens)
         .bind(output_tokens)
@@ -486,22 +524,26 @@ pub fn get_database_path() -> Result<PathBuf> {
     // Get current directory
     let current_dir = std::env::current_dir()?;
     let current_dir_str = current_dir.to_string_lossy();
-    
+
     // Create slug from current directory path
     let slug = create_slug_from_path(&current_dir_str);
-    
+
     // Get home directory
-    let home_dir = dirs::home_dir()
-        .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
-    
+    let home_dir =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+
     // Create .aixplosion directory path
     let aixplosion_dir = home_dir.join(".aixplosion");
-    
+
     // Create database file path
     let db_path = aixplosion_dir.join(format!("{}.db", slug));
-    
-    debug!("Database path for directory '{}': {}", current_dir_str, db_path.display());
-    
+
+    debug!(
+        "Database path for directory '{}': {}",
+        current_dir_str,
+        db_path.display()
+    );
+
     Ok(db_path)
 }
 
@@ -512,20 +554,29 @@ mod tests {
     #[test]
     fn test_create_slug_from_path() {
         // Test basic path
-        assert_eq!(create_slug_from_path("/home/user/projects/myapp"), "user_projects_myapp");
-        
+        assert_eq!(
+            create_slug_from_path("/home/user/projects/myapp"),
+            "user_projects_myapp"
+        );
+
         // Test Windows path
-        assert_eq!(create_slug_from_path("C:\\Users\\User\\Documents\\project"), "user_documents_project");
-        
+        assert_eq!(
+            create_slug_from_path("C:\\Users\\User\\Documents\\project"),
+            "user_documents_project"
+        );
+
         // Test short path
         assert_eq!(create_slug_from_path("myproject"), "myproject");
-        
+
         // Test path with special characters
-        assert_eq!(create_slug_from_path("/path/with-special@chars#123"), "path_with_special_chars_123");
-        
+        assert_eq!(
+            create_slug_from_path("/path/with-special@chars#123"),
+            "path_with_special_chars_123"
+        );
+
         // Test empty path
         assert_eq!(create_slug_from_path(""), "default");
-        
+
         // Test very long path
         let long_path = "/".to_string() + &"a".repeat(200);
         let slug = create_slug_from_path(&long_path);

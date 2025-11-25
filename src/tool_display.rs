@@ -1,7 +1,7 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use colored::*;
-use std::io::{self, Write};
 use serde_json::Value;
+use std::io::{self, Write};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Common trait for tool display implementations
 pub trait ToolDisplay {
@@ -60,44 +60,77 @@ impl ToolCallDisplay {
         }
     }
 
-
     /// Display the tool call details
     pub fn show_call_details(&self, arguments: &Value) {
         let icon = Self::get_tool_icon(&self.tool_name);
-        
-        println!("{}", "┌─────────────────────────────────────────────────".dimmed());
-        println!("{} {} {} {}",
-                 "│".dimmed(),
-                 icon,
-                 format!("Tool Call: {}", self.tool_name.cyan().bold()),
-                 format!("[{}]", self.get_current_time()).dimmed()
+
+        println!(
+            "{}",
+            "┌─────────────────────────────────────────────────".dimmed()
         );
-        
+        println!(
+            "{} {} {} {}",
+            "│".dimmed(),
+            icon,
+            format!("Tool Call: {}", self.tool_name.cyan().bold()),
+            format!("[{}]", self.get_current_time()).dimmed()
+        );
+
         // Display relevant arguments based on tool type
         match self.tool_name.as_str() {
             "list_directory" => {
                 if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
-                    println!("{} {} {} {}", "│".dimmed(), "📍".yellow(), "Path:".bold(), path.green());
+                    println!(
+                        "{} {} {} {}",
+                        "│".dimmed(),
+                        "📍".yellow(),
+                        "Path:".bold(),
+                        path.green()
+                    );
                 }
             }
             "read_file" | "write_file" | "edit_file" | "delete_file" | "create_directory" => {
                 if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
-                    println!("{} {} {} {}", "│".dimmed(), "📄".yellow(), "File:".bold(), path.green());
+                    println!(
+                        "{} {} {} {}",
+                        "│".dimmed(),
+                        "📄".yellow(),
+                        "File:".bold(),
+                        path.green()
+                    );
                 }
 
                 // Additional info for specific file operations
                 match self.tool_name.as_str() {
                     "write_file" => {
                         if let Some(content) = arguments.get("content").and_then(|v| v.as_str()) {
-                            println!("{} {} {} {} bytes", "│".dimmed(), "📝".yellow(), "Size:".bold(), content.len().to_string().green());
+                            println!(
+                                "{} {} {} {} bytes",
+                                "│".dimmed(),
+                                "📝".yellow(),
+                                "Size:".bold(),
+                                content.len().to_string().green()
+                            );
                         }
                     }
                     "edit_file" => {
                         if let Some(old_text) = arguments.get("old_text").and_then(|v| v.as_str()) {
-                            println!("{} {} {} {} bytes", "│".dimmed(), "📝".yellow(), "Old:".bold(), old_text.len().to_string().yellow());
+                            println!(
+                                "{} {} {} {} bytes",
+                                "│".dimmed(),
+                                "📝".yellow(),
+                                "Old:".bold(),
+                                old_text.len().to_string().yellow()
+                            );
                         }
                         if let Some(new_text) = arguments.get("new_text").and_then(|v| v.as_str()) {
-                            println!("{} {} {} {} bytes", "│".dimmed(), "📝".yellow(), "New:".bold(), new_text.len().to_string().green());
+                            println!(
+                                "{} {} {} {} bytes",
+                                "│".dimmed(),
+                                "📝".yellow(),
+                                "New:".bold(),
+                                new_text.len().to_string().green()
+                            );
                         }
                     }
                     _ => {}
@@ -105,14 +138,23 @@ impl ToolCallDisplay {
             }
             "bash" => {
                 if let Some(command) = arguments.get("command").and_then(|v| v.as_str()) {
-                    println!("{} {} {} {}", "│".dimmed(), "💻".yellow(), "Command:".bold(), command.green());
+                    println!(
+                        "{} {} {} {}",
+                        "│".dimmed(),
+                        "💻".yellow(),
+                        "Command:".bold(),
+                        command.green()
+                    );
                 }
             }
             _ => {}
         }
-        
-        println!("{}", "└─────────────────────────────────────────────────".dimmed());
-        
+
+        println!(
+            "{}",
+            "└─────────────────────────────────────────────────".dimmed()
+        );
+
         // Flush to ensure immediate display
         io::stdout().flush().unwrap();
     }
@@ -132,22 +174,30 @@ impl ToolCallDisplay {
     /// Show the tool result with appropriate formatting
     fn show_result(&self, content: &str, is_error: bool, duration: Duration) {
         let icon = if is_error { "❌" } else { "✅" };
-        let status = if is_error { "FAILED".red().bold() } else { "SUCCESS".green().bold() };
-        
-        println!("{}", "┌─────────────────────────────────────────────────".dimmed());
-        println!("{} {} {} {} ({})", 
-                 "│".dimmed(),
-                 icon,
-                 format!("Result: {}", self.tool_name.cyan().bold()),
-                 status,
-                 format!("{:.2}s", duration.as_secs_f64()).dimmed()
+        let status = if is_error {
+            "FAILED".red().bold()
+        } else {
+            "SUCCESS".green().bold()
+        };
+
+        println!(
+            "{}",
+            "┌─────────────────────────────────────────────────".dimmed()
         );
-        
+        println!(
+            "{} {} {} {} ({})",
+            "│".dimmed(),
+            icon,
+            format!("Result: {}", self.tool_name.cyan().bold()),
+            status,
+            format!("{:.2}s", duration.as_secs_f64()).dimmed()
+        );
+
         // Limit output to max 5 lines
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
         let max_display_lines = 5;
-        
+
         if total_lines == 0 {
             if is_error {
                 println!("{} {}", "│".dimmed(), "Error:".red().bold());
@@ -163,7 +213,7 @@ impl ToolCallDisplay {
             } else {
                 max_display_lines
             };
-            
+
             if is_error {
                 println!("{} {}", "│".dimmed(), "Error:".red().bold());
                 for line in lines.iter().take(display_lines) {
@@ -175,16 +225,23 @@ impl ToolCallDisplay {
                     println!("{}   {}", "│".dimmed(), line);
                 }
             }
-            
+
             // Show truncation indicator if content was limited
             if total_lines > max_display_lines {
                 let remaining = total_lines - max_display_lines;
-                println!("{}   {}", "│".dimmed(), format!("[... {} more lines omitted]", remaining).dimmed());
+                println!(
+                    "{}   {}",
+                    "│".dimmed(),
+                    format!("[... {} more lines omitted]", remaining).dimmed()
+                );
             }
         }
-        
-        println!("{}", "└─────────────────────────────────────────────────".dimmed());
-        
+
+        println!(
+            "{}",
+            "└─────────────────────────────────────────────────".dimmed()
+        );
+
         // Flush to ensure immediate display
         io::stdout().flush().unwrap();
     }
@@ -206,8 +263,6 @@ impl ToolDisplay for ToolCallDisplay {
     }
 }
 
-
-
 /// Check if output should be pretty (terminal) or plain (redirected)
 pub fn should_use_pretty_output() -> bool {
     // Always return true for now since we're not using atty check anymore
@@ -222,10 +277,8 @@ pub struct SimpleToolDisplay {
 
 impl SimpleToolDisplay {
     pub fn new(tool_name: &str) -> Self {
-        println!("▶ {} {}...", 
-                Self::get_tool_icon(tool_name),
-                tool_name);
-        
+        println!("▶ {} {}...", Self::get_tool_icon(tool_name), tool_name);
+
         Self {
             tool_name: tool_name.to_string(),
             start_time: std::time::Instant::now(),
@@ -248,13 +301,13 @@ impl SimpleToolDisplay {
     pub fn complete_success(self, result: &str) {
         let duration = self.start_time.elapsed();
         println!("✅ {} completed in {:?}", self.tool_name, duration);
-        
+
         // Show limited result (max 5 lines)
         if !result.is_empty() {
             let lines: Vec<&str> = result.lines().collect();
             let total_lines = lines.len();
             let max_display_lines = 5;
-            
+
             if total_lines <= max_display_lines {
                 // Show all lines if within limit
                 for line in lines {
@@ -266,7 +319,11 @@ impl SimpleToolDisplay {
                     println!("   {}", line);
                 }
                 let remaining = total_lines - max_display_lines;
-                println!("   [... {} more lines omitted] [{} bytes total]", remaining, result.len());
+                println!(
+                    "   [... {} more lines omitted] [{} bytes total]",
+                    remaining,
+                    result.len()
+                );
             }
         }
     }
@@ -274,12 +331,12 @@ impl SimpleToolDisplay {
     pub fn complete_error(self, error: &str) {
         let duration = self.start_time.elapsed();
         println!("❌ {} failed in {:?}", self.tool_name, duration);
-        
+
         // Show limited error (max 5 lines)
         let lines: Vec<&str> = error.lines().collect();
         let total_lines = lines.len();
         let max_display_lines = 5;
-        
+
         println!("   Error:");
         if total_lines <= max_display_lines {
             // Show all lines if within limit
@@ -292,7 +349,11 @@ impl SimpleToolDisplay {
                 println!("   {}", line);
             }
             let remaining = total_lines - max_display_lines;
-            println!("   [... {} more lines omitted] [{} bytes total]", remaining, error.len());
+            println!(
+                "   [... {} more lines omitted] [{} bytes total]",
+                remaining,
+                error.len()
+            );
         }
     }
 }
@@ -307,7 +368,7 @@ impl ToolDisplay for SimpleToolDisplay {
             let lines: Vec<&str> = result.lines().collect();
             let total_lines = lines.len();
             let max_display_lines = 5;
-            
+
             if total_lines <= max_display_lines {
                 // Show all lines if within limit
                 for line in lines {
@@ -319,7 +380,11 @@ impl ToolDisplay for SimpleToolDisplay {
                     println!("   {}", line);
                 }
                 let remaining = total_lines - max_display_lines;
-                println!("   [... {} more lines omitted] [{} bytes total]", remaining, result.len());
+                println!(
+                    "   [... {} more lines omitted] [{} bytes total]",
+                    remaining,
+                    result.len()
+                );
             }
         }
     }
@@ -327,12 +392,12 @@ impl ToolDisplay for SimpleToolDisplay {
     fn complete_error(&mut self, error: &str) {
         let duration = self.start_time.elapsed();
         println!("❌ {} failed in {:?}", self.tool_name, duration);
-        
+
         // Show limited error (max 5 lines)
         let lines: Vec<&str> = error.lines().collect();
         let total_lines = lines.len();
         let max_display_lines = 5;
-        
+
         println!("   Error:");
         if total_lines <= max_display_lines {
             // Show all lines if within limit
@@ -345,7 +410,11 @@ impl ToolDisplay for SimpleToolDisplay {
                 println!("   {}", line);
             }
             let remaining = total_lines - max_display_lines;
-            println!("   [... {} more lines omitted] [{} bytes total]", remaining, error.len());
+            println!(
+                "   [... {} more lines omitted] [{} bytes total]",
+                remaining,
+                error.len()
+            );
         }
     }
 }

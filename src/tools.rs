@@ -1,18 +1,25 @@
+use crate::mcp::{McpManager, McpTool};
+use anyhow::Result;
+use log::{debug, info};
+use path_absolutize::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use anyhow::Result;
+use shellexpand;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 use tokio::task;
-use path_absolutize::*;
-use shellexpand;
-use log::{debug, info};
-use std::sync::Arc;
-use crate::mcp::{McpManager, McpTool};
 
-pub type AsyncToolHandler = Box<dyn Fn(ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> + Send + Sync>;
+pub type AsyncToolHandler = Box<
+    dyn Fn(
+            ToolCall,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>>
+        + Send
+        + Sync,
+>;
 
 pub struct Tool {
     pub name: String,
@@ -45,19 +52,23 @@ impl Tool {
             "bash" => {
                 // For bash tool, we need to create a handler that will be updated later
                 // with the security manager. This is a limitation of the current architecture.
-                Box::new(|_call| Box::pin(async move {
-                    // This should be handled by the Agent's tool execution logic
-                    // The Agent has special handling for bash commands with security
-                    Err(anyhow::anyhow!("Bash tool should be handled by Agent with security manager. Tool recreation failed."))
-                }))
+                Box::new(|_call| {
+                    Box::pin(async move {
+                        // This should be handled by the Agent's tool execution logic
+                        // The Agent has special handling for bash commands with security
+                        Err(anyhow::anyhow!("Bash tool should be handled by Agent with security manager. Tool recreation failed."))
+                    })
+                })
             }
             _ if self.name.starts_with("mcp_") => {
                 // This is an MCP tool - we need to handle this differently
                 // The issue is that we can't recreate MCP handlers without the MCP manager
                 // So we'll create a placeholder that indicates the issue
-                Box::new(|call| Box::pin(async move {
-                    Err(anyhow::anyhow!("MCP tool '{}' cannot be recreated without proper MCP manager context. This suggests there's an issue with how MCP tools are being cloned or moved.", call.name))
-                }))
+                Box::new(|call| {
+                    Box::pin(async move {
+                        Err(anyhow::anyhow!("MCP tool '{}' cannot be recreated without proper MCP manager context. This suggests there's an issue with how MCP tools are being cloned or moved.", call.name))
+                    })
+                })
             }
             _ => panic!("Unknown tool: {}", self.name),
         }
@@ -91,7 +102,9 @@ pub struct ToolResult {
 
 // Built-in tools
 pub async fn list_directory(call: &ToolCall) -> Result<ToolResult> {
-    let path = call.arguments.get("path")
+    let path = call
+        .arguments
+        .get("path")
         .and_then(|v| v.as_str())
         .unwrap_or(".");
 
@@ -110,9 +123,7 @@ pub async fn list_directory(call: &ToolCall) -> Result<ToolResult> {
             let mut items = Vec::new();
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
-                let name = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("?");
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
 
                 if path.is_dir() {
                     items.push(format!("📁 {}/", name));
@@ -137,14 +148,20 @@ pub async fn list_directory(call: &ToolCall) -> Result<ToolResult> {
         }
         Err(e) => Ok(ToolResult {
             tool_use_id,
-            content: format!("Error reading directory '{}': {}", absolute_path.display(), e),
+            content: format!(
+                "Error reading directory '{}': {}",
+                absolute_path.display(),
+                e
+            ),
             is_error: true,
-        })
+        }),
     }
 }
 
 pub async fn read_file(call: &ToolCall) -> Result<ToolResult> {
-    let path = call.arguments.get("path")
+    let path = call
+        .arguments
+        .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
 
@@ -171,23 +188,31 @@ pub async fn read_file(call: &ToolCall) -> Result<ToolResult> {
                     tool_use_id,
                     content: format!("Error reading file '{}': {}", absolute_path.display(), e),
                     is_error: true,
-                })
+                }),
             }
         }
         Err(e) => Ok(ToolResult {
             tool_use_id,
             content: format!("Error opening file '{}': {}", absolute_path.display(), e),
             is_error: true,
-        })
+        }),
     }
 }
 
-pub async fn write_file(call: &ToolCall, file_security_manager: &mut crate::security::FileSecurityManager, yolo_mode: bool) -> Result<ToolResult> {
-    let path = call.arguments.get("path")
+pub async fn write_file(
+    call: &ToolCall,
+    file_security_manager: &mut crate::security::FileSecurityManager,
+    yolo_mode: bool,
+) -> Result<ToolResult> {
+    let path = call
+        .arguments
+        .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
 
-    let content = call.arguments.get("content")
+    let content = call
+        .arguments
+        .get("content")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'content' argument"))?;
 
@@ -200,11 +225,19 @@ pub async fn write_file(call: &ToolCall, file_security_manager: &mut crate::secu
 
     // Check file security permissions
     if yolo_mode {
-        debug!("YOLO MODE: Bypassing file security for 'write_file' on '{}'", absolute_path.display());
+        debug!(
+            "YOLO MODE: Bypassing file security for 'write_file' on '{}'",
+            absolute_path.display()
+        );
     } else {
-        match file_security_manager.check_file_permission("write_file", &absolute_path.to_string_lossy()) {
+        match file_security_manager
+            .check_file_permission("write_file", &absolute_path.to_string_lossy())
+        {
             crate::security::FilePermissionResult::Allowed => {
-                debug!("File operation 'write_file' on '{}' is allowed by security policy", absolute_path.display());
+                debug!(
+                    "File operation 'write_file' on '{}' is allowed by security policy",
+                    absolute_path.display()
+                );
             }
             crate::security::FilePermissionResult::Denied => {
                 return Ok(ToolResult {
@@ -215,15 +248,24 @@ pub async fn write_file(call: &ToolCall, file_security_manager: &mut crate::secu
             }
             crate::security::FilePermissionResult::RequiresPermission => {
                 // Ask user for permission
-                match file_security_manager.ask_file_permission("write_file", &absolute_path.to_string_lossy()).await {
+                match file_security_manager
+                    .ask_file_permission("write_file", &absolute_path.to_string_lossy())
+                    .await
+                {
                     Ok(Some(_)) => {
                         // User granted permission
-                        info!("User granted permission for file write operation: {}", absolute_path.display());
+                        info!(
+                            "User granted permission for file write operation: {}",
+                            absolute_path.display()
+                        );
                     }
                     Ok(None) => {
                         return Ok(ToolResult {
                             tool_use_id,
-                            content: format!("🔒 Security: Permission denied for file write operation on '{}'", absolute_path.display()),
+                            content: format!(
+                                "🔒 Security: Permission denied for file write operation on '{}'",
+                                absolute_path.display()
+                            ),
                             is_error: true,
                         });
                     }
@@ -260,7 +302,7 @@ pub async fn write_file(call: &ToolCall, file_security_manager: &mut crate::secu
             tool_use_id,
             content: format!("Error writing to file '{}': {}", absolute_path.display(), e),
             is_error: true,
-        })
+        }),
     }
 }
 
@@ -278,20 +320,35 @@ fn normalize_line_endings(text: &str, line_ending: &str) -> String {
     text.replace("\r\n", "\n").replace('\n', line_ending)
 }
 
-pub async fn edit_file(call: &ToolCall, file_security_manager: &mut crate::security::FileSecurityManager, yolo_mode: bool) -> Result<ToolResult> {
-    let path = call.arguments.get("path")
+pub async fn edit_file(
+    call: &ToolCall,
+    file_security_manager: &mut crate::security::FileSecurityManager,
+    yolo_mode: bool,
+) -> Result<ToolResult> {
+    let path = call
+        .arguments
+        .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
 
-    let old_text = call.arguments.get("old_text")
+    let old_text = call
+        .arguments
+        .get("old_text")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'old_text' argument"))?;
 
-    let new_text = call.arguments.get("new_text")
+    let new_text = call
+        .arguments
+        .get("new_text")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'new_text' argument"))?;
 
-    debug!("TOOL CALL: edit_file('{}', {} -> {} bytes)", path, old_text.len(), new_text.len());
+    debug!(
+        "TOOL CALL: edit_file('{}', {} -> {} bytes)",
+        path,
+        old_text.len(),
+        new_text.len()
+    );
 
     let tool_use_id = call.id.clone();
 
@@ -300,11 +357,19 @@ pub async fn edit_file(call: &ToolCall, file_security_manager: &mut crate::secur
 
     // Check file security permissions
     if yolo_mode {
-        debug!("YOLO MODE: Bypassing file security for 'edit_file' on '{}'", absolute_path.display());
+        debug!(
+            "YOLO MODE: Bypassing file security for 'edit_file' on '{}'",
+            absolute_path.display()
+        );
     } else {
-        match file_security_manager.check_file_permission("edit_file", &absolute_path.to_string_lossy()) {
+        match file_security_manager
+            .check_file_permission("edit_file", &absolute_path.to_string_lossy())
+        {
             crate::security::FilePermissionResult::Allowed => {
-                debug!("File operation 'edit_file' on '{}' is allowed by security policy", absolute_path.display());
+                debug!(
+                    "File operation 'edit_file' on '{}' is allowed by security policy",
+                    absolute_path.display()
+                );
             }
             crate::security::FilePermissionResult::Denied => {
                 return Ok(ToolResult {
@@ -315,15 +380,24 @@ pub async fn edit_file(call: &ToolCall, file_security_manager: &mut crate::secur
             }
             crate::security::FilePermissionResult::RequiresPermission => {
                 // Ask user for permission
-                match file_security_manager.ask_file_permission("edit_file", &absolute_path.to_string_lossy()).await {
+                match file_security_manager
+                    .ask_file_permission("edit_file", &absolute_path.to_string_lossy())
+                    .await
+                {
                     Ok(Some(_)) => {
                         // User granted permission
-                        info!("User granted permission for file edit operation: {}", absolute_path.display());
+                        info!(
+                            "User granted permission for file edit operation: {}",
+                            absolute_path.display()
+                        );
                     }
                     Ok(None) => {
                         return Ok(ToolResult {
                             tool_use_id,
-                            content: format!("🔒 Security: Permission denied for file edit operation on '{}'", absolute_path.display()),
+                            content: format!(
+                                "🔒 Security: Permission denied for file edit operation on '{}'",
+                                absolute_path.display()
+                            ),
                             is_error: true,
                         });
                     }
@@ -351,7 +425,11 @@ pub async fn edit_file(call: &ToolCall, file_security_manager: &mut crate::secur
             if !content.contains(&normalized_old_text) {
                 return Ok(ToolResult {
                     tool_use_id,
-                    content: format!("Text not found in file '{}': {}", absolute_path.display(), normalized_old_text),
+                    content: format!(
+                        "Text not found in file '{}': {}",
+                        absolute_path.display(),
+                        normalized_old_text
+                    ),
                     is_error: true,
                 });
             }
@@ -371,19 +449,25 @@ pub async fn edit_file(call: &ToolCall, file_security_manager: &mut crate::secur
                     tool_use_id,
                     content: format!("Error writing to file '{}': {}", absolute_path.display(), e),
                     is_error: true,
-                })
+                }),
             }
         }
         Err(e) => Ok(ToolResult {
             tool_use_id,
             content: format!("Error reading file '{}': {}", absolute_path.display(), e),
             is_error: true,
-        })
+        }),
     }
 }
 
-pub async fn delete_file(call: &ToolCall, file_security_manager: &mut crate::security::FileSecurityManager, yolo_mode: bool) -> Result<ToolResult> {
-    let path = call.arguments.get("path")
+pub async fn delete_file(
+    call: &ToolCall,
+    file_security_manager: &mut crate::security::FileSecurityManager,
+    yolo_mode: bool,
+) -> Result<ToolResult> {
+    let path = call
+        .arguments
+        .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
 
@@ -396,11 +480,19 @@ pub async fn delete_file(call: &ToolCall, file_security_manager: &mut crate::sec
 
     // Check file security permissions
     if yolo_mode {
-        debug!("YOLO MODE: Bypassing file security for 'delete_file' on '{}'", absolute_path.display());
+        debug!(
+            "YOLO MODE: Bypassing file security for 'delete_file' on '{}'",
+            absolute_path.display()
+        );
     } else {
-        match file_security_manager.check_file_permission("delete_file", &absolute_path.to_string_lossy()) {
+        match file_security_manager
+            .check_file_permission("delete_file", &absolute_path.to_string_lossy())
+        {
             crate::security::FilePermissionResult::Allowed => {
-                debug!("File operation 'delete_file' on '{}' is allowed by security policy", absolute_path.display());
+                debug!(
+                    "File operation 'delete_file' on '{}' is allowed by security policy",
+                    absolute_path.display()
+                );
             }
             crate::security::FilePermissionResult::Denied => {
                 return Ok(ToolResult {
@@ -411,15 +503,24 @@ pub async fn delete_file(call: &ToolCall, file_security_manager: &mut crate::sec
             }
             crate::security::FilePermissionResult::RequiresPermission => {
                 // Ask user for permission
-                match file_security_manager.ask_file_permission("delete_file", &absolute_path.to_string_lossy()).await {
+                match file_security_manager
+                    .ask_file_permission("delete_file", &absolute_path.to_string_lossy())
+                    .await
+                {
                     Ok(Some(_)) => {
                         // User granted permission
-                        info!("User granted permission for file delete operation: {}", absolute_path.display());
+                        info!(
+                            "User granted permission for file delete operation: {}",
+                            absolute_path.display()
+                        );
                     }
                     Ok(None) => {
                         return Ok(ToolResult {
                             tool_use_id,
-                            content: format!("🔒 Security: Permission denied for file delete operation on '{}'", absolute_path.display()),
+                            content: format!(
+                                "🔒 Security: Permission denied for file delete operation on '{}'",
+                                absolute_path.display()
+                            ),
                             is_error: true,
                         });
                     }
@@ -441,14 +542,21 @@ pub async fn delete_file(call: &ToolCall, file_security_manager: &mut crate::sec
                 match fs::remove_dir_all(&absolute_path).await {
                     Ok(_) => Ok(ToolResult {
                         tool_use_id,
-                        content: format!("Successfully deleted directory: {}", absolute_path.display()),
+                        content: format!(
+                            "Successfully deleted directory: {}",
+                            absolute_path.display()
+                        ),
                         is_error: false,
                     }),
                     Err(e) => Ok(ToolResult {
                         tool_use_id,
-                        content: format!("Error deleting directory '{}': {}", absolute_path.display(), e),
+                        content: format!(
+                            "Error deleting directory '{}': {}",
+                            absolute_path.display(),
+                            e
+                        ),
                         is_error: true,
-                    })
+                    }),
                 }
             } else {
                 match fs::remove_file(&absolute_path).await {
@@ -459,9 +567,13 @@ pub async fn delete_file(call: &ToolCall, file_security_manager: &mut crate::sec
                     }),
                     Err(e) => Ok(ToolResult {
                         tool_use_id,
-                        content: format!("Error deleting file '{}': {}", absolute_path.display(), e),
+                        content: format!(
+                            "Error deleting file '{}': {}",
+                            absolute_path.display(),
+                            e
+                        ),
                         is_error: true,
-                    })
+                    }),
                 }
             }
         }
@@ -469,12 +581,18 @@ pub async fn delete_file(call: &ToolCall, file_security_manager: &mut crate::sec
             tool_use_id,
             content: format!("Error accessing path '{}': {}", absolute_path.display(), e),
             is_error: true,
-        })
+        }),
     }
 }
 
-pub async fn create_directory(call: &ToolCall, file_security_manager: &mut crate::security::FileSecurityManager, yolo_mode: bool) -> Result<ToolResult> {
-    let path = call.arguments.get("path")
+pub async fn create_directory(
+    call: &ToolCall,
+    file_security_manager: &mut crate::security::FileSecurityManager,
+    yolo_mode: bool,
+) -> Result<ToolResult> {
+    let path = call
+        .arguments
+        .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'path' argument"))?;
 
@@ -487,11 +605,19 @@ pub async fn create_directory(call: &ToolCall, file_security_manager: &mut crate
 
     // Check file security permissions
     if yolo_mode {
-        debug!("YOLO MODE: Bypassing file security for 'create_directory' on '{}'", absolute_path.display());
+        debug!(
+            "YOLO MODE: Bypassing file security for 'create_directory' on '{}'",
+            absolute_path.display()
+        );
     } else {
-        match file_security_manager.check_file_permission("create_directory", &absolute_path.to_string_lossy()) {
+        match file_security_manager
+            .check_file_permission("create_directory", &absolute_path.to_string_lossy())
+        {
             crate::security::FilePermissionResult::Allowed => {
-                debug!("File operation 'create_directory' on '{}' is allowed by security policy", absolute_path.display());
+                debug!(
+                    "File operation 'create_directory' on '{}' is allowed by security policy",
+                    absolute_path.display()
+                );
             }
             crate::security::FilePermissionResult::Denied => {
                 return Ok(ToolResult {
@@ -502,10 +628,16 @@ pub async fn create_directory(call: &ToolCall, file_security_manager: &mut crate
             }
             crate::security::FilePermissionResult::RequiresPermission => {
                 // Ask user for permission
-                match file_security_manager.ask_file_permission("create_directory", &absolute_path.to_string_lossy()).await {
+                match file_security_manager
+                    .ask_file_permission("create_directory", &absolute_path.to_string_lossy())
+                    .await
+                {
                     Ok(Some(_)) => {
                         // User granted permission
-                        info!("User granted permission for directory create operation: {}", absolute_path.display());
+                        info!(
+                            "User granted permission for directory create operation: {}",
+                            absolute_path.display()
+                        );
                     }
                     Ok(None) => {
                         return Ok(ToolResult {
@@ -529,19 +661,32 @@ pub async fn create_directory(call: &ToolCall, file_security_manager: &mut crate
     match fs::create_dir_all(&absolute_path).await {
         Ok(_) => Ok(ToolResult {
             tool_use_id,
-            content: format!("Successfully created directory: {}", absolute_path.display()),
+            content: format!(
+                "Successfully created directory: {}",
+                absolute_path.display()
+            ),
             is_error: false,
         }),
         Err(e) => Ok(ToolResult {
             tool_use_id,
-            content: format!("Error creating directory '{}': {}", absolute_path.display(), e),
+            content: format!(
+                "Error creating directory '{}': {}",
+                absolute_path.display(),
+                e
+            ),
             is_error: true,
-        })
+        }),
     }
 }
 
-pub async fn bash(call: &ToolCall, security_manager: &mut crate::security::BashSecurityManager, yolo_mode: bool) -> Result<ToolResult> {
-    let command = call.arguments.get("command")
+pub async fn bash(
+    call: &ToolCall,
+    security_manager: &mut crate::security::BashSecurityManager,
+    yolo_mode: bool,
+) -> Result<ToolResult> {
+    let command = call
+        .arguments
+        .get("command")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing 'command' argument"))?
         .to_string();
@@ -571,7 +716,10 @@ pub async fn bash(call: &ToolCall, security_manager: &mut crate::security::BashS
                 match security_manager.ask_permission(&command).await {
                     Ok(Some(true)) => {
                         // User granted permission and wants to add to allowlist
-                        info!("User granted permission for command: {} (added to allowlist)", command);
+                        info!(
+                            "User granted permission for command: {} (added to allowlist)",
+                            command
+                        );
                         permissions_updated = true;
                     }
                     Ok(Some(false)) => {
@@ -581,14 +729,20 @@ pub async fn bash(call: &ToolCall, security_manager: &mut crate::security::BashS
                     Ok(None) => {
                         return Ok(ToolResult {
                             tool_use_id,
-                            content: format!("🔒 Security: Permission denied for command '{}'", command),
+                            content: format!(
+                                "🔒 Security: Permission denied for command '{}'",
+                                command
+                            ),
                             is_error: true,
                         });
                     }
                     Err(e) => {
                         return Ok(ToolResult {
                             tool_use_id,
-                            content: format!("🔒 Security: Error checking permission for command '{}': {}", command, e),
+                            content: format!(
+                                "🔒 Security: Error checking permission for command '{}': {}",
+                                command, e
+                            ),
                             is_error: true,
                         });
                     }
@@ -602,32 +756,36 @@ pub async fn bash(call: &ToolCall, security_manager: &mut crate::security::BashS
     match task::spawn_blocking(move || {
         #[cfg(target_os = "windows")]
         {
-            Command::new("cmd")
-                .args(["/C", &command_clone])
-                .output()
+            Command::new("cmd").args(["/C", &command_clone]).output()
         }
         #[cfg(not(target_os = "windows"))]
         {
-            Command::new("bash")
-                .args(["-c", &command_clone])
-                .output()
+            Command::new("bash").args(["-c", &command_clone]).output()
         }
-    }).await
+    })
+    .await
     {
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            
+
             let content = if !stderr.is_empty() {
-                format!("Exit code: {}\nStdout:\n{}\nStderr:\n{}", 
-                    output.status.code().unwrap_or(-1), stdout, stderr)
+                format!(
+                    "Exit code: {}\nStdout:\n{}\nStderr:\n{}",
+                    output.status.code().unwrap_or(-1),
+                    stdout,
+                    stderr
+                )
             } else {
-                format!("Exit code: {}\nOutput:\n{}", 
-                    output.status.code().unwrap_or(-1), stdout)
+                format!(
+                    "Exit code: {}\nOutput:\n{}",
+                    output.status.code().unwrap_or(-1),
+                    stdout
+                )
             };
 
             let mut final_content = content;
-            
+
             // Add a note if permissions were updated
             if permissions_updated {
                 final_content.push_str("\n\n💾 Note: This command has been added to your allowlist and saved to config.");
@@ -648,69 +806,84 @@ pub async fn bash(call: &ToolCall, security_manager: &mut crate::security::BashS
             tool_use_id,
             content: format!("Task join error: {}", e),
             is_error: true,
-        })
+        }),
     }
 }
 
 // Wrapper functions to convert async functions to the expected handler signature
-fn list_directory_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
-    Box::pin(async move {
-        list_directory(&call).await
-    })
+fn list_directory_sync(
+    call: ToolCall,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+    Box::pin(async move { list_directory(&call).await })
 }
 
-fn read_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
-    Box::pin(async move {
-        read_file(&call).await
-    })
+fn read_file_sync(
+    call: ToolCall,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+    Box::pin(async move { read_file(&call).await })
 }
 
-fn write_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+fn write_file_sync(
+    call: ToolCall,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
     Box::pin(async move {
         // For sync wrapper, we need to create a temporary file security manager
         // This should only be used during tool recreation, the actual execution
         // should be handled by the Agent with proper security managers
-        let mut file_security_manager = crate::security::FileSecurityManager::new(crate::security::FileSecurity::default());
+        let mut file_security_manager =
+            crate::security::FileSecurityManager::new(crate::security::FileSecurity::default());
         write_file(&call, &mut file_security_manager, false).await
     })
 }
 
-fn edit_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+fn edit_file_sync(
+    call: ToolCall,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
     Box::pin(async move {
         // For sync wrapper, we need to create a temporary file security manager
         // This should only be used during tool recreation, the actual execution
         // should be handled by the Agent with proper security managers
-        let mut file_security_manager = crate::security::FileSecurityManager::new(crate::security::FileSecurity::default());
+        let mut file_security_manager =
+            crate::security::FileSecurityManager::new(crate::security::FileSecurity::default());
         edit_file(&call, &mut file_security_manager, false).await
     })
 }
 
-fn delete_file_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+fn delete_file_sync(
+    call: ToolCall,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
     Box::pin(async move {
         // For sync wrapper, we need to create a temporary file security manager
         // This should only be used during tool recreation, the actual execution
         // should be handled by the Agent with proper security managers
-        let mut file_security_manager = crate::security::FileSecurityManager::new(crate::security::FileSecurity::default());
+        let mut file_security_manager =
+            crate::security::FileSecurityManager::new(crate::security::FileSecurity::default());
         delete_file(&call, &mut file_security_manager, false).await
     })
 }
 
-fn create_directory_sync(call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+fn create_directory_sync(
+    call: ToolCall,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
     Box::pin(async move {
         // For sync wrapper, we need to create a temporary file security manager
         // This should only be used during tool recreation, the actual execution
         // should be handled by the Agent with proper security managers
-        let mut file_security_manager = crate::security::FileSecurityManager::new(crate::security::FileSecurity::default());
+        let mut file_security_manager =
+            crate::security::FileSecurityManager::new(crate::security::FileSecurity::default());
         create_directory(&call, &mut file_security_manager, false).await
     })
 }
 
-fn bash_sync(_call: ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
+fn bash_sync(
+    _call: ToolCall,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ToolResult>> + Send>> {
     Box::pin(async move {
         // For sync wrapper, we need to create a temporary bash security manager
         // This should only be used during tool recreation, the actual execution
         // should be handled by the Agent with proper security managers
-        let mut bash_security_manager = crate::security::BashSecurityManager::new(crate::security::BashSecurity::default());
+        let mut bash_security_manager =
+            crate::security::BashSecurityManager::new(crate::security::BashSecurity::default());
         bash(&_call, &mut bash_security_manager, false).await
     })
 }
@@ -840,7 +1013,9 @@ pub fn get_builtin_tools() -> Vec<Tool> {
 
 pub fn create_mcp_tool(server_name: &str, mcp_tool: McpTool, mcp_manager: Arc<McpManager>) -> Tool {
     let tool_name = format!("mcp_{}_{}", server_name, mcp_tool.name);
-    let description = mcp_tool.description.unwrap_or_else(|| format!("MCP tool from server: {}", server_name));
+    let description = mcp_tool
+        .description
+        .unwrap_or_else(|| format!("MCP tool from server: {}", server_name));
     let server_name_owned = server_name.to_string();
     let mcp_manager_clone = mcp_manager.clone();
     let tool_name_original = mcp_tool.name.clone();
@@ -851,18 +1026,28 @@ pub fn create_mcp_tool(server_name: &str, mcp_tool: McpTool, mcp_manager: Arc<Mc
     log::info!("   Original tool name: {}", tool_name_original);
     log::info!("   Server: {}", server_name);
     log::info!("   Description: {}", description);
-    
+
     // Debug the raw schema data
-    log::debug!("   Raw input_schema from MCP: {}", serde_json::to_string(&mcp_tool.input_schema).unwrap_or_else(|_| "Invalid JSON".to_string()));
-    log::debug!("   input_schema.is_null(): {}", mcp_tool.input_schema.is_null());
-    log::debug!("   input_schema type: {}", match &mcp_tool.input_schema {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    });
+    log::debug!(
+        "   Raw input_schema from MCP: {}",
+        serde_json::to_string(&mcp_tool.input_schema)
+            .unwrap_or_else(|_| "Invalid JSON".to_string())
+    );
+    log::debug!(
+        "   input_schema.is_null(): {}",
+        mcp_tool.input_schema.is_null()
+    );
+    log::debug!(
+        "   input_schema type: {}",
+        match &mcp_tool.input_schema {
+            Value::Null => "null",
+            Value::Bool(_) => "boolean",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+        }
+    );
 
     // Ensure input_schema is a valid JSON object (not null)
     let input_schema = if mcp_tool.input_schema.is_null() {
@@ -871,11 +1056,18 @@ pub fn create_mcp_tool(server_name: &str, mcp_tool: McpTool, mcp_manager: Arc<Mc
             "properties": {},
             "required": []
         });
-        log::warn!("   ⚠️  Using default schema (MCP tool '{}' had null schema)", tool_name_original);
+        log::warn!(
+            "   ⚠️  Using default schema (MCP tool '{}' had null schema)",
+            tool_name_original
+        );
         default_schema
     } else {
         log::info!("   ✅ Using schema from MCP tool '{}'", tool_name_original);
-        log::debug!("      Schema: {}", serde_json::to_string(&mcp_tool.input_schema).unwrap_or_else(|_| "<Invalid JSON>".to_string()));
+        log::debug!(
+            "      Schema: {}",
+            serde_json::to_string(&mcp_tool.input_schema)
+                .unwrap_or_else(|_| "<Invalid JSON>".to_string())
+        );
         mcp_tool.input_schema
     };
 
@@ -894,28 +1086,42 @@ pub fn create_mcp_tool(server_name: &str, mcp_tool: McpTool, mcp_manager: Arc<Mc
                 log::info!("   Tool: {}", tool_name_original);
                 log::info!("   Server: {}", server_name);
                 log::info!("   Call ID: {}", call.id);
-                
+
                 // Log arguments if present
                 if !call.arguments.is_null() {
-                    log::info!("   Arguments: {}", serde_json::to_string_pretty(&call.arguments).unwrap_or_else(|_| "<Invalid JSON>".to_string()));
+                    log::info!(
+                        "   Arguments: {}",
+                        serde_json::to_string_pretty(&call.arguments)
+                            .unwrap_or_else(|_| "<Invalid JSON>".to_string())
+                    );
                 } else {
                     log::info!("   Arguments: <No arguments>");
                 }
 
                 // Extract the actual tool name from the mcp_ prefix
-                let actual_tool_name = call.name.strip_prefix(&format!("mcp_{}_", server_name))
+                let actual_tool_name = call
+                    .name
+                    .strip_prefix(&format!("mcp_{}_", server_name))
                     .unwrap_or(&tool_name_original);
 
                 log::debug!("   Resolved tool name: {}", actual_tool_name);
 
-                match mcp_manager.call_tool(&server_name, actual_tool_name, Some(call.arguments)).await {
+                match mcp_manager
+                    .call_tool(&server_name, actual_tool_name, Some(call.arguments))
+                    .await
+                {
                     Ok(result) => {
                         log::info!("✅ MCP tool call successful");
-                        log::debug!("   Result: {}", serde_json::to_string_pretty(&result).unwrap_or_else(|_| "<Invalid JSON>".to_string()));
-                        
+                        log::debug!(
+                            "   Result: {}",
+                            serde_json::to_string_pretty(&result)
+                                .unwrap_or_else(|_| "<Invalid JSON>".to_string())
+                        );
+
                         Ok(ToolResult {
                             tool_use_id: call.id,
-                            content: serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Invalid JSON result".to_string()),
+                            content: serde_json::to_string_pretty(&result)
+                                .unwrap_or_else(|_| "Invalid JSON result".to_string()),
                             is_error: false,
                         })
                     }

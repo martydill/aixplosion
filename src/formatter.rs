@@ -1,7 +1,7 @@
-use std::io::{self, Write};
-use colored::*;
 use anyhow::Result;
+use colored::*;
 use regex::Regex;
+use std::io::{self, Write};
 
 pub struct CodeFormatter {
     code_block_regex: Regex,
@@ -108,9 +108,7 @@ impl CodeFormatter {
             let line_num = i + 1;
             let line_num_str = format!("{:>width$}", line_num, width = line_num_width);
 
-            result.push_str(&format!("{} │ ",
-                line_num_str.dimmed().cyan()
-            ));
+            result.push_str(&format!("{} │ ", line_num_str.dimmed().cyan()));
 
             // Apply basic syntax highlighting based on language
             let highlighted_line = self.highlight_line(line, &normalized_lang);
@@ -159,24 +157,39 @@ impl CodeFormatter {
         let mut result = line.to_string();
 
         // Keywords
-        let keywords = ["fn", "let", "mut", "const", "static", "if", "else", "match", "for", "while", "loop", "break", "continue", "return", "struct", "enum", "impl", "trait", "mod", "use", "pub", "crate", "super", "self", "Self", "where", "async", "await", "move", "ref", "unsafe", "extern"];
+        let keywords = [
+            "fn", "let", "mut", "const", "static", "if", "else", "match", "for", "while", "loop",
+            "break", "continue", "return", "struct", "enum", "impl", "trait", "mod", "use", "pub",
+            "crate", "super", "self", "Self", "where", "async", "await", "move", "ref", "unsafe",
+            "extern",
+        ];
         for keyword in &keywords {
             let regex = Regex::new(&format!(r"\b{}\b", regex::escape(keyword))).unwrap();
-            result = regex.replace_all(&result, keyword.bold().blue().to_string()).to_string();
+            result = regex
+                .replace_all(&result, keyword.bold().blue().to_string())
+                .to_string();
         }
 
         // Types
-        let types = ["String", "str", "Vec", "Option", "Result", "Box", "Rc", "Arc", "Cell", "RefCell", "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "f32", "f64", "bool", "char"];
+        let types = [
+            "String", "str", "Vec", "Option", "Result", "Box", "Rc", "Arc", "Cell", "RefCell",
+            "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "f32", "f64",
+            "bool", "char",
+        ];
         for type_name in &types {
             let regex = Regex::new(&format!(r"\b{}\b", regex::escape(type_name))).unwrap();
-            result = regex.replace_all(&result, type_name.bold().cyan().to_string()).to_string();
+            result = regex
+                .replace_all(&result, type_name.bold().cyan().to_string())
+                .to_string();
         }
 
         // Strings
         let string_regex = Regex::new(r#""([^"\\]|\\.)*""#).unwrap();
-        result = string_regex.replace_all(&result, |caps: &regex::Captures| {
-            format!("\"{}\"", &caps[0][1..caps[0].len()-1].green())
-        }).to_string();
+        result = string_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("\"{}\"", &caps[0][1..caps[0].len() - 1].green())
+            })
+            .to_string();
 
         // Comments
         if result.starts_with("//") {
@@ -193,17 +206,28 @@ impl CodeFormatter {
         let mut result = line.to_string();
 
         // Keywords
-        let keywords = ["def", "class", "if", "elif", "else", "for", "while", "try", "except", "finally", "with", "as", "import", "from", "return", "yield", "lambda", "and", "or", "not", "in", "is", "None", "True", "False", "pass", "break", "continue", "global", "nonlocal", "async", "await"];
+        let keywords = [
+            "def", "class", "if", "elif", "else", "for", "while", "try", "except", "finally",
+            "with", "as", "import", "from", "return", "yield", "lambda", "and", "or", "not", "in",
+            "is", "None", "True", "False", "pass", "break", "continue", "global", "nonlocal",
+            "async", "await",
+        ];
         for keyword in &keywords {
             let regex = Regex::new(&format!(r"\b{}\b", regex::escape(keyword))).unwrap();
-            result = regex.replace_all(&result, keyword.bold().blue().to_string()).to_string();
+            result = regex
+                .replace_all(&result, keyword.bold().blue().to_string())
+                .to_string();
         }
 
         // Strings
-        let string_regex = Regex::new(r#"'([^'\\]|\\.)*'|"""([^"\\]|\\.)*"""|"([^"\\]|\\.)*"|"""([^"\\]|\\.)*"""#).unwrap();
-        result = string_regex.replace_all(&result, |caps: &regex::Captures| {
-            caps[0].green().to_string()
-        }).to_string();
+        let string_regex =
+            Regex::new(r#"'([^'\\]|\\.)*'|"""([^"\\]|\\.)*"""|"([^"\\]|\\.)*"|"""([^"\\]|\\.)*"""#)
+                .unwrap();
+        result = string_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                caps[0].green().to_string()
+            })
+            .to_string();
 
         // Comments
         if result.starts_with("#") {
@@ -220,17 +244,58 @@ impl CodeFormatter {
         let mut result = line.to_string();
 
         // Keywords
-        let keywords = ["function", "const", "let", "var", "if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue", "return", "try", "catch", "finally", "throw", "new", "this", "typeof", "instanceof", "in", "of", "class", "extends", "super", "static", "async", "await", "import", "export", "from", "default"];
+        let keywords = [
+            "function",
+            "const",
+            "let",
+            "var",
+            "if",
+            "else",
+            "for",
+            "while",
+            "do",
+            "switch",
+            "case",
+            "default",
+            "break",
+            "continue",
+            "return",
+            "try",
+            "catch",
+            "finally",
+            "throw",
+            "new",
+            "this",
+            "typeof",
+            "instanceof",
+            "in",
+            "of",
+            "class",
+            "extends",
+            "super",
+            "static",
+            "async",
+            "await",
+            "import",
+            "export",
+            "from",
+            "default",
+        ];
         for keyword in &keywords {
             let regex = Regex::new(&format!(r"\b{}\b", regex::escape(keyword))).unwrap();
-            result = regex.replace_all(&result, keyword.bold().blue().to_string()).to_string();
+            result = regex
+                .replace_all(&result, keyword.bold().blue().to_string())
+                .to_string();
         }
 
         // Strings
-        let string_regex = Regex::new(r#"'([^'\\]|\\.)*'|"(?:"([^"\\]|\\.)*")|`([^`\\]|\\.)*`"#).unwrap();
-        result = string_regex.replace_all(&result, |caps: &regex::Captures| {
-            caps[0].green().to_string()
-        }).to_string();
+        let string_regex =
+            Regex::new(r#"'([^'\\]|\\.)*'|"(?:"([^"\\]|\\.)*")|`([^`\\]|\\.)*`"#).unwrap();
+        result = string_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                caps[0].green().to_string()
+            })
+            .to_string();
 
         // Comments
         if result.starts_with("//") {
@@ -248,10 +313,29 @@ impl CodeFormatter {
         let mut result = self.highlight_javascript(line);
 
         // TypeScript specific keywords
-        let ts_keywords = ["interface", "type", "enum", "namespace", "module", "declare", "abstract", "readonly", "private", "public", "protected", "implements", "keyof", "unknown", "never", "any"];
+        let ts_keywords = [
+            "interface",
+            "type",
+            "enum",
+            "namespace",
+            "module",
+            "declare",
+            "abstract",
+            "readonly",
+            "private",
+            "public",
+            "protected",
+            "implements",
+            "keyof",
+            "unknown",
+            "never",
+            "any",
+        ];
         for keyword in &ts_keywords {
             let regex = Regex::new(&format!(r"\b{}\b", regex::escape(keyword))).unwrap();
-            result = regex.replace_all(&result, keyword.bold().magenta().to_string()).to_string();
+            result = regex
+                .replace_all(&result, keyword.bold().magenta().to_string())
+                .to_string();
         }
 
         result
@@ -262,22 +346,28 @@ impl CodeFormatter {
 
         // JSON keys (strings before colons)
         let key_regex = Regex::new(r#""([^"\\]|\\.)*"\s*:"#).unwrap();
-        result = key_regex.replace_all(&result, |caps: &regex::Captures| {
-            let key_part = &caps[0][..caps[0].len()-1];
-            format!("{}:", key_part.bold().cyan())
-        }).to_string();
+        result = key_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                let key_part = &caps[0][..caps[0].len() - 1];
+                format!("{}:", key_part.bold().cyan())
+            })
+            .to_string();
 
         // JSON string values
         let string_regex = Regex::new(r#":\s*"([^"\\]|\\.)*""#).unwrap();
-        result = string_regex.replace_all(&result, |caps: &regex::Captures| {
-            format!(": {}", &caps[0][2..].green())
-        }).to_string();
+        result = string_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!(": {}", &caps[0][2..].green())
+            })
+            .to_string();
 
         // JSON numbers and booleans
         let value_regex = Regex::new(r":\s*(true|false|null|\d+\.?\d*)").unwrap();
-        result = value_regex.replace_all(&result, |caps: &regex::Captures| {
-            format!(": {}", &caps[0][2..].yellow())
-        }).to_string();
+        result = value_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!(": {}", &caps[0][2..].yellow())
+            })
+            .to_string();
 
         result
     }
@@ -293,15 +383,19 @@ impl CodeFormatter {
 
         // YAML string values
         let string_regex = Regex::new(r#":\s*["'][^"']*["']"#).unwrap();
-        result = string_regex.replace_all(&result, |caps: &regex::Captures| {
-            format!(": {}", &caps[0][2..].green())
-        }).to_string();
+        result = string_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!(": {}", &caps[0][2..].green())
+            })
+            .to_string();
 
         // YAML numbers and booleans
         let value_regex = Regex::new(r":\s*(true|false|null|\d+\.?\d*)").unwrap();
-        result = value_regex.replace_all(&result, |caps: &regex::Captures| {
-            format!(": {}", &caps[0][2..].yellow())
-        }).to_string();
+        result = value_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!(": {}", &caps[0][2..].yellow())
+            })
+            .to_string();
 
         result
     }
@@ -311,15 +405,17 @@ impl CodeFormatter {
 
         // HTML tags
         let tag_regex = Regex::new(r"</?[^>]+>").unwrap();
-        result = tag_regex.replace_all(&result, |caps: &regex::Captures| {
-            caps[0].blue().to_string()
-        }).to_string();
+        result = tag_regex
+            .replace_all(&result, |caps: &regex::Captures| caps[0].blue().to_string())
+            .to_string();
 
         // HTML attributes
         let attr_regex = Regex::new(r#"(\w+)=["'][^"']*["']"#).unwrap();
-        result = attr_regex.replace_all(&result, |caps: &regex::Captures| {
-            format!("{}={}", caps[1].cyan(), &caps[0][caps[1].len()..].green())
-        }).to_string();
+        result = attr_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("{}={}", caps[1].cyan(), &caps[0][caps[1].len()..].green())
+            })
+            .to_string();
 
         result
     }
@@ -329,21 +425,25 @@ impl CodeFormatter {
 
         // CSS selectors and properties
         let selector_regex = Regex::new(r"[.#]?[\w-]+\s*\{").unwrap();
-        result = selector_regex.replace_all(&result, |caps: &regex::Captures| {
-            caps[0].bold().blue().to_string()
-        }).to_string();
+        result = selector_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                caps[0].bold().blue().to_string()
+            })
+            .to_string();
 
         // CSS properties
         let prop_regex = Regex::new(r"[\w-]+:").unwrap();
-        result = prop_regex.replace_all(&result, |caps: &regex::Captures| {
-            caps[0].cyan().to_string()
-        }).to_string();
+        result = prop_regex
+            .replace_all(&result, |caps: &regex::Captures| caps[0].cyan().to_string())
+            .to_string();
 
         // CSS values
         let value_regex = Regex::new(r":\s*[^;]+;?").unwrap();
-        result = value_regex.replace_all(&result, |caps: &regex::Captures| {
-            format!(": {}", &caps[0][2..].green())
-        }).to_string();
+        result = value_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!(": {}", &caps[0][2..].green())
+            })
+            .to_string();
 
         result
     }
@@ -352,17 +452,30 @@ impl CodeFormatter {
         let mut result = line.to_string();
 
         // Bash commands
-        let commands = ["if", "then", "else", "elif", "fi", "for", "while", "do", "done", "case", "esac", "function", "return", "exit", "export", "local", "readonly", "declare", "typeset", "alias", "unalias", "cd", "pwd", "ls", "mkdir", "rmdir", "rm", "cp", "mv", "ln", "cat", "less", "more", "head", "tail", "grep", "sed", "awk", "sort", "uniq", "wc", "find", "locate", "which", "whereis", "man", "echo", "printf", "read", "trap", "wait", "jobs", "fg", "bg", "kill", "ps", "top", "df", "du", "free", "uname", "uptime", "date", "cal", "tar", "gzip", "gunzip", "zip", "unzip", "ssh", "scp", "rsync", "git", "make", "gcc", "g++", "python", "python3", "node", "npm", "yarn", "docker", "kubectl"];
+        let commands = [
+            "if", "then", "else", "elif", "fi", "for", "while", "do", "done", "case", "esac",
+            "function", "return", "exit", "export", "local", "readonly", "declare", "typeset",
+            "alias", "unalias", "cd", "pwd", "ls", "mkdir", "rmdir", "rm", "cp", "mv", "ln", "cat",
+            "less", "more", "head", "tail", "grep", "sed", "awk", "sort", "uniq", "wc", "find",
+            "locate", "which", "whereis", "man", "echo", "printf", "read", "trap", "wait", "jobs",
+            "fg", "bg", "kill", "ps", "top", "df", "du", "free", "uname", "uptime", "date", "cal",
+            "tar", "gzip", "gunzip", "zip", "unzip", "ssh", "scp", "rsync", "git", "make", "gcc",
+            "g++", "python", "python3", "node", "npm", "yarn", "docker", "kubectl",
+        ];
         for command in &commands {
             let regex = Regex::new(&format!(r"\b{}\b", regex::escape(command))).unwrap();
-            result = regex.replace_all(&result, command.bold().green().to_string()).to_string();
+            result = regex
+                .replace_all(&result, command.bold().green().to_string())
+                .to_string();
         }
 
         // Strings
         let string_regex = Regex::new(r#"'([^'\\]|\\.)*'|"(?:[^"\\]|\\.)*""#).unwrap();
-        result = string_regex.replace_all(&result, |caps: &regex::Captures| {
-            caps[0].yellow().to_string()
-        }).to_string();
+        result = string_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                caps[0].yellow().to_string()
+            })
+            .to_string();
 
         // Comments
         if result.starts_with("#") {
@@ -376,17 +489,80 @@ impl CodeFormatter {
         let mut result = line.to_string();
 
         // SQL keywords
-        let keywords = ["SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "TABLE", "INDEX", "DATABASE", "SCHEMA", "PRIMARY", "FOREIGN", "KEY", "REFERENCES", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "ON", "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "OFFSET", "UNION", "ALL", "DISTINCT", "COUNT", "SUM", "AVG", "MIN", "MAX", "AND", "OR", "NOT", "IN", "EXISTS", "BETWEEN", "LIKE", "ILIKE", "NULL", "IS", "AS", "CASE", "WHEN", "THEN", "ELSE", "END", "IF", "COALESCE", "CAST", "CONVERT", "TRY_CAST", "TRY_CONVERT"];
+        let keywords = [
+            "SELECT",
+            "FROM",
+            "WHERE",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "CREATE",
+            "ALTER",
+            "DROP",
+            "TABLE",
+            "INDEX",
+            "DATABASE",
+            "SCHEMA",
+            "PRIMARY",
+            "FOREIGN",
+            "KEY",
+            "REFERENCES",
+            "JOIN",
+            "INNER",
+            "LEFT",
+            "RIGHT",
+            "FULL",
+            "OUTER",
+            "ON",
+            "GROUP",
+            "BY",
+            "ORDER",
+            "HAVING",
+            "LIMIT",
+            "OFFSET",
+            "UNION",
+            "ALL",
+            "DISTINCT",
+            "COUNT",
+            "SUM",
+            "AVG",
+            "MIN",
+            "MAX",
+            "AND",
+            "OR",
+            "NOT",
+            "IN",
+            "EXISTS",
+            "BETWEEN",
+            "LIKE",
+            "ILIKE",
+            "NULL",
+            "IS",
+            "AS",
+            "CASE",
+            "WHEN",
+            "THEN",
+            "ELSE",
+            "END",
+            "IF",
+            "COALESCE",
+            "CAST",
+            "CONVERT",
+            "TRY_CAST",
+            "TRY_CONVERT",
+        ];
         for keyword in &keywords {
             let regex = Regex::new(&format!(r"\b{}\b", regex::escape(keyword))).unwrap();
-            result = regex.replace_all(&result, keyword.bold().blue().to_string()).to_string();
+            result = regex
+                .replace_all(&result, keyword.bold().blue().to_string())
+                .to_string();
         }
 
         // SQL identifiers (backticks, brackets, quotes)
         let ident_regex = Regex::new(r#"[`'"\[\]]([^`'"\[\]]*)[`'"\[\]]"#).unwrap();
-        result = ident_regex.replace_all(&result, |caps: &regex::Captures| {
-            caps[0].cyan().to_string()
-        }).to_string();
+        result = ident_regex
+            .replace_all(&result, |caps: &regex::Captures| caps[0].cyan().to_string())
+            .to_string();
 
         result
     }
@@ -398,32 +574,42 @@ impl CodeFormatter {
         if result.starts_with('#') {
             let header_level = result.chars().take_while(|&c| c == '#').count();
             let remaining = &result[header_level..];
-            result = format!("{}{}", "#".repeat(header_level).bold().red(), remaining.bold());
+            result = format!(
+                "{}{}",
+                "#".repeat(header_level).bold().red(),
+                remaining.bold()
+            );
         }
 
         // Bold text
         let bold_regex = Regex::new(r"\*\*([^*]+)\*\*").unwrap();
-        result = bold_regex.replace_all(&result, |caps: &regex::Captures| {
-            caps[0].bold().to_string()
-        }).to_string();
+        result = bold_regex
+            .replace_all(&result, |caps: &regex::Captures| caps[0].bold().to_string())
+            .to_string();
 
         // Italic text
         let italic_regex = Regex::new(r"\*([^*]+)\*").unwrap();
-        result = italic_regex.replace_all(&result, |caps: &regex::Captures| {
-            caps[0].italic().to_string()
-        }).to_string();
+        result = italic_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                caps[0].italic().to_string()
+            })
+            .to_string();
 
         // Code inline
         let code_regex = Regex::new(r"`([^`]+)`").unwrap();
-        result = code_regex.replace_all(&result, |caps: &regex::Captures| {
-            format!("`{}`", caps[1].black().on_white())
-        }).to_string();
+        result = code_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("`{}`", caps[1].black().on_white())
+            })
+            .to_string();
 
         // Links
         let link_regex = Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
-        result = link_regex.replace_all(&result, |caps: &regex::Captures| {
-            format!("[{}]({})", caps[1].blue().underline(), caps[2].dimmed())
-        }).to_string();
+        result = link_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("[{}]({})", caps[1].blue().underline(), caps[2].dimmed())
+            })
+            .to_string();
 
         result
     }
@@ -444,9 +630,11 @@ impl CodeFormatter {
 
         // TOML strings
         let string_regex = Regex::new(r#"="([^"\\]|\\.)*"|'([^'\\]|\\.)*'"#).unwrap();
-        result = string_regex.replace_all(&result, |caps: &regex::Captures| {
-            caps[0].green().to_string()
-        }).to_string();
+        result = string_regex
+            .replace_all(&result, |caps: &regex::Captures| {
+                caps[0].green().to_string()
+            })
+            .to_string();
 
         result
     }
@@ -459,10 +647,65 @@ impl CodeFormatter {
         let mut result = line.to_string();
 
         // C/C++ keywords
-        let keywords = ["int", "char", "float", "double", "void", "long", "short", "unsigned", "signed", "const", "static", "extern", "auto", "register", "volatile", "sizeof", "typedef", "struct", "union", "enum", "if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue", "return", "goto", "include", "define", "ifdef", "ifndef", "endif", "class", "public", "private", "protected", "virtual", "inline", "friend", "operator", "new", "delete", "this", "namespace", "using", "template", "typename"];
+        let keywords = [
+            "int",
+            "char",
+            "float",
+            "double",
+            "void",
+            "long",
+            "short",
+            "unsigned",
+            "signed",
+            "const",
+            "static",
+            "extern",
+            "auto",
+            "register",
+            "volatile",
+            "sizeof",
+            "typedef",
+            "struct",
+            "union",
+            "enum",
+            "if",
+            "else",
+            "for",
+            "while",
+            "do",
+            "switch",
+            "case",
+            "default",
+            "break",
+            "continue",
+            "return",
+            "goto",
+            "include",
+            "define",
+            "ifdef",
+            "ifndef",
+            "endif",
+            "class",
+            "public",
+            "private",
+            "protected",
+            "virtual",
+            "inline",
+            "friend",
+            "operator",
+            "new",
+            "delete",
+            "this",
+            "namespace",
+            "using",
+            "template",
+            "typename",
+        ];
         for keyword in &keywords {
             let regex = Regex::new(&format!(r"\b{}\b", regex::escape(keyword))).unwrap();
-            result = regex.replace_all(&result, keyword.bold().blue().to_string()).to_string();
+            result = regex
+                .replace_all(&result, keyword.bold().blue().to_string())
+                .to_string();
         }
 
         // Preprocessor directives
@@ -484,10 +727,55 @@ impl CodeFormatter {
         let mut result = line.to_string();
 
         // Java keywords
-        let keywords = ["public", "private", "protected", "static", "final", "abstract", "synchronized", "volatile", "transient", "native", "strictfp", "class", "interface", "extends", "implements", "import", "package", "if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue", "return", "throw", "throws", "try", "catch", "finally", "new", "this", "super", "null", "true", "false", "instanceof", "enum", "assert"];
+        let keywords = [
+            "public",
+            "private",
+            "protected",
+            "static",
+            "final",
+            "abstract",
+            "synchronized",
+            "volatile",
+            "transient",
+            "native",
+            "strictfp",
+            "class",
+            "interface",
+            "extends",
+            "implements",
+            "import",
+            "package",
+            "if",
+            "else",
+            "for",
+            "while",
+            "do",
+            "switch",
+            "case",
+            "default",
+            "break",
+            "continue",
+            "return",
+            "throw",
+            "throws",
+            "try",
+            "catch",
+            "finally",
+            "new",
+            "this",
+            "super",
+            "null",
+            "true",
+            "false",
+            "instanceof",
+            "enum",
+            "assert",
+        ];
         for keyword in &keywords {
             let regex = Regex::new(&format!(r"\b{}\b", regex::escape(keyword))).unwrap();
-            result = regex.replace_all(&result, keyword.bold().blue().to_string()).to_string();
+            result = regex
+                .replace_all(&result, keyword.bold().blue().to_string())
+                .to_string();
         }
 
         // Annotations
@@ -502,17 +790,66 @@ impl CodeFormatter {
         let mut result = line.to_string();
 
         // Go keywords
-        let keywords = ["break", "case", "chan", "const", "continue", "default", "defer", "else", "fallthrough", "for", "func", "go", "goto", "if", "import", "interface", "map", "package", "range", "return", "select", "struct", "switch", "type", "var"];
+        let keywords = [
+            "break",
+            "case",
+            "chan",
+            "const",
+            "continue",
+            "default",
+            "defer",
+            "else",
+            "fallthrough",
+            "for",
+            "func",
+            "go",
+            "goto",
+            "if",
+            "import",
+            "interface",
+            "map",
+            "package",
+            "range",
+            "return",
+            "select",
+            "struct",
+            "switch",
+            "type",
+            "var",
+        ];
         for keyword in &keywords {
             let regex = Regex::new(&format!(r"\b{}\b", regex::escape(keyword))).unwrap();
-            result = regex.replace_all(&result, keyword.bold().blue().to_string()).to_string();
+            result = regex
+                .replace_all(&result, keyword.bold().blue().to_string())
+                .to_string();
         }
 
         // Go types
-        let types = ["int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float32", "float64", "complex64", "complex128", "bool", "string", "byte", "rune"];
+        let types = [
+            "int",
+            "int8",
+            "int16",
+            "int32",
+            "int64",
+            "uint",
+            "uint8",
+            "uint16",
+            "uint32",
+            "uint64",
+            "float32",
+            "float64",
+            "complex64",
+            "complex128",
+            "bool",
+            "string",
+            "byte",
+            "rune",
+        ];
         for type_name in &types {
             let regex = Regex::new(&format!(r"\b{}\b", regex::escape(type_name))).unwrap();
-            result = regex.replace_all(&result, type_name.bold().cyan().to_string()).to_string();
+            result = regex
+                .replace_all(&result, type_name.bold().cyan().to_string())
+                .to_string();
         }
 
         result
@@ -557,10 +894,7 @@ impl CodeFormatter {
             result.push_str(&text[last_end..full_match.start()]);
 
             // Add highlighted file reference with background color
-            let highlighted_file = format!(
-                "@{}",
-                file_path.on_bright_blue().white().bold()
-            );
+            let highlighted_file = format!("@{}", file_path.on_bright_blue().white().bold());
             result.push_str(&highlighted_file);
 
             last_end = full_match.end();
