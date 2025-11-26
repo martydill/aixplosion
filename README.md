@@ -28,6 +28,10 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
  - Plan mode
  - Compacting
  - Pasting or referencing images
+ - Custom slash commands
+ - Tui support
+ - Memory editing
+ - Sandboxing 
 
 
 ## Usage
