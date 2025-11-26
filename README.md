@@ -18,6 +18,17 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
  - Conversation history stored in a per-project Sqlite DB
  
 
+## Todo 
+ - Subagents
+ - Session resuming
+ - Git worktrees
+ - Token speedometer
+ - Hooks
+ - Web search tool
+ - Plan mode
+ - Compacting
+ - Pasting or referencing images
+
 
 ## Usage
 ```
