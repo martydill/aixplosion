@@ -857,9 +857,7 @@ impl CodeFormatter {
 
     fn highlight_numbers(&self, text: &str) -> String {
         self.number_regex
-            .replace_all(text, |caps: &regex::Captures| {
-                caps[0].yellow().to_string()
-            })
+            .replace_all(text, |caps: &regex::Captures| caps[0].yellow().to_string())
             .to_string()
     }
 
