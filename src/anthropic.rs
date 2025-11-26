@@ -192,7 +192,7 @@ impl AnthropicClient {
             .await;
     }
 
-    pub async fn create_message_stream<F>(
+    pub async fn create_message_stream(
         &self,
         model: &str,
         messages: Vec<Message>,
@@ -200,12 +200,9 @@ impl AnthropicClient {
         max_tokens: u32,
         temperature: f32,
         system_prompt: Option<&String>,
-        on_content: F,
+        on_content: Arc<dyn Fn(String) + Send + Sync + 'static>,
         cancellation_flag: Arc<AtomicBool>,
-    ) -> Result<AnthropicResponse>
-    where
-        F: Fn(String) + Send + Sync + 'static + Clone,
-    {
+    ) -> Result<AnthropicResponse> {
         // Try the standard endpoint first, then fall back to alternatives if needed
         let endpoints = vec![
             format!("{}/v1/messages", self.base_url),
@@ -371,7 +368,7 @@ impl AnthropicClient {
         }
     }
 
-    async fn try_endpoint_stream<F>(
+    async fn try_endpoint_stream(
         &self,
         endpoint: &str,
         model: &str,
@@ -380,12 +377,9 @@ impl AnthropicClient {
         max_tokens: u32,
         temperature: f32,
         system_prompt: Option<&String>,
-        on_content: F,
+        on_content: Arc<dyn Fn(String) + Send + Sync + 'static>,
         cancellation_flag: Arc<AtomicBool>,
-    ) -> Result<AnthropicResponse>
-    where
-        F: Fn(String) + Send + Sync + 'static + Clone,
-    {
+    ) -> Result<AnthropicResponse> {
         let tool_definitions = if tools.is_empty() {
             None
         } else {
@@ -548,7 +542,7 @@ impl AnthropicClient {
                                                     } else {
                                                         // Regular text content
                                                         current_content.push_str(&text);
-                                                        on_content(text.clone());
+                                                        on_content.as_ref()(text.clone());
                                                     }
                                                 } else if let Some(partial_json) =
                                                     delta.partial_json

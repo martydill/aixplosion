@@ -9,7 +9,7 @@ use crossterm::{
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use env_logger::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -497,6 +497,29 @@ fn redraw_input_line_fast(input: &str, cursor_pos: usize) -> Result<()> {
     Ok(())
 }
 
+fn create_streaming_renderer(
+    formatter: &formatter::CodeFormatter,
+) -> (
+    Arc<Mutex<formatter::StreamingResponseFormatter>>,
+    Arc<dyn Fn(String) + Send + Sync>,
+) {
+    let state = Arc::new(Mutex::new(formatter::StreamingResponseFormatter::new(
+        formatter.clone(),
+    )));
+    let callback_state = Arc::clone(&state);
+    let callback: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |content: String| {
+        if content.is_empty() {
+            return;
+        }
+        if let Ok(mut renderer) = callback_state.lock() {
+            if let Err(e) = renderer.handle_chunk(&content) {
+                eprintln!("{} Streaming formatter error: {}", "Error".red(), e);
+            }
+        }
+    });
+    (state, callback)
+}
+
 /// Process input and handle streaming/non-streaming response
 async fn process_input(
     input: &str,
@@ -507,16 +530,20 @@ async fn process_input(
 ) {
     // Show spinner while processing (only for non-streaming)
     if stream {
+        let (streaming_state, stream_callback) = create_streaming_renderer(formatter);
         let result = agent
             .process_message_with_stream(
                 &input,
-                Some(|content| {
-                    print!("{}", content);
-                    std::io::Write::flush(&mut std::io::stdout()).unwrap();
-                }),
+                Some(Arc::clone(&stream_callback)),
                 cancellation_flag.clone(),
             )
             .await;
+
+        if let Ok(mut renderer) = streaming_state.lock() {
+            if let Err(e) = renderer.finish() {
+                eprintln!("{} Streaming formatter error: {}", "Error".red(), e);
+            }
+        }
 
         match result {
             Ok(_response) => {
@@ -2267,16 +2294,20 @@ async fn main() -> Result<()> {
         // Single message mode
         if cli.stream {
             let cancellation_flag = Arc::new(AtomicBool::new(false));
-            let _response = agent
+            let (streaming_state, stream_callback) = create_streaming_renderer(&formatter);
+            let response = agent
                 .process_message_with_stream(
                     &message,
-                    Some(|content| {
-                        print!("{}", content);
-                        std::io::Write::flush(&mut std::io::stdout()).unwrap();
-                    }),
+                    Some(Arc::clone(&stream_callback)),
                     cancellation_flag,
                 )
-                .await?;
+                .await;
+            if let Ok(mut renderer) = streaming_state.lock() {
+                if let Err(e) = renderer.finish() {
+                    eprintln!("{} Streaming formatter error: {}", "Error".red(), e);
+                }
+            }
+            response?;
             print_usage_stats(&agent);
         } else {
             let cancellation_flag = Arc::new(AtomicBool::new(false));
@@ -2298,16 +2329,20 @@ async fn main() -> Result<()> {
 
         let cancellation_flag = Arc::new(AtomicBool::new(false));
         if cli.stream {
-            let _response = agent
+            let (streaming_state, stream_callback) = create_streaming_renderer(&formatter);
+            let response = agent
                 .process_message_with_stream(
                     trimmed_input,
-                    Some(|content| {
-                        print!("{}", content);
-                        std::io::Write::flush(&mut std::io::stdout()).unwrap();
-                    }),
+                    Some(Arc::clone(&stream_callback)),
                     cancellation_flag,
                 )
-                .await?;
+                .await;
+            if let Ok(mut renderer) = streaming_state.lock() {
+                if let Err(e) = renderer.finish() {
+                    eprintln!("{} Streaming formatter error: {}", "Error".red(), e);
+                }
+            }
+            response?;
             print_usage_stats(&agent);
         } else {
             let spinner = create_spinner();

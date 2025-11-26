@@ -719,19 +719,16 @@ impl Agent {
         message: &str,
         cancellation_flag: Arc<AtomicBool>,
     ) -> Result<String> {
-        self.process_message_with_stream(message, None::<fn(String)>, cancellation_flag)
+        self.process_message_with_stream(message, None, cancellation_flag)
             .await
     }
 
-    pub async fn process_message_with_stream<F>(
+    pub async fn process_message_with_stream(
         &mut self,
         message: &str,
-        on_stream_content: Option<F>,
+        on_stream_content: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
         cancellation_flag: Arc<AtomicBool>,
-    ) -> Result<String>
-    where
-        F: Fn(String) + Send + Sync + 'static + Clone,
-    {
+    ) -> Result<String> {
         // Log incoming user message
         debug!("Processing user message: {}", message);
         debug!("Current conversation length: {}", self.conversation.len());
@@ -809,7 +806,7 @@ impl Agent {
                         4096,
                         0.7,
                         self.system_prompt.as_ref(),
-                        on_content.clone(),
+                        Arc::clone(on_content),
                         cancellation_flag.clone(),
                     )
                     .await?

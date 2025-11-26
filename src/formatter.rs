@@ -6,9 +6,11 @@ use std::io::{self, Write};
 pub struct CodeFormatter {
     code_block_regex: Regex,
     file_regex: Regex,
+    number_regex: Regex,
     cache: std::cell::RefCell<InputHighlightCache>,
 }
 
+#[derive(Clone)]
 struct InputHighlightCache {
     last_input: String,
     last_result: String,
@@ -18,10 +20,12 @@ impl CodeFormatter {
     pub fn new() -> Result<Self> {
         let code_block_regex = Regex::new(r"```(\w*)\n([\s\S]*?)```")?;
         let file_regex = Regex::new(r"@([^\s@]+)")?;
+        let number_regex = Regex::new(r"\b\d+(\.\d+)?\b")?;
 
         Ok(Self {
             code_block_regex,
             file_regex,
+            number_regex,
             cache: std::cell::RefCell::new(InputHighlightCache {
                 last_input: String::new(),
                 last_result: String::new(),
@@ -88,46 +92,42 @@ impl CodeFormatter {
         let normalized_lang = self.normalize_language(lang);
 
         // Add header with language info
-        let header = format!(
+        result.push_str(&self.build_code_block_header(normalized_lang));
+        result.push('\n');
+
+        // Add code content with syntax highlighting
+        for line in code.lines() {
+            let highlighted_line = self.highlight_line(line, normalized_lang);
+            result.push_str(&highlighted_line);
+            result.push('\n');
+        }
+
+        // Add footer
+        result.push_str(&self.build_code_block_footer(normalized_lang));
+        result.push('\n');
+
+        Ok(result)
+    }
+
+    fn build_code_block_header(&self, normalized_lang: &str) -> String {
+        format!(
             "{}{} {} {}{}",
             "┌".bold().cyan(),
             " ".repeat(2),
             normalized_lang.to_uppercase().bold().white(),
             " ".repeat(2),
             "┐".bold().cyan()
-        );
-        result.push_str(&header);
-        result.push('\n');
+        )
+    }
 
-        // Add code content with line numbers and syntax highlighting
-        let lines: Vec<&str> = code.lines().collect();
-        let max_line_num = lines.len();
-        let line_num_width = max_line_num.to_string().len();
-
-        for (i, line) in lines.iter().enumerate() {
-            let line_num = i + 1;
-            let line_num_str = format!("{:>width$}", line_num, width = line_num_width);
-
-            result.push_str(&format!("{} │ ", line_num_str.dimmed().cyan()));
-
-            // Apply basic syntax highlighting based on language
-            let highlighted_line = self.highlight_line(line, &normalized_lang);
-            result.push_str(&highlighted_line);
-            result.push('\n');
-        }
-
-        // Add footer
-        let footer_width = line_num_width + 4 + normalized_lang.len();
-        let footer = format!(
+    fn build_code_block_footer(&self, normalized_lang: &str) -> String {
+        let footer_width = normalized_lang.len() + 6;
+        format!(
             "{}{}{}",
             "└".bold().cyan(),
             "─".repeat(footer_width).cyan(),
             "┘".bold().cyan()
-        );
-        result.push_str(&footer);
-        result.push('\n');
-
-        Ok(result)
+        )
     }
 
     fn highlight_line(&self, line: &str, lang: &str) -> String {
@@ -148,13 +148,13 @@ impl CodeFormatter {
             "c" | "cpp" | "c++" => self.highlight_c_cpp(line),
             "java" => self.highlight_java(line),
             "go" => self.highlight_go(line),
-            _ => line.normal().to_string(),
+            _ => self.highlight_numbers(line),
         }
     }
 
     // Basic syntax highlighting for various languages
     fn highlight_rust(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // Keywords
         let keywords = [
@@ -203,7 +203,7 @@ impl CodeFormatter {
     }
 
     fn highlight_python(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // Keywords
         let keywords = [
@@ -241,7 +241,7 @@ impl CodeFormatter {
     }
 
     fn highlight_javascript(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // Keywords
         let keywords = [
@@ -401,7 +401,7 @@ impl CodeFormatter {
     }
 
     fn highlight_html(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // HTML tags
         let tag_regex = Regex::new(r"</?[^>]+>").unwrap();
@@ -421,7 +421,7 @@ impl CodeFormatter {
     }
 
     fn highlight_css(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // CSS selectors and properties
         let selector_regex = Regex::new(r"[.#]?[\w-]+\s*\{").unwrap();
@@ -449,7 +449,7 @@ impl CodeFormatter {
     }
 
     fn highlight_bash(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // Bash commands
         let commands = [
@@ -486,7 +486,7 @@ impl CodeFormatter {
     }
 
     fn highlight_sql(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // SQL keywords
         let keywords = [
@@ -568,7 +568,7 @@ impl CodeFormatter {
     }
 
     fn highlight_markdown(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // Headers
         if result.starts_with('#') {
@@ -615,7 +615,7 @@ impl CodeFormatter {
     }
 
     fn highlight_toml(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // TOML sections
         if result.starts_with('[') && result.ends_with(']') {
@@ -644,7 +644,7 @@ impl CodeFormatter {
     }
 
     fn highlight_c_cpp(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // C/C++ keywords
         let keywords = [
@@ -724,7 +724,7 @@ impl CodeFormatter {
     }
 
     fn highlight_java(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // Java keywords
         let keywords = [
@@ -787,7 +787,7 @@ impl CodeFormatter {
     }
 
     fn highlight_go(&self, line: &str) -> String {
-        let mut result = line.to_string();
+        let mut result = self.highlight_numbers(line);
 
         // Go keywords
         let keywords = [
@@ -855,6 +855,14 @@ impl CodeFormatter {
         result
     }
 
+    fn highlight_numbers(&self, text: &str) -> String {
+        self.number_regex
+            .replace_all(text, |caps: &regex::Captures| {
+                caps[0].yellow().to_string()
+            })
+            .to_string()
+    }
+
     fn normalize_language<'a>(&self, lang: &'a str) -> &'a str {
         match lang.to_lowercase().as_str() {
             "js" => "javascript",
@@ -869,6 +877,7 @@ impl CodeFormatter {
             "c" => "c",
             "cpp" | "cxx" | "cc" => "cpp",
             "md" => "markdown",
+            "" => "text",
             _ => lang,
         }
     }
@@ -909,4 +918,121 @@ impl CodeFormatter {
 
 pub fn create_code_formatter() -> Result<CodeFormatter> {
     CodeFormatter::new()
+}
+
+impl Clone for CodeFormatter {
+    fn clone(&self) -> Self {
+        Self {
+            code_block_regex: self.code_block_regex.clone(),
+            file_regex: self.file_regex.clone(),
+            number_regex: self.number_regex.clone(),
+            cache: std::cell::RefCell::new(self.cache.borrow().clone()),
+        }
+    }
+}
+
+pub struct StreamingResponseFormatter {
+    formatter: CodeFormatter,
+    pending_line: String,
+    in_code_block: bool,
+    current_lang: String,
+}
+
+impl StreamingResponseFormatter {
+    pub fn new(formatter: CodeFormatter) -> Self {
+        Self {
+            formatter,
+            pending_line: String::new(),
+            in_code_block: false,
+            current_lang: "text".to_string(),
+        }
+    }
+
+    pub fn handle_chunk(&mut self, chunk: &str) -> Result<()> {
+        if chunk.is_empty() {
+            return Ok(());
+        }
+
+        self.pending_line.push_str(chunk);
+
+        while let Some(pos) = self.pending_line.find('\n') {
+            let line = self.pending_line[..pos].to_string();
+            self.pending_line.drain(..=pos);
+            self.process_complete_line(line.trim_end_matches('\r'))?;
+        }
+
+        io::stdout().flush()?;
+        Ok(())
+    }
+
+    pub fn finish(&mut self) -> Result<()> {
+        if !self.pending_line.is_empty() {
+            if self.in_code_block {
+                let highlighted = self
+                    .formatter
+                    .highlight_line(&self.pending_line, &self.current_lang);
+                println!("{}", highlighted);
+            } else {
+                print!("{}", self.pending_line);
+            }
+            self.pending_line.clear();
+        }
+
+        if self.in_code_block {
+            println!(
+                "{}",
+                self.formatter.build_code_block_footer(&self.current_lang)
+            );
+            self.in_code_block = false;
+        }
+
+        io::stdout().flush()?;
+        Ok(())
+    }
+
+    fn process_complete_line(&mut self, line: &str) -> Result<()> {
+        if self.in_code_block {
+            self.handle_code_line(line);
+        } else {
+            self.handle_plain_line(line)?;
+        }
+        Ok(())
+    }
+
+    fn handle_plain_line(&mut self, line: &str) -> Result<()> {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            let lang = trimmed.trim_start_matches("```").trim();
+            self.start_code_block(lang);
+        } else {
+            println!("{}", line);
+        }
+        Ok(())
+    }
+
+    fn handle_code_line(&mut self, line: &str) {
+        if line.trim() == "```" {
+            println!(
+                "{}",
+                self.formatter.build_code_block_footer(&self.current_lang)
+            );
+            self.in_code_block = false;
+            return;
+        }
+
+        let highlighted = self.formatter.highlight_line(line, &self.current_lang);
+        println!("{}", highlighted);
+    }
+
+    fn start_code_block(&mut self, lang: &str) {
+        let normalized = self.formatter.normalize_language(lang);
+        let language = if normalized.is_empty() {
+            "text"
+        } else {
+            normalized
+        };
+        self.current_lang = language.to_string();
+        println!("{}", self.formatter.build_code_block_header(language));
+        self.in_code_block = true;
+    }
 }
