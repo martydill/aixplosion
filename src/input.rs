@@ -5,10 +5,16 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     terminal, ExecutableCommand, QueueableCommand,
 };
+use std::cell::Cell;
 use std::io::{self, Write};
+use std::thread_local;
 
 use crate::autocomplete;
 use crate::formatter;
+
+thread_local! {
+    static LAST_RENDERED_LINES: Cell<usize> = Cell::new(1);
+}
 
 #[cfg(test)]
 mod tests {
@@ -139,6 +145,9 @@ pub fn read_input_with_completion_and_highlighting(
 
     let mut input = String::new();
     let mut cursor_pos = 0;
+
+    // Reset render tracking when starting a new prompt
+    LAST_RENDERED_LINES.with(|cell| cell.set(1));
 
     // Clear any previous input and display fresh prompt
     redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
@@ -417,38 +426,71 @@ pub fn read_multiline_input(
     Ok(final_input)
 }
 
-/// Redraw the input line with file highlighting and proper cursor positioning
-fn redraw_input_line_with_highlighting(
+fn calculate_line_usage(content_len: usize, prompt_len: usize, terminal_width: usize) -> usize {
+    let width = terminal_width.max(1);
+    ((prompt_len + content_len).saturating_sub(1) / width) + 1
+}
+
+fn clear_previous_render(stdout: &mut impl Write, lines_rendered: usize) -> Result<()> {
+    use crossterm::{cursor::MoveToColumn, cursor::MoveUp, terminal::Clear, terminal::ClearType};
+
+    if lines_rendered > 1 {
+        let lines_to_clear = lines_rendered.saturating_sub(1).min(u16::MAX as usize) as u16;
+        if lines_to_clear > 0 {
+            stdout.queue(MoveUp(lines_to_clear))?;
+        }
+    }
+    stdout
+        .queue(MoveToColumn(0))?
+        .queue(Clear(ClearType::FromCursorDown))?;
+
+    Ok(())
+}
+
+fn redraw_input_line(
     input: &str,
     cursor_pos: usize,
     formatter: Option<&formatter::CodeFormatter>,
+    use_highlighting: bool,
 ) -> Result<()> {
     use crossterm::{
-        cursor::MoveToColumn,
+        cursor::{MoveToColumn, MoveUp},
         style::{Print, ResetColor},
-        terminal::Clear,
+        terminal,
     };
 
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
 
-    // Clear the current line and move to start
-    stdout
-        .queue(Clear(crossterm::terminal::ClearType::CurrentLine))?
-        .queue(MoveToColumn(0))?;
+    let terminal_width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80).max(1);
+    let prompt_length = 2; // "> " length
+    let visible_len = input.chars().count();
+    let cursor_visible = input.chars().take(cursor_pos).count();
+
+    let total_lines = calculate_line_usage(visible_len, prompt_length, terminal_width);
+    let cursor_line = (prompt_length + cursor_visible) / terminal_width;
+    let cursor_column = (prompt_length + cursor_visible) % terminal_width;
+
+    let previous_lines = LAST_RENDERED_LINES.with(|cell| {
+        let prev = cell.get();
+        cell.set(total_lines);
+        prev.max(1)
+    });
+
+    clear_previous_render(&mut stdout, previous_lines)?;
 
     // Display prompt
     stdout.queue(Print("> "))?;
 
-    // Store the current cursor position relative to the start of input text
-    let prompt_length = 2; // "> " length
-
-    // Only apply highlighting if formatter is available AND input contains @file references
-    // This is a huge optimization - we avoid regex for most input
-    if let Some(fmt) = formatter {
-        if input.contains('@') {
-            let highlighted_text = fmt.format_input_with_file_highlighting(input);
-            stdout.queue(Print(highlighted_text))?;
+    if use_highlighting {
+        // Only apply highlighting if formatter is available AND input contains @file references
+        if let Some(fmt) = formatter {
+            if input.contains('@') {
+                let highlighted_text = fmt.format_input_with_file_highlighting(input);
+                stdout.queue(Print(highlighted_text))?;
+            } else {
+                stdout.queue(Print(input))?;
+            }
         } else {
             stdout.queue(Print(input))?;
         }
@@ -456,53 +498,33 @@ fn redraw_input_line_with_highlighting(
         stdout.queue(Print(input))?;
     }
 
-    // Move cursor to the correct position
-    // We need to account for the fact that ANSI escape codes don't move the cursor
-    // So we calculate the visual position based on the actual characters before cursor
-    let chars_before_cursor = input.chars().take(cursor_pos).count();
+    // After printing the full input, we're on the last rendered line.
+    // Move up to the correct line and column for the cursor.
+    let lines_to_move_up = total_lines
+        .saturating_sub(cursor_line + 1)
+        .min(u16::MAX as usize);
+    if lines_to_move_up > 0 {
+        stdout.queue(MoveUp(lines_to_move_up as u16))?;
+    }
 
-    // Move to the position after the prompt + characters before cursor
     stdout
-        .queue(MoveToColumn(prompt_length + chars_before_cursor as u16))?
+        .queue(MoveToColumn(cursor_column as u16))?
         .queue(ResetColor)?
         .flush()?;
 
     Ok(())
 }
 
+/// Redraw the input line with file highlighting and proper cursor positioning
+fn redraw_input_line_with_highlighting(
+    input: &str,
+    cursor_pos: usize,
+    formatter: Option<&formatter::CodeFormatter>,
+) -> Result<()> {
+    redraw_input_line(input, cursor_pos, formatter, true)
+}
+
 /// Fast redraw without highlighting for cursor movements (up/down arrows, etc.)
 fn redraw_input_line_fast(input: &str, cursor_pos: usize) -> Result<()> {
-    use crossterm::{
-        cursor::MoveToColumn,
-        style::{Print, ResetColor},
-        terminal::Clear,
-    };
-
-    let stdout = io::stdout();
-    let mut stdout = stdout.lock();
-
-    // Clear the current line and move to start
-    stdout
-        .queue(Clear(crossterm::terminal::ClearType::CurrentLine))?
-        .queue(MoveToColumn(0))?;
-
-    // Display prompt
-    stdout.queue(Print("> "))?;
-
-    // Print input without highlighting (much faster)
-    stdout.queue(Print(input))?;
-
-    // Store the current cursor position relative to the start of input text
-    let prompt_length = 2; // "> " length
-
-    // Move cursor to the correct position
-    let chars_before_cursor = input.chars().take(cursor_pos).count();
-
-    // Move to the position after the prompt + characters before cursor
-    stdout
-        .queue(MoveToColumn(prompt_length + chars_before_cursor as u16))?
-        .queue(ResetColor)?
-        .flush()?;
-
-    Ok(())
+    redraw_input_line(input, cursor_pos, None, false)
 }
