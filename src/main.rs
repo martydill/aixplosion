@@ -15,6 +15,7 @@ mod agent;
 mod anthropic;
 mod autocomplete;
 mod config;
+mod conversation;
 mod database;
 mod formatter;
 mod input;

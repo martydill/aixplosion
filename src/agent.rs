@@ -3,23 +3,23 @@ use crate::security::{BashSecurityManager, FileSecurityManager};
 use anyhow::Result;
 use colored::*;
 use log::{debug, error, info, warn};
-use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::anthropic::{AnthropicClient, ContentBlock, Message, Usage};
 use crate::config::Config;
+use crate::conversation::ConversationManager;
 use crate::database::DatabaseManager;
 use crate::tool_display::{
     should_use_pretty_output, SimpleToolDisplay, ToolCallDisplay, ToolDisplay,
 };
 use crate::tools::{
-    bash, create_directory, delete_file, edit_file, get_builtin_tools, write_file, Tool, ToolCall,
-    ToolResult,
+    bash, create_bash_tool, create_create_directory_tool, create_delete_file_tool,
+    create_directory, create_edit_file_tool, create_write_file_tool, delete_file, edit_file,
+    get_builtin_tools, write_file, Tool, ToolCall, ToolResult,
 };
 
 #[derive(Debug, Clone)]
@@ -59,16 +59,13 @@ pub struct Agent {
     client: AnthropicClient,
     model: String,
     tools: Arc<RwLock<HashMap<String, Tool>>>,
-    conversation: Vec<Message>,
+    conversation_manager: ConversationManager,
     token_usage: TokenUsage,
-    system_prompt: Option<String>,
     mcp_manager: Option<Arc<McpManager>>,
     last_mcp_tools_version: u64,
     bash_security_manager: Arc<RwLock<BashSecurityManager>>,
     file_security_manager: Arc<RwLock<FileSecurityManager>>,
     yolo_mode: bool,
-    database_manager: Option<Arc<DatabaseManager>>,
-    current_conversation_id: Option<String>,
 }
 
 impl Agent {
@@ -88,6 +85,10 @@ impl Agent {
         let file_security_manager = Arc::new(RwLock::new(FileSecurityManager::new(
             config.file_security.clone(),
         )));
+
+        // Create conversation manager
+        let conversation_manager =
+            ConversationManager::new(config.default_system_prompt, None, model.clone());
 
         // Add bash tool with security to the initial tools
         let security_manager = bash_security_manager.clone();
@@ -136,16 +137,13 @@ impl Agent {
             client,
             model,
             tools: Arc::new(RwLock::new(tools)),
-            conversation: Vec::new(),
+            conversation_manager,
             token_usage: TokenUsage::new(),
-            system_prompt: None,
             mcp_manager: None,
             last_mcp_tools_version: 0,
             bash_security_manager,
             file_security_manager,
             yolo_mode,
-            database_manager: None,
-            current_conversation_id: None,
         }
     }
 
@@ -155,7 +153,7 @@ impl Agent {
     }
 
     pub fn with_database_manager(mut self, database_manager: Arc<DatabaseManager>) -> Self {
-        self.database_manager = Some(database_manager);
+        self.conversation_manager.database_manager = Some(database_manager);
         self
     }
 
@@ -179,224 +177,27 @@ impl Agent {
             let mut tools = self.tools.write().await;
             tools.retain(|name, _| !name.starts_with("mcp_"));
 
-            // Add bash tool with security
-            let security_manager = self.bash_security_manager.clone();
-            let yolo_mode = self.yolo_mode;
-            tools.insert("bash".to_string(), Tool {
-                name: "bash".to_string(),
-                description: if yolo_mode {
-                    "Execute shell commands and return the output (YOLO MODE - no security checks)".to_string()
-                } else {
-                    "Execute shell commands and return the output (with security)".to_string()
-                },
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "command": {
-                            "type": "string",
-                            "description": "Shell command to execute"
-                        }
-                    },
-                    "required": ["command"]
-                }),
-                handler: Box::new(move |call: ToolCall| {
-                    let security_manager = security_manager.clone();
-                    let yolo_mode = yolo_mode;
-                    Box::pin(async move {
-                        // Create a wrapper function that handles the mutable reference
-                        async fn bash_wrapper(
-                            call: ToolCall,
-                            security_manager: Arc<RwLock<BashSecurityManager>>,
-                            yolo_mode: bool,
-                        ) -> Result<ToolResult> {
-                            let mut manager = security_manager.write().await;
-                            bash(&call, &mut *manager, yolo_mode).await
-                        }
-                        
-                        bash_wrapper(call, security_manager, yolo_mode).await
-                    })
-                }),
-            });
+            // Add bash tool with security using centralized function
+            let bash_tool = create_bash_tool(self.bash_security_manager.clone(), self.yolo_mode);
+            tools.insert("bash".to_string(), bash_tool);
 
             // Add file operation tools with security
             let file_security_manager = self.file_security_manager.clone();
             let yolo_mode = self.yolo_mode;
 
-            // write_file tool
-            let file_security_manager_clone = file_security_manager.clone();
-            tools.insert(
-                "write_file".to_string(),
-                Tool {
-                    name: "write_file".to_string(),
-                    description: if yolo_mode {
-                        "Write content to a file (YOLO MODE - no security checks)".to_string()
-                    } else {
-                        "Write content to a file (creates file if it doesn't exist)".to_string()
-                    },
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "Path to the file to write"
-                            },
-                            "content": {
-                                "type": "string",
-                                "description": "Content to write to the file"
-                            }
-                        },
-                        "required": ["path", "content"]
-                    }),
-                    handler: Box::new(move |call: ToolCall| {
-                        let file_security_manager = file_security_manager_clone.clone();
-                        let yolo_mode = yolo_mode;
-                        Box::pin(async move {
-                            // Create a wrapper function that handles the mutable reference
-                            async fn write_file_wrapper(
-                                call: ToolCall,
-                                file_security_manager: Arc<RwLock<FileSecurityManager>>,
-                                yolo_mode: bool,
-                            ) -> Result<ToolResult> {
-                                let mut manager = file_security_manager.write().await;
-                                write_file(&call, &mut *manager, yolo_mode).await
-                            }
+            let write_file_tool = create_write_file_tool(file_security_manager.clone(), yolo_mode);
+            tools.insert("write_file".to_string(), write_file_tool);
 
-                            write_file_wrapper(call, file_security_manager, yolo_mode).await
-                        })
-                    }),
-                },
-            );
+            let edit_file_tool = create_edit_file_tool(file_security_manager.clone(), yolo_mode);
+            tools.insert("edit_file".to_string(), edit_file_tool);
 
-            // edit_file tool
-            let file_security_manager_clone = file_security_manager.clone();
-            tools.insert(
-                "edit_file".to_string(),
-                Tool {
-                    name: "edit_file".to_string(),
-                    description: if yolo_mode {
-                        "Edit a file (YOLO MODE - no security checks)".to_string()
-                    } else {
-                        "Replace specific text in a file with new text".to_string()
-                    },
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "Path to the file to edit"
-                            },
-                            "old_text": {
-                                "type": "string",
-                                "description": "Text to replace"
-                            },
-                            "new_text": {
-                                "type": "string",
-                                "description": "New text to replace with"
-                            }
-                        },
-                        "required": ["path", "old_text", "new_text"]
-                    }),
-                    handler: Box::new(move |call: ToolCall| {
-                        let file_security_manager = file_security_manager_clone.clone();
-                        let yolo_mode = yolo_mode;
-                        Box::pin(async move {
-                            // Create a wrapper function that handles the mutable reference
-                            async fn edit_file_wrapper(
-                                call: ToolCall,
-                                file_security_manager: Arc<RwLock<FileSecurityManager>>,
-                                yolo_mode: bool,
-                            ) -> Result<ToolResult> {
-                                let mut manager = file_security_manager.write().await;
-                                edit_file(&call, &mut *manager, yolo_mode).await
-                            }
+            let delete_file_tool =
+                create_delete_file_tool(file_security_manager.clone(), yolo_mode);
+            tools.insert("delete_file".to_string(), delete_file_tool);
 
-                            edit_file_wrapper(call, file_security_manager, yolo_mode).await
-                        })
-                    }),
-                },
-            );
-
-            // delete_file tool
-            let file_security_manager_clone = file_security_manager.clone();
-            tools.insert(
-                "delete_file".to_string(),
-                Tool {
-                    name: "delete_file".to_string(),
-                    description: if yolo_mode {
-                        "Delete a file or directory (YOLO MODE - no security checks)".to_string()
-                    } else {
-                        "Delete a file or directory".to_string()
-                    },
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "Path to the file or directory to delete"
-                            }
-                        },
-                        "required": ["path"]
-                    }),
-                    handler: Box::new(move |call: ToolCall| {
-                        let file_security_manager = file_security_manager_clone.clone();
-                        let yolo_mode = yolo_mode;
-                        Box::pin(async move {
-                            // Create a wrapper function that handles the mutable reference
-                            async fn delete_file_wrapper(
-                                call: ToolCall,
-                                file_security_manager: Arc<RwLock<FileSecurityManager>>,
-                                yolo_mode: bool,
-                            ) -> Result<ToolResult> {
-                                let mut manager = file_security_manager.write().await;
-                                delete_file(&call, &mut *manager, yolo_mode).await
-                            }
-
-                            delete_file_wrapper(call, file_security_manager, yolo_mode).await
-                        })
-                    }),
-                },
-            );
-
-            // create_directory tool
-            let file_security_manager_clone = file_security_manager.clone();
-            tools.insert(
-                "create_directory".to_string(),
-                Tool {
-                    name: "create_directory".to_string(),
-                    description: if yolo_mode {
-                        "Create a directory (YOLO MODE - no security checks)".to_string()
-                    } else {
-                        "Create a directory (and parent directories if needed)".to_string()
-                    },
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "Path to the directory to create"
-                            }
-                        },
-                        "required": ["path"]
-                    }),
-                    handler: Box::new(move |call: ToolCall| {
-                        let file_security_manager = file_security_manager_clone.clone();
-                        let yolo_mode = yolo_mode;
-                        Box::pin(async move {
-                            // Create a wrapper function that handles the mutable reference
-                            async fn create_directory_wrapper(
-                                call: ToolCall,
-                                file_security_manager: Arc<RwLock<FileSecurityManager>>,
-                                yolo_mode: bool,
-                            ) -> Result<ToolResult> {
-                                let mut manager = file_security_manager.write().await;
-                                create_directory(&call, &mut *manager, yolo_mode).await
-                            }
-
-                            create_directory_wrapper(call, file_security_manager, yolo_mode).await
-                        })
-                    }),
-                },
-            );
+            let create_directory_tool =
+                create_create_directory_tool(file_security_manager.clone(), yolo_mode);
+            tools.insert("create_directory".to_string(), create_directory_tool);
 
             // Get all MCP tools
             match mcp_manager.get_all_tools().await {
@@ -436,43 +237,9 @@ impl Agent {
             // Even without MCP manager, ensure bash and file tools are available
             let mut tools = self.tools.write().await;
             if !tools.contains_key("bash") {
-                let security_manager = self.bash_security_manager.clone();
-                let yolo_mode = self.yolo_mode;
-                tools.insert("bash".to_string(), Tool {
-                    name: "bash".to_string(),
-                    description: if yolo_mode {
-                        "Execute shell commands and return the output (YOLO MODE - no security checks)".to_string()
-                    } else {
-                        "Execute shell commands and return the output (with security)".to_string()
-                    },
-                    input_schema: json!({
-                        "type": "object",
-                        "properties": {
-                            "command": {
-                                "type": "string",
-                                "description": "Shell command to execute"
-                            }
-                        },
-                        "required": ["command"]
-                    }),
-                    handler: Box::new(move |call: ToolCall| {
-                        let security_manager = security_manager.clone();
-                        let yolo_mode = yolo_mode;
-                        Box::pin(async move {
-                            // Create a wrapper function that handles the mutable reference
-                            async fn bash_wrapper(
-                                call: ToolCall,
-                                security_manager: Arc<RwLock<BashSecurityManager>>,
-                                yolo_mode: bool,
-                            ) -> Result<ToolResult> {
-                                let mut manager = security_manager.write().await;
-                                bash(&call, &mut *manager, yolo_mode).await
-                            }
-                            
-                            bash_wrapper(call, security_manager, yolo_mode).await
-                        })
-                    }),
-                });
+                let bash_tool =
+                    create_bash_tool(self.bash_security_manager.clone(), self.yolo_mode);
+                tools.insert("bash".to_string(), bash_tool);
             }
 
             // Ensure file operation tools are available
@@ -480,185 +247,27 @@ impl Agent {
             let yolo_mode = self.yolo_mode;
 
             if !tools.contains_key("write_file") {
-                let file_security_manager_clone = file_security_manager.clone();
-                tools.insert(
-                    "write_file".to_string(),
-                    Tool {
-                        name: "write_file".to_string(),
-                        description: if yolo_mode {
-                            "Write content to a file (YOLO MODE - no security checks)".to_string()
-                        } else {
-                            "Write content to a file (creates file if it doesn't exist)".to_string()
-                        },
-                        input_schema: json!({
-                            "type": "object",
-                            "properties": {
-                                "path": {
-                                    "type": "string",
-                                    "description": "Path to the file to write"
-                                },
-                                "content": {
-                                    "type": "string",
-                                    "description": "Content to write to the file"
-                                }
-                            },
-                            "required": ["path", "content"]
-                        }),
-                        handler: Box::new(move |call: ToolCall| {
-                            let file_security_manager = file_security_manager_clone.clone();
-                            let yolo_mode = yolo_mode;
-                            Box::pin(async move {
-                                // Create a wrapper function that handles the mutable reference
-                                async fn write_file_wrapper(
-                                    call: ToolCall,
-                                    file_security_manager: Arc<RwLock<FileSecurityManager>>,
-                                    yolo_mode: bool,
-                                ) -> Result<ToolResult> {
-                                    let mut manager = file_security_manager.write().await;
-                                    write_file(&call, &mut *manager, yolo_mode).await
-                                }
-
-                                write_file_wrapper(call, file_security_manager, yolo_mode).await
-                            })
-                        }),
-                    },
-                );
+                let write_file_tool =
+                    create_write_file_tool(file_security_manager.clone(), yolo_mode);
+                tools.insert("write_file".to_string(), write_file_tool);
             }
 
             if !tools.contains_key("edit_file") {
-                let file_security_manager_clone = file_security_manager.clone();
-                tools.insert(
-                    "edit_file".to_string(),
-                    Tool {
-                        name: "edit_file".to_string(),
-                        description: if yolo_mode {
-                            "Edit a file (YOLO MODE - no security checks)".to_string()
-                        } else {
-                            "Replace specific text in a file with new text".to_string()
-                        },
-                        input_schema: json!({
-                            "type": "object",
-                            "properties": {
-                                "path": {
-                                    "type": "string",
-                                    "description": "Path to the file to edit"
-                                },
-                                "old_text": {
-                                    "type": "string",
-                                    "description": "Text to replace"
-                                },
-                                "new_text": {
-                                    "type": "string",
-                                    "description": "New text to replace with"
-                                }
-                            },
-                            "required": ["path", "old_text", "new_text"]
-                        }),
-                        handler: Box::new(move |call: ToolCall| {
-                            let file_security_manager = file_security_manager_clone.clone();
-                            let yolo_mode = yolo_mode;
-                            Box::pin(async move {
-                                // Create a wrapper function that handles the mutable reference
-                                async fn edit_file_wrapper(
-                                    call: ToolCall,
-                                    file_security_manager: Arc<RwLock<FileSecurityManager>>,
-                                    yolo_mode: bool,
-                                ) -> Result<ToolResult> {
-                                    let mut manager = file_security_manager.write().await;
-                                    edit_file(&call, &mut *manager, yolo_mode).await
-                                }
-
-                                edit_file_wrapper(call, file_security_manager, yolo_mode).await
-                            })
-                        }),
-                    },
-                );
+                let edit_file_tool =
+                    create_edit_file_tool(file_security_manager.clone(), yolo_mode);
+                tools.insert("edit_file".to_string(), edit_file_tool);
             }
 
             if !tools.contains_key("delete_file") {
-                let file_security_manager_clone = file_security_manager.clone();
-                tools.insert(
-                    "delete_file".to_string(),
-                    Tool {
-                        name: "delete_file".to_string(),
-                        description: if yolo_mode {
-                            "Delete a file or directory (YOLO MODE - no security checks)"
-                                .to_string()
-                        } else {
-                            "Delete a file or directory".to_string()
-                        },
-                        input_schema: json!({
-                            "type": "object",
-                            "properties": {
-                                "path": {
-                                    "type": "string",
-                                    "description": "Path to the file or directory to delete"
-                                }
-                            },
-                            "required": ["path"]
-                        }),
-                        handler: Box::new(move |call: ToolCall| {
-                            let file_security_manager = file_security_manager_clone.clone();
-                            let yolo_mode = yolo_mode;
-                            Box::pin(async move {
-                                // Create a wrapper function that handles the mutable reference
-                                async fn delete_file_wrapper(
-                                    call: ToolCall,
-                                    file_security_manager: Arc<RwLock<FileSecurityManager>>,
-                                    yolo_mode: bool,
-                                ) -> Result<ToolResult> {
-                                    let mut manager = file_security_manager.write().await;
-                                    delete_file(&call, &mut *manager, yolo_mode).await
-                                }
-
-                                delete_file_wrapper(call, file_security_manager, yolo_mode).await
-                            })
-                        }),
-                    },
-                );
+                let delete_file_tool =
+                    create_delete_file_tool(file_security_manager.clone(), yolo_mode);
+                tools.insert("delete_file".to_string(), delete_file_tool);
             }
 
             if !tools.contains_key("create_directory") {
-                let file_security_manager_clone = file_security_manager.clone();
-                tools.insert(
-                    "create_directory".to_string(),
-                    Tool {
-                        name: "create_directory".to_string(),
-                        description: if yolo_mode {
-                            "Create a directory (YOLO MODE - no security checks)".to_string()
-                        } else {
-                            "Create a directory (and parent directories if needed)".to_string()
-                        },
-                        input_schema: json!({
-                            "type": "object",
-                            "properties": {
-                                "path": {
-                                    "type": "string",
-                                    "description": "Path to the directory to create"
-                                }
-                            },
-                            "required": ["path"]
-                        }),
-                        handler: Box::new(move |call: ToolCall| {
-                            let file_security_manager = file_security_manager_clone.clone();
-                            let yolo_mode = yolo_mode;
-                            Box::pin(async move {
-                                // Create a wrapper function that handles the mutable reference
-                                async fn create_directory_wrapper(
-                                    call: ToolCall,
-                                    file_security_manager: Arc<RwLock<FileSecurityManager>>,
-                                    yolo_mode: bool,
-                                ) -> Result<ToolResult> {
-                                    let mut manager = file_security_manager.write().await;
-                                    create_directory(&call, &mut *manager, yolo_mode).await
-                                }
-
-                                create_directory_wrapper(call, file_security_manager, yolo_mode)
-                                    .await
-                            })
-                        }),
-                    },
-                );
+                let create_directory_tool =
+                    create_create_directory_tool(file_security_manager.clone(), yolo_mode);
+                tools.insert("create_directory".to_string(), create_directory_tool);
             }
             Ok(())
         }
@@ -666,52 +275,22 @@ impl Agent {
 
     /// Set the system prompt for the conversation
     pub fn set_system_prompt(&mut self, system_prompt: String) {
-        self.system_prompt = Some(system_prompt);
+        self.conversation_manager.system_prompt = Some(system_prompt);
     }
 
     /// Add a file as context to the conversation
     pub async fn add_context_file(&mut self, file_path: &str) -> Result<()> {
-        use path_absolutize::*;
-        use shellexpand;
-        use tokio::fs;
-
-        let expanded_path = shellexpand::tilde(file_path);
-        let absolute_path = Path::new(&*expanded_path).absolutize()?;
-
-        match fs::read_to_string(&absolute_path).await {
-            Ok(content) => {
-                let context_message = format!(
-                    "Context from file '{}':\n\n```\n{}\n```",
-                    absolute_path.display(),
-                    content
-                );
-
-                self.conversation.push(Message {
-                    role: "user".to_string(),
-                    content: vec![ContentBlock::text(context_message)],
-                });
-
-                debug!("Added context file: {}", absolute_path.display());
-                Ok(())
-            }
-            Err(e) => {
-                anyhow::bail!("Failed to read file '{}': {}", absolute_path.display(), e);
-            }
-        }
+        self.conversation_manager.add_context_file(file_path).await
     }
 
     /// Extract file paths from message using @path syntax
     pub fn extract_context_files(&self, message: &str) -> Vec<String> {
-        let re = Regex::new(r"@([^\s@]+)").unwrap();
-        re.captures_iter(message)
-            .map(|cap| cap[1].to_string())
-            .collect()
+        self.conversation_manager.extract_context_files(message)
     }
 
     /// Remove @file syntax from message and return cleaned message
     pub fn clean_message(&self, message: &str) -> String {
-        let re = Regex::new(r"@[^\s@]+").unwrap();
-        re.replace_all(message, "").trim().to_string()
+        self.conversation_manager.clean_message(message)
     }
 
     pub async fn process_message(
@@ -731,7 +310,10 @@ impl Agent {
     ) -> Result<String> {
         // Log incoming user message
         debug!("Processing user message: {}", message);
-        debug!("Current conversation length: {}", self.conversation.len());
+        debug!(
+            "Current conversation length: {}",
+            self.conversation_manager.conversation.len()
+        );
 
         // Extract and add context files from @ syntax
         let context_files = self.extract_context_files(message);
@@ -759,13 +341,14 @@ impl Agent {
         }
 
         // Add cleaned user message to conversation
-        self.conversation.push(Message {
+        self.conversation_manager.conversation.push(Message {
             role: "user".to_string(),
             content: vec![ContentBlock::text(cleaned_message.clone())],
         });
 
         // Save user message to database
         if let Err(e) = self
+            .conversation_manager
             .save_message_to_conversation("user", &cleaned_message, 0)
             .await
         {
@@ -801,11 +384,11 @@ impl Agent {
                 self.client
                     .create_message_stream(
                         &self.model,
-                        self.conversation.clone(),
+                        self.conversation_manager.conversation.clone(),
                         &available_tools,
                         4096,
                         0.7,
-                        self.system_prompt.as_ref(),
+                        self.conversation_manager.system_prompt.as_ref(),
                         Arc::clone(on_content),
                         cancellation_flag.clone(),
                     )
@@ -814,11 +397,11 @@ impl Agent {
                 self.client
                     .create_message(
                         &self.model,
-                        self.conversation.clone(),
+                        self.conversation_manager.conversation.clone(),
                         &available_tools,
                         4096,
                         0.7,
-                        self.system_prompt.as_ref(),
+                        self.conversation_manager.system_prompt.as_ref(),
                         cancellation_flag.clone(),
                     )
                     .await?
@@ -836,6 +419,7 @@ impl Agent {
 
                 // Update usage statistics in database
                 if let Err(e) = self
+                    .conversation_manager
                     .update_database_usage_stats(
                         usage.input_tokens as i32,
                         usage.output_tokens as i32,
@@ -1471,13 +1055,14 @@ impl Agent {
             // Add assistant's tool use message to conversation
             let assistant_content: Vec<ContentBlock> = response.content.into_iter().collect();
 
-            self.conversation.push(Message {
+            self.conversation_manager.conversation.push(Message {
                 role: "assistant".to_string(),
                 content: assistant_content.clone(),
             });
 
             // Save assistant response to database
             if let Err(e) = self
+                .conversation_manager
                 .save_message_to_conversation(
                     "assistant",
                     &self.client.create_response_content(&assistant_content),
@@ -1494,7 +1079,7 @@ impl Agent {
 
             // Add tool results to conversation
             for result in tool_results {
-                self.conversation.push(Message {
+                self.conversation_manager.conversation.push(Message {
                     role: "user".to_string(),
                     content: vec![ContentBlock::tool_result(
                         result.tool_use_id,
@@ -1511,13 +1096,14 @@ impl Agent {
 
         // Add final assistant response to conversation if it exists
         if !final_response.is_empty() {
-            self.conversation.push(Message {
+            self.conversation_manager.conversation.push(Message {
                 role: "assistant".to_string(),
                 content: vec![ContentBlock::text(final_response.clone())],
             });
 
             // Save final assistant response to database
             if let Err(e) = self
+                .conversation_manager
                 .save_message_to_conversation("assistant", &final_response, 0)
                 .await
             {
@@ -1538,148 +1124,7 @@ impl Agent {
 
     /// Display the current conversation context
     pub fn display_context(&self) {
-        println!("{}", "📝 Current Conversation Context".cyan().bold());
-        println!("{}", "─".repeat(50).dimmed());
-        println!();
-
-        // Display system prompt if set
-        if let Some(system_prompt) = &self.system_prompt {
-            println!("{}", "System Prompt:".green().bold());
-            println!("  {}", system_prompt);
-            println!();
-        }
-
-        if self.conversation.is_empty() {
-            println!(
-                "{}",
-                "No context yet. Start a conversation to see context here.".dimmed()
-            );
-            println!();
-            return;
-        }
-
-        for (i, message) in self.conversation.iter().enumerate() {
-            let role_color = match message.role.as_str() {
-                "user" => "blue",
-                "assistant" => "green",
-                _ => "yellow",
-            };
-
-            println!(
-                "{} {}: {}",
-                format!("[{}]", i + 1).dimmed(),
-                format!("{}", message.role.to_uppercase()).color(role_color),
-                format!("({} content blocks)", message.content.len()).dimmed()
-            );
-
-            for (j, block) in message.content.iter().enumerate() {
-                match block.block_type.as_str() {
-                    "text" => {
-                        if let Some(ref text) = block.text {
-                            // Show first 100 characters of text content
-                            let preview = if text.len() > 100 {
-                                // Use safe character boundary slicing
-                                let safe_end = text
-                                    .char_indices()
-                                    .nth(100)
-                                    .map(|(idx, _)| idx)
-                                    .unwrap_or(text.len());
-                                format!("{}...", &text[..safe_end])
-                            } else {
-                                text.clone()
-                            };
-                            println!(
-                                "  {} {}: {}",
-                                format!("└─ Block {}", j + 1).dimmed(),
-                                "Text".green(),
-                                preview.replace('\n', " ")
-                            );
-                        }
-                    }
-                    "tool_use" => {
-                        if let (Some(ref id), Some(ref name), Some(ref input)) =
-                            (&block.id, &block.name, &block.input)
-                        {
-                            println!(
-                                "  {} {}: {} ({})",
-                                format!("└─ Block {}", j + 1).dimmed(),
-                                "Tool Use".yellow(),
-                                name,
-                                id
-                            );
-                            // Safely handle the input as a string
-                            let input_str = match input {
-                                Value::String(s) => s.clone(),
-                                _ => serde_json::to_string_pretty(input)
-                                    .unwrap_or_else(|_| "Invalid JSON".to_string()),
-                            };
-                            let preview = if input_str.len() > 80 {
-                                // Use safe character boundary slicing
-                                let safe_end = input_str
-                                    .char_indices()
-                                    .nth(80)
-                                    .map(|(idx, _)| idx)
-                                    .unwrap_or(input_str.len());
-                                format!("{}...", &input_str[..safe_end])
-                            } else {
-                                input_str
-                            };
-                            println!("    {} {}", "Input:".dimmed(), preview);
-                        }
-                    }
-                    "tool_result" => {
-                        if let (Some(ref tool_use_id), Some(ref content), ref is_error) =
-                            (&block.tool_use_id, &block.content, &block.is_error)
-                        {
-                            let result_type = if is_error.unwrap_or(false) {
-                                "Error".red()
-                            } else {
-                                "Result".green()
-                            };
-                            println!(
-                                "  {} {}: {} ({})",
-                                format!("└─ Block {}", j + 1).dimmed(),
-                                result_type,
-                                tool_use_id,
-                                format!("{} chars", content.len()).dimmed()
-                            );
-                            let preview = if content.len() > 80 {
-                                // Use safe character boundary slicing
-                                let safe_end = content
-                                    .char_indices()
-                                    .nth(80)
-                                    .map(|(idx, _)| idx)
-                                    .unwrap_or(content.len());
-                                format!("{}...", &content[..safe_end])
-                            } else {
-                                content.clone()
-                            };
-                            println!("    {} {}", "Content:".dimmed(), preview.replace('\n', " "));
-                        }
-                    }
-                    _ => {
-                        println!(
-                            "  {} {}",
-                            format!("└─ Block {}", j + 1).dimmed(),
-                            "Unknown".red()
-                        );
-                    }
-                }
-            }
-            println!();
-        }
-
-        println!("{}", "─".repeat(50).dimmed());
-        println!(
-            "{}: {} messages, {} total content blocks",
-            "Summary".bold(),
-            self.conversation.len(),
-            self.conversation
-                .iter()
-                .map(|m| m.content.len())
-                .sum::<usize>()
-        );
-        println!();
+        self.conversation_manager.display_context();
     }
 
     /// Get the bash security manager
@@ -1707,33 +1152,16 @@ impl Agent {
             default_model: self.model.clone(),
             max_tokens: 4096,
             temperature: 0.7,
-            default_system_prompt: self.system_prompt.clone(),
+            default_system_prompt: self.conversation_manager.system_prompt.clone(),
             bash_security: current_security,
             file_security: crate::security::FileSecurity::default(),
             mcp: crate::config::McpConfig::default(),
         }
     }
 
-    /// Clear conversation but keep AGENTS.md files if they exist in context
-    /// Create a new conversation in the database and start tracking it
+    /// Start a new conversation
     pub async fn start_new_conversation(&mut self) -> Result<String> {
-        if let Some(database_manager) = &self.database_manager {
-            // Create new conversation in database
-            let conversation_id = database_manager
-                .create_conversation(self.system_prompt.clone(), &self.model)
-                .await?;
-
-            // Update current conversation tracking
-            self.current_conversation_id = Some(conversation_id.clone());
-
-            info!("Started new conversation: {}", conversation_id);
-            Ok(conversation_id)
-        } else {
-            // Fallback: just generate a conversation ID without database
-            let conversation_id = uuid::Uuid::new_v4().to_string();
-            self.current_conversation_id = Some(conversation_id.clone());
-            Ok(conversation_id)
-        }
+        self.conversation_manager.start_new_conversation().await
     }
 
     /// Save a message to the current conversation in the database
@@ -1743,14 +1171,9 @@ impl Agent {
         content: &str,
         tokens: i32,
     ) -> Result<()> {
-        if let (Some(database_manager), Some(conversation_id)) =
-            (&self.database_manager, &self.current_conversation_id)
-        {
-            database_manager
-                .add_message(conversation_id, role, content, tokens)
-                .await?;
-        }
-        Ok(())
+        self.conversation_manager
+            .save_message_to_conversation(role, content, tokens)
+            .await
     }
 
     /// Update usage statistics in the database
@@ -1759,74 +1182,15 @@ impl Agent {
         input_tokens: i32,
         output_tokens: i32,
     ) -> Result<()> {
-        if let Some(database_manager) = &self.database_manager {
-            database_manager
-                .update_usage_stats(input_tokens, output_tokens)
-                .await?;
-        }
-        Ok(())
+        self.conversation_manager
+            .update_database_usage_stats(input_tokens, output_tokens)
+            .await
     }
 
     pub async fn clear_conversation_keep_agents_md(&mut self) -> Result<()> {
-        use std::path::Path;
-
-        // Check for AGENTS.md in ~/.aixplosion/ (priority)
-        let home_agents_md = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".aixplosion")
-            .join("AGENTS.md");
-
-        // Check for AGENTS.md in current directory
-        let local_agents_md = Path::new("AGENTS.md");
-
-        // Clear the conversation first
-        self.conversation.clear();
-
-        // Start a new conversation in the database
-        let new_conversation_id = self.start_new_conversation().await?;
-        debug!(
-            "Started new conversation {} after clearing",
-            new_conversation_id
-        );
-
-        // Add home directory AGENTS.md if it exists (priority)
-        if home_agents_md.exists() {
-            debug!("Adding AGENTS.md from ~/.aixplosion/ after clearing conversation");
-            match self
-                .add_context_file(home_agents_md.to_str().unwrap())
-                .await
-            {
-                Ok(_) => println!(
-                    "{} Re-added context file: {}",
-                    "✓".green(),
-                    home_agents_md.display()
-                ),
-                Err(e) => eprintln!(
-                    "{} Failed to re-add context file '{}': {}",
-                    "✗".red(),
-                    home_agents_md.display(),
-                    e
-                ),
-            }
-        }
-
-        // Also add current directory AGENTS.md if it exists (in addition to home directory version)
-        if local_agents_md.exists() {
-            debug!("Adding AGENTS.md from current directory after clearing conversation");
-            match self.add_context_file("AGENTS.md").await {
-                Ok(_) => println!("{} Re-added context file: {}", "✓".green(), "AGENTS.md"),
-                Err(e) => eprintln!(
-                    "{} Failed to re-add context file 'AGENTS.md': {}",
-                    "✗".red(),
-                    e
-                ),
-            }
-        }
-
-        if !home_agents_md.exists() && !local_agents_md.exists() {
-            debug!("Clearing conversation (no AGENTS.md files found)");
-        }
-
+        self.conversation_manager
+            .clear_conversation_keep_agents_md()
+            .await?;
         Ok(())
     }
 }
