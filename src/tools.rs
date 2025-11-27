@@ -679,6 +679,76 @@ pub async fn create_directory(
     }
 }
 
+// Convert Unix command separators to Windows PowerShell equivalents
+// This function properly handles quoted strings, escape sequences, and complex command structures
+fn convert_unix_separators_to_windows(command: &str) -> String {
+    let mut result = String::new();
+    let chars = command.chars().collect::<Vec<_>>();
+    let len = chars.len();
+    let mut i = 0;
+    
+    while i < len {
+        let c = chars[i];
+        
+        match c {
+            // Handle quoted strings - preserve them exactly as they are
+            '\'' => {
+                result.push(c);
+                i += 1;
+                // Find the closing single quote
+                while i < len {
+                    result.push(chars[i]);
+                    if chars[i] == '\'' && (i == 0 || chars[i - 1] != '\\') {
+                        break;
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            '"' => {
+                result.push(c);
+                i += 1;
+                // Find the closing double quote
+                while i < len {
+                    result.push(chars[i]);
+                    if chars[i] == '"' && (i == 0 || chars[i - 1] != '\\') {
+                        break;
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            // Handle && (logical AND) - replace with ; for PowerShell
+            '&' if i + 1 < len && chars[i + 1] == '&' => {
+                result.push(';');
+                i += 2;
+            }
+            // Handle || (logical OR) - replace with ; for PowerShell (PowerShell handles this differently)
+            '|' if i + 1 < len && chars[i + 1] == '|' => {
+                result.push(';');
+                i += 2;
+            }
+            // Handle ; (command separator) - keep as ; for PowerShell
+            ';' => {
+                result.push(';');
+                i += 1;
+            }
+            // Handle && at end of string
+            '&' if i == len - 1 => {
+                result.push(';');
+                i += 1;
+            }
+            // Handle all other characters
+            _ => {
+                result.push(c);
+                i += 1;
+            }
+        }
+    }
+    
+    result.trim().to_string()
+}
+
 pub async fn bash(
     call: &ToolCall,
     security_manager: &mut crate::security::BashSecurityManager,
@@ -751,12 +821,32 @@ pub async fn bash(
         }
     }
 
+    // Convert command separators for Windows compatibility
+    let processed_command = if cfg!(target_os = "windows") {
+        // Convert Unix-style separators to PowerShell-compatible syntax
+        convert_unix_separators_to_windows(&command)
+    } else {
+        command.clone()
+    };
+
     // Execute the command using tokio::task to spawn blocking operation
-    let command_clone = command.clone();
+    let command_clone = processed_command.clone();
     match task::spawn_blocking(move || {
         #[cfg(target_os = "windows")]
         {
-            Command::new("cmd").args(["/C", &command_clone]).output()
+            // Use PowerShell for better command handling on Windows
+            // For multiple commands, we need to use -Command with proper PowerShell syntax
+            let mut cmd = Command::new("powershell");
+            
+            // If the command contains semicolons, it's likely multiple commands
+            if command_clone.contains(';') {
+                cmd.args(["-Command", &command_clone]);
+            } else {
+                // For single commands, we can use -Command as well for consistency
+                cmd.args(["-Command", &command_clone]);
+            }
+            
+            cmd.output()
         }
         #[cfg(not(target_os = "windows"))]
         {
