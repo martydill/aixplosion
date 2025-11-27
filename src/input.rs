@@ -189,8 +189,8 @@ pub fn read_input_with_completion_and_highlighting(
                 kind: KeyEventKind::Press,
                 ..
             }) => {
-                // Handle tab completion
-                if let Some(completion) = autocomplete::handle_tab_completion(&input) {
+                // Handle tab completion with cursor position
+                if let Some(completion) = autocomplete::handle_tab_completion(&input, cursor_pos) {
                     input = completion;
                     cursor_pos = input.len();
 
