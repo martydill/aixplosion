@@ -1,7 +1,10 @@
+use anyhow::anyhow;
 use anyhow::Result;
+use chrono::Local;
 use clap::Parser;
 use colored::*;
 use crossterm::event::{KeyCode, KeyEventKind};
+use dialoguer::Select;
 use std::io::{self, Read};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,7 +33,10 @@ mod formatter_tests;
 
 use agent::Agent;
 use config::Config;
-use database::{get_database_path, DatabaseManager};
+use database::{
+    get_database_path, Conversation as StoredConversation, DatabaseManager,
+    Message as StoredMessage,
+};
 use formatter::create_code_formatter;
 use input::InputHistory;
 use mcp::McpManager;
@@ -301,6 +307,166 @@ async fn execute_bash_command_directly(tool_call: &tools::ToolCall) -> Result<to
     }
 }
 
+fn truncate_line(line: &str, max_chars: usize) -> String {
+    let truncated: String = line.chars().take(max_chars).collect();
+    if line.chars().count() > max_chars {
+        format!("{}...", truncated)
+    } else {
+        truncated
+    }
+}
+
+fn build_message_preview(messages: &[StoredMessage]) -> String {
+    if messages.is_empty() {
+        return "(no messages)".to_string();
+    }
+
+    // Use the first message only; keep it single line and short
+    let first_message = messages
+        .iter()
+        .find(|m| !m.content.trim().is_empty())
+        .unwrap_or(&messages[0]);
+
+    let first_line = first_message.content.lines().next().unwrap_or("").trim();
+    let single_line = first_line.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    truncate_line(&single_line, 50)
+}
+
+fn format_resume_option(conversation: &StoredConversation, preview: &str) -> String {
+    let updated_local = conversation
+        .updated_at
+        .with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M")
+        .to_string();
+
+    let short_id: String = conversation.id.chars().take(8).collect();
+    let short_id = if conversation.id.len() > 8 {
+        format!("{}…", short_id)
+    } else {
+        short_id
+    };
+
+    let meta = format!(
+        "{} | Updated {} | Model {} | Requests {} | Tokens {}",
+        short_id,
+        updated_local,
+        conversation.model,
+        conversation.request_count,
+        conversation.total_tokens
+    );
+
+    // Put preview on its own line and add a trailing newline to create spacing between items
+    format!("{}\n  Preview: {}\n", meta, preview)
+}
+
+async fn handle_resume_command(agent: &mut Agent) -> Result<()> {
+    if agent.database_manager().is_none() {
+        println!(
+            "{} Database is not configured; cannot resume conversations.",
+            "??".yellow()
+        );
+        return Ok(());
+    }
+
+    let current_id = agent.current_conversation_id();
+
+    // Fetch more than 5 in case the current conversation is among the most recent
+    let recent = agent.list_recent_conversations(15).await?;
+    let available: Vec<StoredConversation> = recent
+        .into_iter()
+        .filter(|conv| Some(conv.id.as_str()) != current_id.as_deref())
+        .take(5)
+        .collect();
+
+    if available.is_empty() {
+        println!(
+            "{} No other recent conversations found to resume.",
+            "??".yellow()
+        );
+        return Ok(());
+    }
+
+    let database_manager = agent
+        .database_manager()
+        .ok_or_else(|| anyhow!("Database is not configured"))?;
+
+    let mut conversations_with_previews: Vec<(StoredConversation, String)> = Vec::new();
+
+    for conversation in &available {
+        let messages = database_manager
+            .get_conversation_messages(&conversation.id)
+            .await?;
+        if messages.is_empty() {
+            continue; // Skip conversations with no messages
+        }
+        let preview = build_message_preview(&messages);
+        conversations_with_previews.push((conversation.clone(), preview));
+    }
+
+    if conversations_with_previews.is_empty() {
+        println!(
+            "{} No recent conversations with messages found to resume.",
+            "??".yellow()
+        );
+        return Ok(());
+    }
+
+    let options: Vec<String> = conversations_with_previews
+        .iter()
+        .map(|(conversation, preview)| format_resume_option(conversation, preview))
+        .collect();
+
+    let options_clone = options.clone();
+    let selection = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        tokio::task::spawn_blocking(move || {
+            Select::new()
+                .with_prompt("Select a conversation to resume")
+                .items(&options_clone)
+                .interact_opt()
+        }),
+    )
+    .await;
+
+    let selected_index = match selection {
+        Ok(Ok(Ok(Some(index)))) => Some(index),
+        Ok(Ok(Ok(None))) => {
+            println!("{}", "Resume cancelled.".yellow());
+            None
+        }
+        Ok(Ok(Err(e))) => {
+            eprintln!("{} Failed to select conversation: {}", "?".red(), e);
+            None
+        }
+        Ok(Err(e)) => {
+            eprintln!("{} Failed to read selection: {}", "?".red(), e);
+            None
+        }
+        Err(_) => {
+            eprintln!(
+                "{} Conversation selection timed out after 30 seconds.",
+                "?".red()
+            );
+            None
+        }
+    };
+
+    if let Some(index) = selected_index {
+        if let Some((conversation, _)) = conversations_with_previews.get(index) {
+            agent.resume_conversation(&conversation.id).await?;
+            println!(
+                "{} Resumed conversation {} ({} messages loaded).",
+                "û".green(),
+                conversation.id,
+                agent.conversation_len()
+            );
+        }
+    }
+
+    Ok(())
+}
+
 async fn handle_slash_command(
     command: &str,
     agent: &mut Agent,
@@ -321,6 +487,10 @@ async fn handle_slash_command(
         "/context" => {
             agent.display_context();
             Ok(true) // Command was handled
+        }
+        "/resume" => {
+            handle_resume_command(agent).await?;
+            Ok(true)
         }
         "/clear" => {
             match agent.clear_conversation_keep_agents_md().await {
@@ -1516,6 +1686,7 @@ fn print_help() {
     println!("  /stats        - Show token usage statistics");
     println!("  /usage        - Show token usage statistics (alias for /stats)");
     println!("  /context      - Show current conversation context");
+    println!("  /resume       - Resume a previous conversation");
     println!("  /clear        - Clear all conversation context (keeps AGENTS.md if it exists)");
     println!("  /reset-stats  - Reset token usage statistics");
     println!("  /permissions  - Manage bash command security permissions");

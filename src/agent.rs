@@ -1,6 +1,6 @@
 use crate::mcp::McpManager;
 use crate::security::{BashSecurityManager, FileSecurityManager};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use colored::*;
 use log::{debug, error, info, warn};
 use serde_json::json;
@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use crate::anthropic::{AnthropicClient, ContentBlock, Message, Usage};
 use crate::config::Config;
 use crate::conversation::ConversationManager;
-use crate::database::DatabaseManager;
+use crate::database::{Conversation as StoredConversation, DatabaseManager};
 use crate::tool_display::{
     should_use_pretty_output, SimpleToolDisplay, ToolCallDisplay, ToolDisplay,
 };
@@ -1157,6 +1157,60 @@ impl Agent {
             file_security: crate::security::FileSecurity::default(),
             mcp: crate::config::McpConfig::default(),
         }
+    }
+
+    /// Get the database manager (if configured)
+    pub fn database_manager(&self) -> Option<Arc<DatabaseManager>> {
+        self.conversation_manager.database_manager.clone()
+    }
+
+    /// Get the current conversation ID (if any)
+    pub fn current_conversation_id(&self) -> Option<String> {
+        self.conversation_manager.current_conversation_id.clone()
+    }
+
+    /// Get the number of messages in the active conversation
+    pub fn conversation_len(&self) -> usize {
+        self.conversation_manager.conversation.len()
+    }
+
+    /// List recent conversations from the database
+    pub async fn list_recent_conversations(&self, limit: i64) -> Result<Vec<StoredConversation>> {
+        let database_manager = self
+            .conversation_manager
+            .database_manager
+            .as_ref()
+            .ok_or_else(|| anyhow!("Database is not configured"))?;
+
+        database_manager.get_recent_conversations(limit).await
+    }
+
+    /// Replace the active conversation with one loaded from the database
+    pub async fn resume_conversation(&mut self, conversation_id: &str) -> Result<()> {
+        let database_manager = self
+            .conversation_manager
+            .database_manager
+            .as_ref()
+            .ok_or_else(|| anyhow!("Database is not configured"))?;
+
+        let conversation = database_manager
+            .get_conversation(conversation_id)
+            .await?
+            .ok_or_else(|| anyhow!("Conversation {} not found", conversation_id))?;
+
+        let messages = database_manager
+            .get_conversation_messages(conversation_id)
+            .await?;
+
+        self.model = conversation.model.clone();
+        self.conversation_manager.set_conversation_from_records(
+            conversation.id.clone(),
+            conversation.system_prompt.clone(),
+            conversation.model.clone(),
+            &messages,
+        );
+
+        Ok(())
     }
 
     /// Start a new conversation

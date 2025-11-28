@@ -462,7 +462,10 @@ fn redraw_input_line(
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
 
-    let terminal_width = terminal::size().map(|(w, _)| w as usize).unwrap_or(80).max(1);
+    let terminal_width = terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(80)
+        .max(1);
     let prompt_length = 2; // "> " length
     let visible_len = input.chars().count();
     let cursor_visible = input.chars().take(cursor_pos).count();

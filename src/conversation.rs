@@ -1,4 +1,5 @@
-use crate::database::DatabaseManager;
+use crate::anthropic::ContentBlock;
+use crate::database::{DatabaseManager, Message as StoredMessage};
 use anyhow::Result;
 use colored::Colorize;
 use log::{debug, info};
@@ -214,6 +215,28 @@ impl ConversationManager {
     pub fn clean_message(&self, message: &str) -> String {
         let re = Regex::new(r"@[^\s@]+").unwrap();
         re.replace_all(message, "").trim().to_string()
+    }
+
+    /// Replace the current in-memory conversation with records loaded from storage
+    pub fn set_conversation_from_records(
+        &mut self,
+        conversation_id: String,
+        system_prompt: Option<String>,
+        model: String,
+        messages: &[StoredMessage],
+    ) {
+        self.conversation.clear();
+
+        for message in messages {
+            self.conversation.push(crate::anthropic::Message {
+                role: message.role.clone(),
+                content: vec![ContentBlock::text(message.content.clone())],
+            });
+        }
+
+        self.current_conversation_id = Some(conversation_id);
+        self.system_prompt = system_prompt;
+        self.model = model;
     }
 
     /// Display the current conversation context

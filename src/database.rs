@@ -439,7 +439,10 @@ impl DatabaseManager {
         let rows = sqlx::query(
             r#"
             SELECT id, created_at, updated_at, system_prompt, model, total_tokens, request_count
-            FROM conversations
+            FROM conversations c
+            WHERE EXISTS (
+                SELECT 1 FROM messages m WHERE m.conversation_id = c.id
+            )
             ORDER BY updated_at DESC
             LIMIT ?
             "#,

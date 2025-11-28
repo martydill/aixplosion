@@ -116,6 +116,7 @@ pub fn get_completion(input: &str, cursor_pos: usize) -> Option<String> {
         "/stats",
         "/usage",
         "/context",
+        "/resume",
         "/clear",
         "/reset-stats",
         "/permissions",
