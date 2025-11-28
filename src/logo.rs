@@ -48,53 +48,22 @@ pub fn display_logo() {
             // Create a smooth horizontal gradient for each line
             let chars: Vec<char> = line.chars().collect();
 
-            // Add vertical gradient variation for more interesting effect
-            let vertical_offset = line_idx as f32 / logo.lines().count() as f32;
-
             for (i, ch) in chars.iter().enumerate() {
                 if *ch == ' ' {
                     queue!(stdout, Print(' ')).ok();
                     continue;
                 }
 
-                let horizontal_progress = i as f32 / chars.len() as f32;
+                let progress = i as f32 / chars.len() as f32;
 
-                // Create smooth RGB gradient
-                // From deep red -> orange -> yellow (fire gradient)
-                let combined_progress = (horizontal_progress + vertical_offset * 0.3) % 1.0;
-
-                let (r, g, b) = if combined_progress < 0.33 {
-                    // Deep red to red
-                    let t = combined_progress / 0.33;
-                    (
-                        (139.0 * (1.0 - t) + 255.0 * t) * 255.0 / 255.0,
-                        (0.0 * (1.0 - t) + 0.0 * t) * 255.0 / 255.0,
-                        (0.0 * (1.0 - t) + 0.0 * t) * 255.0 / 255.0,
-                    )
-                } else if combined_progress < 0.67 {
-                    // Red to orange
-                    let t = (combined_progress - 0.33) / 0.34;
-                    (
-                        (255.0 * (1.0 - t) + 255.0 * t) * 255.0 / 255.0,
-                        (0.0 * (1.0 - t) + 165.0 * t) * 255.0 / 255.0,
-                        (0.0 * (1.0 - t) + 0.0 * t) * 255.0 / 255.0,
-                    )
+                // Smooth linear gradient: red (left) -> orange (middle) -> yellow (right)
+                let (r, g, b) = if progress < 0.5 {
+                    let t = progress / 0.5;
+                    (255, (165.0 * t) as u8, 0)
                 } else {
-                    // Orange to yellow
-                    let t = (combined_progress - 0.67) / 0.33;
-                    (
-                        (255.0 * (1.0 - t) + 255.0 * t) * 255.0 / 255.0,
-                        (165.0 * (1.0 - t) + 255.0 * t) * 255.0 / 255.0,
-                        (0.0 * (1.0 - t) + 0.0 * t) * 255.0 / 255.0,
-                    )
+                    let t = (progress - 0.5) / 0.5;
+                    (255, (165.0 * (1.0 - t) + 255.0 * t) as u8, 0)
                 };
-
-                // Add some brightness variation for more dynamic effect
-                let brightness_factor =
-                    0.7 + 0.3 * (combined_progress * std::f32::consts::PI * 2.0).sin();
-                let r = (r as f32 * brightness_factor).min(255.0) as u8;
-                let g = (g as f32 * brightness_factor).min(255.0) as u8;
-                let b = (b as f32 * brightness_factor).min(255.0) as u8;
 
                 queue!(
                     stdout,
