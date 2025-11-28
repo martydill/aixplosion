@@ -202,7 +202,7 @@ impl FileSecurityManager {
                 Select::new()
                     .with_prompt("Select an option")
                     .items(&options_clone)
-                    .default(options_clone.len() - 1) // Default to "Deny this operation" for safety
+                    .default(0) // Default to "Allow this operation only"
                     .interact()
             }),
         )
@@ -413,7 +413,7 @@ impl BashSecurityManager {
                 Select::new()
                     .with_prompt("Select an option")
                     .items(&options_clone)
-                    .default(options_clone.len() - 1) // Default to "Deny this command" for safety
+                    .default(0) // Default to "Allow this time only"
                     .interact()
             }),
         )
