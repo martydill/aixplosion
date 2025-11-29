@@ -1175,14 +1175,20 @@ impl Agent {
     }
 
     /// List recent conversations from the database
-    pub async fn list_recent_conversations(&self, limit: i64) -> Result<Vec<StoredConversation>> {
+    pub async fn list_recent_conversations(
+        &self,
+        limit: i64,
+        search_filter: Option<&str>,
+    ) -> Result<Vec<StoredConversation>> {
         let database_manager = self
             .conversation_manager
             .database_manager
             .as_ref()
             .ok_or_else(|| anyhow!("Database is not configured"))?;
 
-        database_manager.get_recent_conversations(limit).await
+        database_manager
+            .get_recent_conversations(limit, search_filter)
+            .await
     }
 
     /// Replace the active conversation with one loaded from the database

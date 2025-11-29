@@ -17,7 +17,8 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
  - Yolo mode for living dangerously
  - Customizable system prompt
  - Conversation history stored in a per-project Sqlite DB
- - Session resuming
+ - Session resuming via /resume
+ - Full text conversation search via /search
  
 
 ## Todo 

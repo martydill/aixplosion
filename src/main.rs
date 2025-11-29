@@ -360,40 +360,17 @@ fn format_resume_option(conversation: &StoredConversation, preview: &str) -> Str
     format!("{}\n  Preview: {}\n", meta, preview)
 }
 
-async fn handle_resume_command(agent: &mut Agent) -> Result<()> {
-    if agent.database_manager().is_none() {
-        println!(
-            "{} Database is not configured; cannot resume conversations.",
-            "??".yellow()
-        );
-        return Ok(());
-    }
-
-    let current_id = agent.current_conversation_id();
-
-    // Fetch more than 5 in case the current conversation is among the most recent
-    let recent = agent.list_recent_conversations(15).await?;
-    let available: Vec<StoredConversation> = recent
-        .into_iter()
-        .filter(|conv| Some(conv.id.as_str()) != current_id.as_deref())
-        .take(5)
-        .collect();
-
-    if available.is_empty() {
-        println!(
-            "{} No other recent conversations found to resume.",
-            "??".yellow()
-        );
-        return Ok(());
-    }
-
+async fn build_conversation_previews(
+    agent: &Agent,
+    conversations: &[StoredConversation],
+) -> Result<Vec<(StoredConversation, String)>> {
     let database_manager = agent
         .database_manager()
         .ok_or_else(|| anyhow!("Database is not configured"))?;
 
     let mut conversations_with_previews: Vec<(StoredConversation, String)> = Vec::new();
 
-    for conversation in &available {
+    for conversation in conversations {
         let messages = database_manager
             .get_conversation_messages(&conversation.id)
             .await?;
@@ -404,35 +381,31 @@ async fn handle_resume_command(agent: &mut Agent) -> Result<()> {
         conversations_with_previews.push((conversation.clone(), preview));
     }
 
-    if conversations_with_previews.is_empty() {
-        println!(
-            "{} No recent conversations with messages found to resume.",
-            "??".yellow()
-        );
-        return Ok(());
-    }
+    Ok(conversations_with_previews)
+}
 
-    let options: Vec<String> = conversations_with_previews
-        .iter()
-        .map(|(conversation, preview)| format_resume_option(conversation, preview))
-        .collect();
-
+async fn select_conversation_index(
+    prompt: &str,
+    options: Vec<String>,
+    cancel_message: &str,
+) -> Option<usize> {
     let options_clone = options.clone();
+    let prompt_text = prompt.to_string();
     let selection = tokio::time::timeout(
         std::time::Duration::from_secs(30),
         tokio::task::spawn_blocking(move || {
             Select::new()
-                .with_prompt("Select a conversation to resume")
+                .with_prompt(prompt_text)
                 .items(&options_clone)
                 .interact_opt()
         }),
     )
     .await;
 
-    let selected_index = match selection {
+    match selection {
         Ok(Ok(Ok(Some(index)))) => Some(index),
         Ok(Ok(Ok(None))) => {
-            println!("{}", "Resume cancelled.".yellow());
+            println!("{}", cancel_message.yellow());
             None
         }
         Ok(Ok(Err(e))) => {
@@ -450,7 +423,57 @@ async fn handle_resume_command(agent: &mut Agent) -> Result<()> {
             );
             None
         }
-    };
+    }
+}
+
+async fn handle_resume_command(agent: &mut Agent) -> Result<()> {
+    if agent.database_manager().is_none() {
+        println!(
+            "{} Database is not configured; cannot resume conversations.",
+            "??".yellow()
+        );
+        return Ok(());
+    }
+
+    let current_id = agent.current_conversation_id();
+
+    // Fetch more than 5 in case the current conversation is among the most recent
+    let recent = agent.list_recent_conversations(15, None).await?;
+    let available: Vec<StoredConversation> = recent
+        .into_iter()
+        .filter(|conv| Some(conv.id.as_str()) != current_id.as_deref())
+        .take(5)
+        .collect();
+
+    if available.is_empty() {
+        println!(
+            "{} No other recent conversations found to resume.",
+            "??".yellow()
+        );
+        return Ok(());
+    }
+
+    let conversations_with_previews = build_conversation_previews(agent, &available).await?;
+
+    if conversations_with_previews.is_empty() {
+        println!(
+            "{} No recent conversations with messages found to resume.",
+            "??".yellow()
+        );
+        return Ok(());
+    }
+
+    let options: Vec<String> = conversations_with_previews
+        .iter()
+        .map(|(conversation, preview)| format_resume_option(conversation, preview))
+        .collect();
+
+    let selected_index = select_conversation_index(
+        "Select a conversation to resume",
+        options,
+        "Resume cancelled.",
+    )
+    .await;
 
     if let Some(index) = selected_index {
         if let Some((conversation, _)) = conversations_with_previews.get(index) {
@@ -458,6 +481,72 @@ async fn handle_resume_command(agent: &mut Agent) -> Result<()> {
             println!(
                 "{} Resumed conversation {} ({} messages loaded).",
                 "û".green(),
+                conversation.id,
+                agent.conversation_len()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_search_command(agent: &mut Agent, query: &str) -> Result<()> {
+    if agent.database_manager().is_none() {
+        println!(
+            "{} Database is not configured; cannot search conversations.",
+            "??".yellow()
+        );
+        return Ok(());
+    }
+
+    let search_term = query.trim();
+    if search_term.is_empty() {
+        println!("{} Usage: /search <text>", "??".yellow());
+        return Ok(());
+    }
+
+    let current_id = agent.current_conversation_id();
+    let recent = agent
+        .list_recent_conversations(30, Some(search_term))
+        .await?;
+    let available: Vec<StoredConversation> = recent
+        .into_iter()
+        .filter(|conv| Some(conv.id.as_str()) != current_id.as_deref())
+        .collect();
+
+    if available.is_empty() {
+        println!(
+            "{} No conversations matched '{}'.",
+            "??".yellow(),
+            search_term
+        );
+        return Ok(());
+    }
+
+    let conversations_with_previews = build_conversation_previews(agent, &available).await?;
+
+    if conversations_with_previews.is_empty() {
+        println!(
+            "{} No matching conversations with messages found.",
+            "??".yellow()
+        );
+        return Ok(());
+    }
+
+    let options: Vec<String> = conversations_with_previews
+        .iter()
+        .map(|(conversation, preview)| format_resume_option(conversation, preview))
+        .collect();
+
+    let prompt = format!("Select a conversation matching \"{}\"", search_term);
+    let selected_index = select_conversation_index(&prompt, options, "Search cancelled.").await;
+
+    if let Some(index) = selected_index {
+        if let Some((conversation, _)) = conversations_with_previews.get(index) {
+            agent.resume_conversation(&conversation.id).await?;
+            println!(
+                "{} Resumed conversation {} ({} messages loaded).",
+                "–".green(),
                 conversation.id,
                 agent.conversation_len()
             );
@@ -487,6 +576,11 @@ async fn handle_slash_command(
         "/context" => {
             agent.display_context();
             Ok(true) // Command was handled
+        }
+        "/search" => {
+            let search_text = command.trim_start_matches("/search").trim();
+            handle_search_command(agent, search_text).await?;
+            Ok(true)
         }
         "/resume" => {
             handle_resume_command(agent).await?;
@@ -1686,6 +1780,7 @@ fn print_help() {
     println!("  /stats        - Show token usage statistics");
     println!("  /usage        - Show token usage statistics (alias for /stats)");
     println!("  /context      - Show current conversation context");
+    println!("  /search <q>   - Search previous conversations");
     println!("  /resume       - Resume a previous conversation");
     println!("  /clear        - Clear all conversation context (keeps AGENTS.md if it exists)");
     println!("  /reset-stats  - Reset token usage statistics");

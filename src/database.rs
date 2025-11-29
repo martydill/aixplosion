@@ -434,22 +434,44 @@ impl DatabaseManager {
         Ok(messages)
     }
 
-    /// Get recent conversations
-    pub async fn get_recent_conversations(&self, limit: i64) -> Result<Vec<Conversation>> {
-        let rows = sqlx::query(
+    /// Get recent conversations, optionally filtered by message content
+    pub async fn get_recent_conversations(
+        &self,
+        limit: i64,
+        search_filter: Option<&str>,
+    ) -> Result<Vec<Conversation>> {
+        // Base query is shared with /resume; optional filter narrows by message content
+        let mut query = String::from(
             r#"
             SELECT id, created_at, updated_at, system_prompt, model, total_tokens, request_count
             FROM conversations c
             WHERE EXISTS (
                 SELECT 1 FROM messages m WHERE m.conversation_id = c.id
+            "#,
+        );
+
+        if search_filter.is_some() {
+            query.push_str(" AND LOWER(m.content) LIKE LOWER(?) ");
+        }
+
+        query.push_str(
+            r#"
             )
             ORDER BY updated_at DESC
             LIMIT ?
             "#,
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        );
+
+        let mut sql = sqlx::query(&query);
+
+        if let Some(filter) = search_filter {
+            let pattern = format!("%{}%", filter);
+            sql = sql.bind(pattern);
+        }
+
+        sql = sql.bind(limit);
+
+        let rows = sql.fetch_all(&self.pool).await?;
 
         let conversations = rows
             .into_iter()
