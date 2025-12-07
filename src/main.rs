@@ -560,6 +560,8 @@ async fn handle_slash_command(
     command: &str,
     agent: &mut Agent,
     mcp_manager: &McpManager,
+    formatter: &formatter::CodeFormatter,
+    stream: bool,
 ) -> Result<bool> {
     let parts: Vec<&str> = command.trim().split(' ').collect();
     let cmd = parts[0];
@@ -621,6 +623,74 @@ async fn handle_slash_command(
         "/file-permissions" => {
             handle_file_permissions_command(&parts[1..], agent).await?;
             Ok(true) // Command was handled
+        }
+        "/plan" => {
+            // Parse subcommand with splitn to preserve plan IDs containing whitespace
+            let mut plan_parts = command.splitn(3, ' ');
+            let _ = plan_parts.next(); // "/plan"
+            let sub = plan_parts.next().unwrap_or("").trim();
+            match sub {
+                "on" => {
+                    agent.set_plan_mode(true).await?;
+                    println!(
+                        "{} Plan mode enabled: generating read-only plans and saving them to the database.",
+                        "✓".green()
+                    );
+                }
+                "off" => {
+                    agent.set_plan_mode(false).await?;
+                    println!(
+                        "{} Plan mode disabled: execution tools restored.",
+                        "✓".green()
+                    );
+                }
+                "run" => {
+                    let plan_id_raw = plan_parts.next().unwrap_or("").trim();
+                    if plan_id_raw.is_empty() {
+                        println!("{} Usage: /plan run <plan_id>", "ℹ".yellow());
+                        return Ok(true);
+                    }
+                    let plan_id = plan_id_raw;
+                    println!("{} Loading plan {}...", "…".cyan(), plan_id);
+                    let message = agent.load_plan_for_execution(plan_id).await?;
+                    println!(
+                        "{} Running saved plan {} (plan mode disabled for execution).",
+                        "→".green(),
+                        plan_id
+                    );
+                    let cancellation_flag = Arc::new(AtomicBool::new(false));
+                    if stream {
+                        let (streaming_state, stream_callback) = create_streaming_renderer(formatter);
+                        let response = agent
+                            .process_message_with_stream(
+                                &message,
+                                Some(Arc::clone(&stream_callback)),
+                                cancellation_flag,
+                            )
+                            .await;
+                        if let Ok(mut renderer) = streaming_state.lock() {
+                            if let Err(e) = renderer.finish() {
+                                eprintln!("{} Streaming formatter error: {}", "Error".red(), e);
+                            }
+                        }
+                        response?;
+                    } else {
+                        let spinner = create_spinner();
+                        let response = agent
+                            .process_message(&message, cancellation_flag)
+                            .await?;
+                        spinner.finish_and_clear();
+                        formatter.print_formatted(&response)?;
+                    }
+                }
+                _ => {
+                    println!(
+                        "{} Unknown /plan command. Use '/plan on', '/plan off', or '/plan run <id>'.",
+                        "ℹ".yellow()
+                    );
+                }
+            }
+            Ok(true)
         }
         "/exit" | "/quit" => {
             // Print final stats before exiting
@@ -1809,6 +1879,8 @@ fn print_help() {
     println!("  /permissions deny <cmd>   - Add command to denylist");
     println!("  /permissions test <cmd>  - Test if command is allowed");
     println!("  /file-permissions test <op> <path> - Test if file operation is allowed");
+    println!("  /plan on|off             - Toggle plan mode at runtime");
+    println!("  /plan run <id>           - Load and execute a saved plan by ID");
     println!();
     println!("{}", "MCP Commands:".green().bold());
     println!("  /mcp list                    - List MCP servers");
@@ -1835,6 +1907,10 @@ fn print_help() {
     println!("  Streaming shows responses as they're generated (no spinner)");
     println!("  Non-streaming shows a spinner and formats the complete response");
     println!();
+    println!("{}", "Plan Mode:".green().bold());
+    println!("  Use --plan-mode to generate a read-only plan in Markdown");
+    println!("  Plan mode disables mutating tools and saves the plan to the database");
+    println!();
     println!("{}", "Examples:".green().bold());
     println!("  aixplosion -f config.toml \"Explain this configuration\"");
     println!("  aixplosion \"What does @Cargo.toml contain?\"");
@@ -1843,6 +1919,7 @@ fn print_help() {
     println!("  aixplosion -s \"You are a Rust expert\" \"Help me with this code\"");
     println!("  aixplosion -s \"Act as a code reviewer\" -f main.rs \"Review this code\"");
     println!("  aixplosion --stream \"Tell me a story\"  # Stream the response");
+    println!("  aixplosion --plan-mode \"Add Stripe billing\"  # Plan only, saves to DB");
     println!("  !dir                    # List directory contents");
     println!("  !git status             # Check git status");
     println!("  !cargo build            # Build the project");
@@ -1902,6 +1979,10 @@ struct Cli {
     /// Enable 'yolo' mode - bypass all permission checks for file and tool operations
     #[arg(long)]
     yolo: bool,
+
+    /// Enable plan-only mode (generate a plan in Markdown without making changes)
+    #[arg(long = "plan-mode")]
+    plan_mode: bool,
 }
 
 #[tokio::main]
@@ -1978,7 +2059,7 @@ async fn main() -> Result<()> {
     let formatter = create_code_formatter()?;
 
     // Create and run agent
-    let mut agent = Agent::new(config.clone(), cli.model, cli.yolo);
+    let mut agent = Agent::new(config.clone(), cli.model, cli.yolo, cli.plan_mode);
 
     // Initialize MCP manager
     let mcp_manager = Arc::new(McpManager::new());
@@ -2076,6 +2157,14 @@ async fn main() -> Result<()> {
         }
     }
 
+    if cli.plan_mode {
+        agent.apply_plan_mode_prompt();
+        println!(
+            "{} Plan mode enabled: generating read-only plans and saving them to the database.",
+            "û".green()
+        );
+    }
+
     // Add context files
     add_context_files(&mut agent, &cli.context_files).await?;
 
@@ -2163,6 +2252,14 @@ async fn main() -> Result<()> {
         // Display the cool logo on startup
         logo::display_logo();
         println!("{}", "🤖 AIxplosion - Interactive Mode".green().bold());
+        if cli.plan_mode {
+            println!(
+                "{}",
+                "Plan mode enabled: generating read-only plans and saving them to the database."
+                    .yellow()
+                    .bold()
+            );
+        }
         println!(
             "{}",
             "Type 'exit', 'quit', or '/exit' to quit. Type '/help' for available commands."
@@ -2202,7 +2299,7 @@ async fn main() -> Result<()> {
             {
                 // Check for slash commands first
                 if input.starts_with('/') {
-                    match handle_slash_command(&input, &mut agent, &mcp_manager).await {
+                    match handle_slash_command(&input, &mut agent, &mcp_manager, &formatter, cli.stream).await {
                         Ok(_) => {} // Command handled successfully
                         Err(e) => {
                             eprintln!("{} Error handling command: {}", "✗".red(), e);
@@ -2286,3 +2383,5 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+

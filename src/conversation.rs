@@ -85,6 +85,28 @@ impl ConversationManager {
         Ok(())
     }
 
+    /// Persist a plan (if database is configured) and associate it with the current conversation
+    pub async fn save_plan(
+        &self,
+        user_request: &str,
+        plan_markdown: &str,
+        title: Option<String>,
+    ) -> Result<Option<String>> {
+        if let Some(database_manager) = &self.database_manager {
+            let plan_id = database_manager
+                .create_plan(
+                    self.current_conversation_id.as_deref(),
+                    title.as_deref(),
+                    user_request,
+                    plan_markdown,
+                )
+                .await?;
+            Ok(Some(plan_id))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Clear conversation but keep AGENTS.md files if they exist in context
     /// Create a new conversation in the database and start tracking it
     pub async fn clear_conversation_keep_agents_md(&mut self) -> Result<String> {

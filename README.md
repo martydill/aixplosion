@@ -19,6 +19,7 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
  - Conversation history stored in a per-project Sqlite DB
  - Session resuming via /resume
  - Full text conversation search via /search
+ - Plan mode and /plan command support for managing plans and toggling plan mode
  
 
 ## Todo 
@@ -27,7 +28,6 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
  - Token speedometer
  - Hooks
  - Web search tool
- - Plan mode
  - Compacting
  - Pasting or referencing images
  - Custom slash commands

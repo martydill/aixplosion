@@ -167,6 +167,23 @@ impl DatabaseManager {
         .execute(&self.pool)
         .await?;
 
+        // Create plans table for plan-mode persistence
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS plans (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT,
+                title TEXT,
+                user_request TEXT NOT NULL,
+                plan_markdown TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         // Create indexes for better performance
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)",
@@ -187,6 +204,16 @@ impl DatabaseManager {
             .await?;
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_usage_stats_date ON usage_stats(date)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_plans_conversation_id ON plans(conversation_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_plans_created_at ON plans(created_at)")
             .execute(&self.pool)
             .await?;
 
@@ -286,6 +313,18 @@ pub struct Message {
     pub created_at: DateTime<Utc>,
 }
 
+/// Represents a saved plan
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct Plan {
+    pub id: String,
+    pub conversation_id: Option<String>,
+    pub title: Option<String>,
+    pub user_request: String,
+    pub plan_markdown: String,
+    pub created_at: DateTime<Utc>,
+}
+
 impl DatabaseManager {
     /// Create a new conversation in the database
     pub async fn create_conversation(
@@ -375,6 +414,58 @@ impl DatabaseManager {
         tx.commit().await?;
 
         Ok(message_id)
+    }
+
+    /// Save a plan to the database
+    pub async fn create_plan(
+        &self,
+        conversation_id: Option<&str>,
+        title: Option<&str>,
+        user_request: &str,
+        plan_markdown: &str,
+    ) -> Result<String> {
+        let plan_id = Uuid::new_v4().to_string();
+        let now = Utc::now();
+
+        sqlx::query(
+            r#"
+            INSERT INTO plans (id, conversation_id, title, user_request, plan_markdown, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&plan_id)
+        .bind(conversation_id)
+        .bind(title)
+        .bind(user_request)
+        .bind(plan_markdown)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(plan_id)
+    }
+
+    /// Fetch a plan by ID
+    pub async fn get_plan(&self, plan_id: &str) -> Result<Option<Plan>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, conversation_id, title, user_request, plan_markdown, created_at
+            FROM plans
+            WHERE id = ?
+            "#,
+        )
+        .bind(plan_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| Plan {
+            id: row.get("id"),
+            conversation_id: row.get::<Option<String>, _>("conversation_id"),
+            title: row.get::<Option<String>, _>("title"),
+            user_request: row.get("user_request"),
+            plan_markdown: row.get("plan_markdown"),
+            created_at: row.get("created_at"),
+        }))
     }
 
     /// Get a conversation by ID

@@ -66,13 +66,16 @@ pub struct Agent {
     bash_security_manager: Arc<RwLock<BashSecurityManager>>,
     file_security_manager: Arc<RwLock<FileSecurityManager>>,
     yolo_mode: bool,
+    plan_mode: bool,
+    plan_mode_saved_system_prompt: Option<Option<String>>,
 }
 
 impl Agent {
-    pub fn new(config: Config, model: String, yolo_mode: bool) -> Self {
+    pub fn new(config: Config, model: String, yolo_mode: bool, plan_mode: bool) -> Self {
         let client = AnthropicClient::new(config.api_key, config.base_url);
         let mut tools: std::collections::HashMap<String, Tool> = get_builtin_tools()
             .into_iter()
+            .filter(|tool| !plan_mode || Self::is_plan_safe_tool(&tool.name))
             .map(|tool| (tool.name.clone(), tool))
             .collect();
 
@@ -93,45 +96,47 @@ impl Agent {
         // Add bash tool with security to the initial tools
         let security_manager = bash_security_manager.clone();
         let yolo_mode = yolo_mode;
-        tools.insert(
-            "bash".to_string(),
-            Tool {
-                name: "bash".to_string(),
-                description: if yolo_mode {
-                    "Execute shell commands and return the output (YOLO MODE - no security checks)"
-                        .to_string()
-                } else {
-                    "Execute shell commands and return the output (with security)".to_string()
-                },
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "command": {
-                            "type": "string",
-                            "description": "Shell command to execute"
-                        }
+        if !plan_mode {
+            tools.insert(
+                "bash".to_string(),
+                Tool {
+                    name: "bash".to_string(),
+                    description: if yolo_mode {
+                        "Execute shell commands and return the output (YOLO MODE - no security checks)"
+                            .to_string()
+                    } else {
+                        "Execute shell commands and return the output (with security)".to_string()
                     },
-                    "required": ["command"]
-                }),
-                handler: Box::new(move |call: ToolCall| {
-                    let security_manager = security_manager.clone();
-                    let yolo_mode = yolo_mode;
-                    Box::pin(async move {
-                        // Create a wrapper function that handles the mutable reference
-                        async fn bash_wrapper(
-                            call: ToolCall,
-                            security_manager: Arc<RwLock<BashSecurityManager>>,
-                            yolo_mode: bool,
-                        ) -> Result<ToolResult> {
-                            let mut manager = security_manager.write().await;
-                            bash(&call, &mut *manager, yolo_mode).await
-                        }
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string",
+                                "description": "Shell command to execute"
+                            }
+                        },
+                        "required": ["command"]
+                    }),
+                    handler: Box::new(move |call: ToolCall| {
+                        let security_manager = security_manager.clone();
+                        let yolo_mode = yolo_mode;
+                        Box::pin(async move {
+                            // Create a wrapper function that handles the mutable reference
+                            async fn bash_wrapper(
+                                call: ToolCall,
+                                security_manager: Arc<RwLock<BashSecurityManager>>,
+                                yolo_mode: bool,
+                            ) -> Result<ToolResult> {
+                                let mut manager = security_manager.write().await;
+                                bash(&call, &mut *manager, yolo_mode).await
+                            }
 
-                        bash_wrapper(call, security_manager, yolo_mode).await
-                    })
-                }),
-            },
-        );
+                            bash_wrapper(call, security_manager, yolo_mode).await
+                        })
+                    }),
+                },
+            );
+        }
 
         Self {
             client,
@@ -144,7 +149,83 @@ impl Agent {
             bash_security_manager,
             file_security_manager,
             yolo_mode,
+            plan_mode,
+            plan_mode_saved_system_prompt: None,
         }
+    }
+
+    fn is_plan_safe_tool(tool_name: &str) -> bool {
+        matches!(
+            tool_name,
+            "list_directory" | "read_file" | "search_in_files"
+        )
+    }
+
+    fn derive_plan_title(plan_markdown: &str) -> Option<String> {
+        plan_markdown
+            .lines()
+            .find_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.starts_with('#') {
+                    let title = trimmed.trim_start_matches('#').trim().to_string();
+                    if !title.is_empty() {
+                        Some(title)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+    }
+
+    async fn persist_plan(
+        &self,
+        user_request: &str,
+        plan_markdown: &str,
+    ) -> Result<Option<String>> {
+        let title = Self::derive_plan_title(plan_markdown);
+        let plan_id = self
+            .conversation_manager
+            .save_plan(user_request, plan_markdown, title)
+            .await?;
+
+        if let Some(ref id) = plan_id {
+            info!("Plan saved to database with ID: {}", id);
+        } else {
+            debug!("No database configured; plan not persisted");
+        }
+
+        Ok(plan_id)
+    }
+
+    /// Load a stored plan by ID and prepare it for execution
+    pub async fn load_plan_for_execution(&mut self, plan_id: &str) -> Result<String> {
+        let db = self
+            .conversation_manager
+            .database_manager
+            .as_ref()
+            .ok_or_else(|| anyhow!("Database not configured; cannot load plans"))?
+            .clone();
+
+        let plan = db
+            .get_plan(plan_id)
+            .await?
+            .ok_or_else(|| anyhow!("Plan {} not found", plan_id))?;
+
+        // Ensure we are not in plan mode for execution
+        self.set_plan_mode(false).await?;
+
+        let title = plan
+            .title
+            .clone()
+            .unwrap_or_else(|| "Saved plan".to_string());
+        let message = format!(
+            "Execute the following saved plan (id: {} - title: {}):\n\n{}",
+            plan.id, title, plan.plan_markdown
+        );
+
+        Ok(message)
     }
 
     pub fn with_mcp_manager(mut self, mcp_manager: Arc<McpManager>) -> Self {
@@ -159,6 +240,11 @@ impl Agent {
 
     /// Refresh MCP tools from connected servers (only if they have changed)
     pub async fn refresh_mcp_tools(&mut self) -> Result<()> {
+        if self.plan_mode {
+            debug!("Plan mode enabled; skipping MCP tool refresh (read-only mode)");
+            return Ok(());
+        }
+
         if let Some(mcp_manager) = &self.mcp_manager {
             // Check if tools have changed since last refresh
             let current_version = mcp_manager.get_tools_version().await;
@@ -229,6 +315,11 @@ impl Agent {
 
     /// Force refresh MCP tools regardless of version
     pub async fn force_refresh_mcp_tools(&mut self) -> Result<()> {
+        if self.plan_mode {
+            debug!("Plan mode enabled; skipping forced MCP tool refresh");
+            return Ok(());
+        }
+
         if let Some(_mcp_manager) = &self.mcp_manager {
             // Reset version to force refresh
             self.last_mcp_tools_version = 0;
@@ -276,6 +367,88 @@ impl Agent {
     /// Set the system prompt for the conversation
     pub fn set_system_prompt(&mut self, system_prompt: String) {
         self.conversation_manager.system_prompt = Some(system_prompt);
+    }
+
+    /// Apply the plan-mode system prompt while preserving any existing prompt context
+    pub fn apply_plan_mode_prompt(&mut self) {
+        let existing_prompt = self.conversation_manager.system_prompt.clone();
+        // Save the pre-plan prompt once when enabling
+        if self.plan_mode_saved_system_prompt.is_none() {
+            self.plan_mode_saved_system_prompt = Some(existing_prompt.clone());
+        }
+        let mut prompt = String::from(
+            "You are operating in plan mode. Do not execute tools that change the system or write to files. \
+            Use only read-only tools when absolutely necessary to gather context. \
+            Analyze the user's request and produce a complete, actionable implementation plan in Markdown. \
+            Structure the plan with clear goals, assumptions/context, ordered steps, risks, and validation. \
+            Do not perform the work or request approvals—only return the plan.",
+        );
+
+        if let Some(existing) = existing_prompt {
+            prompt.push_str("\n\nAdditional context to respect:\n");
+            prompt.push_str(&existing);
+        }
+
+        self.conversation_manager.system_prompt = Some(prompt);
+    }
+
+    /// Toggle plan mode at runtime, updating tool availability and prompts
+    pub async fn set_plan_mode(&mut self, enabled: bool) -> Result<()> {
+        if enabled == self.plan_mode {
+            return Ok(());
+        }
+
+        self.plan_mode = enabled;
+
+        {
+            let mut tools = self.tools.write().await;
+            if enabled {
+                tools.retain(|name, _| Self::is_plan_safe_tool(name));
+            } else {
+                // Rebuild essential tools when exiting plan mode
+                if !tools.contains_key("bash") {
+                    let bash_tool =
+                        create_bash_tool(self.bash_security_manager.clone(), self.yolo_mode);
+                    tools.insert("bash".to_string(), bash_tool);
+                }
+                let file_security_manager = self.file_security_manager.clone();
+                let yolo_mode = self.yolo_mode;
+
+                if !tools.contains_key("write_file") {
+                    let write_file_tool =
+                        create_write_file_tool(file_security_manager.clone(), yolo_mode);
+                    tools.insert("write_file".to_string(), write_file_tool);
+                }
+                if !tools.contains_key("edit_file") {
+                    let edit_file_tool =
+                        create_edit_file_tool(file_security_manager.clone(), yolo_mode);
+                    tools.insert("edit_file".to_string(), edit_file_tool);
+                }
+                if !tools.contains_key("delete_file") {
+                    let delete_file_tool =
+                        create_delete_file_tool(file_security_manager.clone(), yolo_mode);
+                    tools.insert("delete_file".to_string(), delete_file_tool);
+                }
+                if !tools.contains_key("create_directory") {
+                    let create_directory_tool =
+                        create_create_directory_tool(file_security_manager.clone(), yolo_mode);
+                    tools.insert("create_directory".to_string(), create_directory_tool);
+                }
+            }
+        }
+
+        if enabled {
+            self.apply_plan_mode_prompt();
+        } else if let Some(saved) = self.plan_mode_saved_system_prompt.take() {
+            self.conversation_manager.system_prompt = saved;
+        }
+
+        // Refresh MCP tools only when leaving plan mode (plan mode skips refresh)
+        if !enabled {
+            let _ = self.force_refresh_mcp_tools().await;
+        }
+
+        Ok(())
     }
 
     /// Add a file as context to the conversation
@@ -376,7 +549,11 @@ impl Agent {
 
             let available_tools: Vec<Tool> = {
                 let tools = self.tools.read().await;
-                tools.values().cloned().collect()
+                tools
+                    .values()
+                    .filter(|tool| !self.plan_mode || Self::is_plan_safe_tool(&tool.name))
+                    .cloned()
+                    .collect()
             };
 
             // Call Anthropic API with streaming if callback provided
@@ -450,6 +627,22 @@ impl Agent {
                 if final_response.is_empty() {
                     final_response = "(No response received from assistant)".to_string();
                 }
+
+                if self.plan_mode && !final_response.is_empty() {
+                    match self
+                        .persist_plan(&cleaned_message, &final_response)
+                        .await
+                    {
+                        Ok(Some(plan_id)) => {
+                            final_response
+                                .push_str(&format!("\n\n_Plan saved with ID: `{}`._", plan_id));
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            warn!("Failed to persist plan: {}", e);
+                        }
+                    }
+                }
                 break;
             }
 
@@ -474,6 +667,24 @@ impl Agent {
                     // Show tool call details
                     if should_use_pretty_output() {
                         display.show_call_details(&call.arguments);
+                    }
+
+                    if self.plan_mode && !Self::is_plan_safe_tool(&call.name) {
+                        let error_content = format!(
+                            "Plan mode is read-only. Tool '{}' is disabled.",
+                            call.name
+                        );
+                        if should_use_pretty_output() {
+                            display.complete_error(&error_content);
+                        } else {
+                            display.complete_error(&error_content);
+                        }
+                        results.push(ToolResult {
+                            tool_use_id: call.id.clone(),
+                            content: error_content,
+                            is_error: true,
+                        });
+                        continue;
                     }
 
                     // Special handling for MCP tools
