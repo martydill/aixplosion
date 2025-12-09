@@ -287,7 +287,17 @@ async fn handle_agent_command(
             if let Some(config) = subagent_manager.get_subagent(name) {
                 match agent.switch_to_subagent(config).await {
                     Ok(_) => {
-                        println!("{} Switched to subagent: {}", "✅".green(), name.cyan());
+                        // Clear conversation context when switching to subagent
+                        match agent.clear_conversation_keep_agents_md().await {
+                            Ok(_) => {
+                                println!("{} Switched to subagent: {}", "✅".green(), name.cyan());
+                                println!("{} Conversation context cleared", "🗑️".blue());
+                            }
+                            Err(e) => {
+                                println!("{} Switched to subagent: {}", "✅".green(), name.cyan());
+                                eprintln!("{} Failed to clear conversation context: {}", "⚠️".yellow(), e);
+                            }
+                        }
                     }
                     Err(e) => {
                         eprintln!("{} Failed to switch to subagent: {}", "✗".red(), e);
@@ -303,6 +313,7 @@ async fn handle_agent_command(
             match agent.exit_subagent().await {
                 Ok(_) => {
                     println!("{} Exited subagent mode", "✅".green());
+                    println!("{} Previous conversation context restored", "🔄".blue());
                 }
                 Err(e) => {
                     eprintln!("{} Failed to exit subagent mode: {}", "✗".red(), e);

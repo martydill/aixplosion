@@ -9,6 +9,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+// Structure to save conversation context when switching to subagent
+#[derive(Debug, Clone)]
+struct SavedConversationContext {
+    conversation: Vec<crate::anthropic::Message>,
+    system_prompt: Option<String>,
+    current_conversation_id: Option<String>,
+    model: String,
+}
+
 use crate::anthropic::{AnthropicClient, ContentBlock, Message, Usage};
 use crate::config::Config;
 use crate::conversation::ConversationManager;
@@ -69,6 +78,8 @@ pub struct Agent {
     yolo_mode: bool,
     plan_mode: bool,
     plan_mode_saved_system_prompt: Option<Option<String>>,
+    // Store previous context when switching to subagent
+    saved_conversation_context: Option<SavedConversationContext>,
 }
 
 impl Agent {
@@ -152,6 +163,7 @@ impl Agent {
             yolo_mode,
             plan_mode,
             plan_mode_saved_system_prompt: None,
+            saved_conversation_context: None,
         }
     }
 
@@ -1463,9 +1475,17 @@ impl Agent {
         &mut self,
         subagent_config: &subagent::SubagentConfig,
     ) -> Result<()> {
+        // Save current conversation context before switching
+        self.saved_conversation_context = Some(SavedConversationContext {
+            conversation: self.conversation_manager.conversation.clone(),
+            system_prompt: self.conversation_manager.system_prompt.clone(),
+            current_conversation_id: self.conversation_manager.current_conversation_id.clone(),
+            model: self.model.clone(),
+        });
+
         // Set system prompt
         self.conversation_manager.system_prompt = Some(subagent_config.system_prompt.clone());
-        
+
         // Update model if specified
         if let Some(ref new_model) = subagent_config.model {
             self.model = new_model.clone();
@@ -1495,8 +1515,17 @@ impl Agent {
     }
 
     pub async fn exit_subagent(&mut self) -> Result<()> {
-        // Reset to default configuration
-        self.conversation_manager.system_prompt = None;
+        // Restore saved conversation context if available
+        if let Some(saved_context) = self.saved_conversation_context.take() {
+            self.conversation_manager.conversation = saved_context.conversation;
+            self.conversation_manager.system_prompt = saved_context.system_prompt;
+            self.conversation_manager.current_conversation_id = saved_context.current_conversation_id;
+            self.model = saved_context.model;
+        } else {
+            // Reset to default configuration if no saved context
+            self.conversation_manager.system_prompt = None;
+        }
+
         // Restore all tools
         let _ = self.force_refresh_mcp_tools().await;
         Ok(())
