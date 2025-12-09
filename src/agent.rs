@@ -21,6 +21,7 @@ use crate::tools::{
     create_directory, create_edit_file_tool, create_write_file_tool, delete_file, edit_file,
     get_builtin_tools, write_file, Tool, ToolCall, ToolResult,
 };
+use crate::subagent;
 
 #[derive(Debug, Clone)]
 pub struct TokenUsage {
@@ -1458,10 +1459,62 @@ impl Agent {
             .await
     }
 
+    pub async fn switch_to_subagent(
+        &mut self,
+        subagent_config: &subagent::SubagentConfig,
+    ) -> Result<()> {
+        // Set system prompt
+        self.conversation_manager.system_prompt = Some(subagent_config.system_prompt.clone());
+        
+        // Update model if specified
+        if let Some(ref new_model) = subagent_config.model {
+            self.model = new_model.clone();
+        }
+
+        // Filter tools based on subagent configuration
+        let mut tools = self.tools.write().await;
+        self.filter_tools_for_subagent(&mut tools, subagent_config);
+
+        Ok(())
+    }
+
+    fn filter_tools_for_subagent(
+        &self,
+        tools: &mut std::collections::HashMap<String, Tool>,
+        config: &subagent::SubagentConfig,
+    ) {
+        // Remove denied tools
+        for tool_name in &config.denied_tools {
+            tools.remove(tool_name);
+        }
+
+        // If allowed_tools is not empty, keep only those
+        if !config.allowed_tools.is_empty() {
+            tools.retain(|name, _| config.allowed_tools.contains(name));
+        }
+    }
+
+    pub async fn exit_subagent(&mut self) -> Result<()> {
+        // Reset to default configuration
+        self.conversation_manager.system_prompt = None;
+        // Restore all tools
+        let _ = self.force_refresh_mcp_tools().await;
+        Ok(())
+    }
+
+    pub fn is_subagent_mode(&self) -> bool {
+        self.conversation_manager.system_prompt.is_some() &&
+        !self.conversation_manager.system_prompt.as_ref()
+            .unwrap_or(&String::new())
+            .contains("default_system_prompt")
+    }
+
+    pub fn get_system_prompt(&self) -> Option<&String> {
+        self.conversation_manager.system_prompt.as_ref()
+    }
+
     pub async fn clear_conversation_keep_agents_md(&mut self) -> Result<()> {
-        self.conversation_manager
-            .clear_conversation_keep_agents_md()
-            .await?;
+        self.conversation_manager.clear_conversation_keep_agents_md().await?;
         Ok(())
     }
 }

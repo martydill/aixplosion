@@ -20,10 +20,10 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
  - Session resuming via /resume
  - Full text conversation search via /search
  - Plan mode and /plan command support for managing plans and toggling plan mode
+ - Subagent support via /agent
  
 
 ## Todo 
- - Subagents
  - Git worktrees
  - Token speedometer
  - Hooks

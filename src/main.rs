@@ -25,6 +25,7 @@ mod input;
 mod logo;
 mod mcp;
 mod security;
+mod subagent;
 mod tool_display;
 mod tools;
 
@@ -192,6 +193,216 @@ fn get_home_agents_md_path() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join(".aixplosion")
         .join("AGENTS.md")
+}
+
+async fn handle_agent_command(
+    args: &[&str],
+    agent: &mut Agent,
+    formatter: &formatter::CodeFormatter,
+    stream: bool,
+) -> Result<()> {
+    let mut subagent_manager = subagent::SubagentManager::new()?;
+    subagent_manager.load_all_subagents().await?;
+
+    if args.is_empty() {
+        // Show current subagent status
+        if agent.is_subagent_mode() {
+            println!("{}", "🤖 Current Subagent".cyan().bold());
+            println!("  You are currently in a subagent session");
+            println!("  Use '/agent exit' to return to default mode");
+        } else {
+            println!("{}", "🤖 Subagent Management".cyan().bold());
+            println!("  No subagent currently active");
+        }
+        println!();
+        print_agent_help();
+        return Ok(());
+    }
+
+    match args[0] {
+        "list" => {
+            let subagents = subagent_manager.list_subagents();
+            if subagents.is_empty() {
+                println!("{}", "No subagents configured. Use '/agent create' to create one.".yellow());
+                return Ok(());
+            }
+
+            println!("{}", "🤖 Available Subagents".cyan().bold());
+            println!();
+            for subagent in subagents {
+                let status = if agent.is_subagent_mode() &&
+                             agent.get_system_prompt()
+                                .map_or(false, |p| p.contains(&subagent.system_prompt)) {
+                    "✅ Active".green().to_string()
+                } else {
+                    "⏸️ Inactive".yellow().to_string()
+                };
+
+                println!("  {} {} ({})", "Agent:".bold(), subagent.name.cyan(), status);
+                if !subagent.allowed_tools.is_empty() {
+                    let allowed_tools: Vec<&str> = subagent.allowed_tools.iter().map(|s| s.as_str()).collect();
+                    println!("  Allowed tools: {}", allowed_tools.join(", "));
+                }
+                if !subagent.denied_tools.is_empty() {
+                    let denied_tools: Vec<&str> = subagent.denied_tools.iter().map(|s| s.as_str()).collect();
+                    println!("  Denied tools: {}", denied_tools.join(", "));
+                }
+                println!();
+            }
+        }
+        "create" => {
+            if args.len() < 3 {
+                println!("{} Usage: /agent create <name> <system_prompt>", "⚠️".yellow());
+                println!("{} Example: /agent create rust-expert \"You are a Rust expert...\"", "💡".blue());
+                return Ok(());
+            }
+
+            let name = args[1];
+            let system_prompt = args[2..].join(" ");
+
+            // Default tool set for new subagent
+            let allowed_tools = vec![
+                "search_in_files".to_string(),
+                "list_directory".to_string(),
+                "read_file".to_string(),
+            ];
+
+            match subagent_manager.create_subagent(name, &system_prompt, allowed_tools, vec![]).await {
+                Ok(config) => {
+                    println!("{} Created subagent: {}", "✅".green(), name.cyan());
+                    println!("  Config file: ~/.aixplosion/agents/{}.md", name);
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to create subagent: {}", "✗".red(), e);
+                }
+            }
+        }
+        "use" | "switch" => {
+            if args.len() < 2 {
+                println!("{} Usage: /agent use <name>", "⚠️".yellow());
+                return Ok(());
+            }
+
+            let name = args[1];
+            if let Some(config) = subagent_manager.get_subagent(name) {
+                match agent.switch_to_subagent(config).await {
+                    Ok(_) => {
+                        println!("{} Switched to subagent: {}", "✅".green(), name.cyan());
+                    }
+                    Err(e) => {
+                        eprintln!("{} Failed to switch to subagent: {}", "✗".red(), e);
+                    }
+                }
+            } else {
+                eprintln!("{} Subagent '{}' not found", "✗".red(), name);
+                println!("{} Available subagents: {}", "💡".blue(),
+                    subagent_manager.list_subagents().iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "));
+            }
+        }
+        "exit" => {
+            match agent.exit_subagent().await {
+                Ok(_) => {
+                    println!("{} Exited subagent mode", "✅".green());
+                }
+                Err(e) => {
+                    eprintln!("{} Failed to exit subagent mode: {}", "✗".red(), e);
+                }
+            }
+        }
+        "delete" => {
+            if args.len() < 2 {
+                println!("{} Usage: /agent delete <name>", "⚠️".yellow());
+                return Ok(());
+            }
+
+            let name = args[1];
+            println!("{} Are you sure you want to delete subagent '{}'?", "⚠️".yellow(), name);
+            println!("  This action cannot be undone.");
+            println!("  Use '/agent delete {} --confirm' to proceed", name);
+            
+            if args.len() > 2 && args[2] == "--confirm" {
+                match subagent_manager.delete_subagent(name).await {
+                    Ok(_) => {
+                        println!("{} Deleted subagent: {}", "✅".green(), name);
+                    }
+                    Err(e) => {
+                        eprintln!("{} Failed to delete subagent: {}", "✗".red(), e);
+                    }
+                }
+            }
+        }
+        "edit" => {
+            if args.len() < 2 {
+                println!("{} Usage: /agent edit <name>", "⚠️".yellow());
+                return Ok(());
+            }
+
+            let name = args[1];
+            let file_path = dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".aixplosion")
+                .join("agents")
+                .join(format!("{}.md", name));
+
+            if file_path.exists() {
+                println!("{} Opening subagent config for editing: {}", "📝".blue(), file_path.display());
+                
+                // Try to open in default editor
+                #[cfg(target_os = "windows")]
+                let _ = std::process::Command::new("notepad").arg(&file_path).status();
+                
+                #[cfg(not(target_os = "windows"))]
+                {
+                    if let Ok(editor) = std::env::var("EDITOR") {
+                        let _ = std::process::Command::new(editor).arg(&file_path).status();
+                    } else {
+                        let _ = std::process::Command::new("nano").arg(&file_path).status();
+                    }
+                }
+                
+                println!("{} After editing, use '/agent reload {}' to apply changes", "💡".blue(), name);
+            } else {
+                eprintln!("{} Subagent '{}' not found", "✗".red(), name);
+            }
+        }
+        "reload" => {
+            subagent_manager.load_all_subagents().await?;
+            println!("{} Reloaded subagent configurations", "✅".green());
+        }
+        "help" => {
+            print_agent_help();
+        }
+        _ => {
+            println!("{} Unknown agent command: {}", "⚠️".yellow(), args[0]);
+            print_agent_help();
+        }
+    }
+
+    Ok(())
+}
+
+fn print_agent_help() {
+    println!("{}", "🤖 Subagent Commands".cyan().bold());
+    println!();
+    println!("{}", "Management:".green().bold());
+    println!("  /agent list                    - List all subagents");
+    println!("  /agent create <name> <prompt> - Create new subagent");
+    println!("  /agent delete <name> [--confirm] - Delete subagent");
+    println!("  /agent edit <name>             - Edit subagent configuration");
+    println!("  /agent reload                  - Reload configurations from disk");
+    println!();
+    println!("{}", "Usage:".green().bold());
+    println!("  /agent use <name>              - Switch to subagent");
+    println!("  /agent switch <name>           - Alias for use");
+    println!("  /agent exit                    - Exit subagent mode");
+    println!("  /agent                         - Show current status");
+    println!();
+    println!("{}", "Examples:".green().bold());
+    println!("  /agent create rust-expert \"You are a Rust expert...\"");
+    println!("  /agent use rust-expert");
+    println!("  /agent list");
+    println!("  /agent exit");
+    println!();
 }
 
 async fn handle_shell_command(command: &str, _agent: &mut Agent) -> Result<()> {
@@ -690,6 +901,10 @@ async fn handle_slash_command(
                     );
                 }
             }
+            Ok(true)
+        }
+        "/agent" => {
+            handle_agent_command(&parts[1..], agent, formatter, stream).await?;
             Ok(true)
         }
         "/exit" | "/quit" => {
