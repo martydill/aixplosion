@@ -16,6 +16,7 @@ pub struct ConversationManager {
     pub current_conversation_id: Option<String>,
     pub database_manager: Option<Arc<DatabaseManager>>,
     pub model: String,
+    pub subagent: Option<String>,
 }
 
 impl ConversationManager {
@@ -30,6 +31,7 @@ impl ConversationManager {
             current_conversation_id: None,
             database_manager,
             model,
+            subagent: None,
         }
     }
 
@@ -38,7 +40,11 @@ impl ConversationManager {
         if let Some(database_manager) = &self.database_manager {
             // Create new conversation in database
             let conversation_id = database_manager
-                .create_conversation(self.system_prompt.clone(), &self.model)
+                .create_conversation(
+                    self.system_prompt.clone(),
+                    &self.model,
+                    self.subagent.as_deref()
+                )
                 .await?;
 
             // Update current conversation tracking
@@ -245,6 +251,7 @@ impl ConversationManager {
         conversation_id: String,
         system_prompt: Option<String>,
         model: String,
+        subagent: Option<String>,
         messages: &[StoredMessage],
     ) {
         self.conversation.clear();
@@ -259,6 +266,7 @@ impl ConversationManager {
         self.current_conversation_id = Some(conversation_id);
         self.system_prompt = system_prompt;
         self.model = model;
+        self.subagent = subagent;
     }
 
     /// Display the current conversation context

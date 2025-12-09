@@ -1437,6 +1437,7 @@ impl Agent {
             conversation.id.clone(),
             conversation.system_prompt.clone(),
             conversation.model.clone(),
+            conversation.subagent.clone(),
             &messages,
         );
 
@@ -1486,10 +1487,16 @@ impl Agent {
         // Set system prompt
         self.conversation_manager.system_prompt = Some(subagent_config.system_prompt.clone());
 
+        // Set subagent name in conversation manager
+        self.conversation_manager.subagent = Some(subagent_config.name.clone());
+
         // Update model if specified
         if let Some(ref new_model) = subagent_config.model {
             self.model = new_model.clone();
         }
+
+        // Start a new conversation for the subagent
+        let _ = self.conversation_manager.start_new_conversation().await;
 
         // Filter tools based on subagent configuration
         let mut tools = self.tools.write().await;
@@ -1515,6 +1522,9 @@ impl Agent {
     }
 
     pub async fn exit_subagent(&mut self) -> Result<()> {
+        // Clear subagent field
+        self.conversation_manager.subagent = None;
+
         // Restore saved conversation context if available
         if let Some(saved_context) = self.saved_conversation_context.take() {
             self.conversation_manager.conversation = saved_context.conversation;

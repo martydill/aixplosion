@@ -87,6 +87,7 @@ impl DatabaseManager {
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 system_prompt TEXT,
                 model TEXT NOT NULL,
+                subagent TEXT,
                 total_tokens INTEGER DEFAULT 0,
                 request_count INTEGER DEFAULT 0
             )
@@ -94,6 +95,17 @@ impl DatabaseManager {
         )
         .execute(&self.pool)
         .await?;
+
+        // Add subagent column to existing conversations table if it doesn't exist
+        // This migration handles databases created before the subagent feature
+        sqlx::query(
+            r#"
+            ALTER TABLE conversations ADD COLUMN subagent TEXT
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .ok(); // Ignore error if column already exists
 
         // Create messages table
         sqlx::query(
@@ -298,6 +310,7 @@ pub struct Conversation {
     pub updated_at: DateTime<Utc>,
     pub system_prompt: Option<String>,
     pub model: String,
+    pub subagent: Option<String>,
     pub total_tokens: i32,
     pub request_count: i32,
 }
@@ -331,19 +344,20 @@ impl DatabaseManager {
         &self,
         system_prompt: Option<String>,
         model: &str,
+        subagent: Option<&str>,
     ) -> Result<String> {
         let conversation_id = Uuid::new_v4().to_string();
         let now = Utc::now();
 
         debug!(
-            "Creating new conversation: {} with model: {}",
-            conversation_id, model
+            "Creating new conversation: {} with model: {} and subagent: {:?}",
+            conversation_id, model, subagent
         );
 
         sqlx::query(
             r#"
-            INSERT INTO conversations (id, created_at, updated_at, system_prompt, model, total_tokens, request_count)
-            VALUES (?, ?, ?, ?, ?, 0, 0)
+            INSERT INTO conversations (id, created_at, updated_at, system_prompt, model, subagent, total_tokens, request_count)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 0)
             "#
         )
         .bind(&conversation_id)
@@ -351,6 +365,7 @@ impl DatabaseManager {
         .bind(now)
         .bind(&system_prompt)
         .bind(model)
+        .bind(subagent)
         .execute(&self.pool)
         .await?;
 
@@ -472,7 +487,7 @@ impl DatabaseManager {
     pub async fn get_conversation(&self, conversation_id: &str) -> Result<Option<Conversation>> {
         let row = sqlx::query(
             r#"
-            SELECT id, created_at, updated_at, system_prompt, model, total_tokens, request_count
+            SELECT id, created_at, updated_at, system_prompt, model, subagent, total_tokens, request_count
             FROM conversations
             WHERE id = ?
             "#,
@@ -488,6 +503,7 @@ impl DatabaseManager {
                 updated_at: row.get("updated_at"),
                 system_prompt: row.get("system_prompt"),
                 model: row.get("model"),
+                subagent: row.get("subagent"),
                 total_tokens: row.get("total_tokens"),
                 request_count: row.get("request_count"),
             }))
@@ -534,7 +550,7 @@ impl DatabaseManager {
         // Base query is shared with /resume; optional filter narrows by message content
         let mut query = String::from(
             r#"
-            SELECT id, created_at, updated_at, system_prompt, model, total_tokens, request_count
+            SELECT id, created_at, updated_at, system_prompt, model, subagent, total_tokens, request_count
             FROM conversations c
             WHERE EXISTS (
                 SELECT 1 FROM messages m WHERE m.conversation_id = c.id
@@ -572,6 +588,7 @@ impl DatabaseManager {
                 updated_at: row.get("updated_at"),
                 system_prompt: row.get("system_prompt"),
                 model: row.get("model"),
+                subagent: row.get("subagent"),
                 total_tokens: row.get("total_tokens"),
                 request_count: row.get("request_count"),
             })
