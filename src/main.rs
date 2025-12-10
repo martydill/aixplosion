@@ -26,7 +26,7 @@ mod logo;
 mod mcp;
 mod security;
 mod subagent;
-mod tool_display;
+
 mod tools;
 
 #[cfg(test)]

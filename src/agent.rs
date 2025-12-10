@@ -1,5 +1,6 @@
 use crate::mcp::McpManager;
 use crate::security::{BashSecurityManager, FileSecurityManager};
+use crate::tools::display::DisplayFactory;
 use anyhow::{anyhow, Result};
 use colored::*;
 use log::{debug, error, info, warn};
@@ -22,13 +23,10 @@ use crate::anthropic::{AnthropicClient, ContentBlock, Message, Usage};
 use crate::config::Config;
 use crate::conversation::ConversationManager;
 use crate::database::{Conversation as StoredConversation, DatabaseManager};
-use crate::tool_display::{
-    should_use_pretty_output, SimpleToolDisplay, ToolCallDisplay, ToolDisplay,
-};
 use crate::tools::{
     bash, create_bash_tool, create_create_directory_tool, create_delete_file_tool,
     create_directory, create_edit_file_tool, create_write_file_tool, delete_file, edit_file,
-    get_builtin_tools, write_file, Tool, ToolCall, ToolResult,
+    get_builtin_tools, write_file, Tool, ToolCall, ToolResult, ToolRegistry,
 };
 use crate::subagent;
 
@@ -80,6 +78,8 @@ pub struct Agent {
     plan_mode_saved_system_prompt: Option<Option<String>>,
     // Store previous context when switching to subagent
     saved_conversation_context: Option<SavedConversationContext>,
+    // New display system components
+    tool_registry: Arc<RwLock<ToolRegistry>>,
 }
 
 impl Agent {
@@ -146,6 +146,7 @@ impl Agent {
                             bash_wrapper(call, security_manager, yolo_mode).await
                         })
                     }),
+                    metadata: None, // TODO: Add metadata for bash tool
                 },
             );
         }
@@ -164,6 +165,8 @@ impl Agent {
             plan_mode,
             plan_mode_saved_system_prompt: None,
             saved_conversation_context: None,
+            // Initialize the new tool registry
+            tool_registry: Arc::new(RwLock::new(ToolRegistry::with_builtin_tools())),
         }
     }
 
@@ -596,7 +599,6 @@ impl Agent {
                     )
                     .await?
             };
-
             // Track token usage
             if let Some(usage) = &response.usage {
                 self.token_usage.add_usage(usage);
@@ -659,7 +661,7 @@ impl Agent {
                 break;
             }
 
-            // Execute tool calls with pretty output
+            // Execute tool calls using the new display system
             let tool_results: Vec<ToolResult> = {
                 let mut results = Vec::new();
                 for call in &tool_calls {
@@ -670,28 +672,12 @@ impl Agent {
 
                     debug!("Executing tool: {} with ID: {}", call.name, call.id);
 
-                    // Create pretty display for this tool call
-                    let mut display: Box<dyn ToolDisplay> = if should_use_pretty_output() {
-                        Box::new(ToolCallDisplay::new(&call.name))
-                    } else {
-                        Box::new(SimpleToolDisplay::new(&call.name))
-                    };
-
-                    // Show tool call details
-                    if should_use_pretty_output() {
-                        display.show_call_details(&call.arguments);
-                    }
-
+                    // Handle plan mode restrictions
                     if self.plan_mode && !Self::is_plan_safe_tool(&call.name) {
                         let error_content = format!(
                             "Plan mode is read-only. Tool '{}' is disabled.",
                             call.name
                         );
-                        if should_use_pretty_output() {
-                            display.complete_error(&error_content);
-                        } else {
-                            display.complete_error(&error_content);
-                        }
                         results.push(ToolResult {
                             tool_use_id: call.id.clone(),
                             content: error_content,
@@ -700,577 +686,9 @@ impl Agent {
                         continue;
                     }
 
-                    // Special handling for MCP tools
-                    if call.name.starts_with("mcp_") {
-                        if let Some(mcp_manager) = &self.mcp_manager {
-                            // Extract server name and tool name from the call
-                            let parts: Vec<&str> = call.name.splitn(3, '_').collect();
-                            if parts.len() >= 3 {
-                                let server_name = parts[1];
-                                let tool_name = parts[2..].join("_");
-
-                                match mcp_manager
-                                    .call_tool(
-                                        server_name,
-                                        &tool_name,
-                                        Some(call.arguments.clone()),
-                                    )
-                                    .await
-                                {
-                                    Ok(result) => {
-                                        debug!("MCP tool '{}' executed successfully", call.name);
-                                        let result_content = serde_json::to_string_pretty(&result)
-                                            .unwrap_or_else(|_| "Invalid JSON result".to_string());
-
-                                        if should_use_pretty_output() {
-                                            display.complete_success(&result_content);
-                                        } else {
-                                            display.complete_success(&result_content);
-                                        }
-
-                                        results.push(ToolResult {
-                                            tool_use_id: call.id.clone(),
-                                            content: result_content,
-                                            is_error: false,
-                                        });
-                                    }
-                                    Err(e) => {
-                                        error!("Error executing MCP tool '{}': {}", call.name, e);
-                                        error!("MCP server '{}' may have encountered an error or is unavailable", server_name);
-
-                                        // Provide detailed error information
-                                        let error_content = format!(
-                                            "MCP tool call failed: {}. \n\
-                                            Tool: {}\n\
-                                            Server: {}\n\
-                                            Arguments: {}\n\
-                                            Please check:\n\
-                                            1. MCP server '{}' is running\n\
-                                            2. Server is responsive\n\
-                                            3. Tool arguments are correct\n\
-                                            4. Server has proper permissions",
-                                            e,
-                                            call.name,
-                                            server_name,
-                                            serde_json::to_string_pretty(&call.arguments)
-                                                .unwrap_or_else(|_| "Invalid JSON".to_string()),
-                                            server_name
-                                        );
-
-                                        if should_use_pretty_output() {
-                                            display.complete_error(&error_content);
-                                        } else {
-                                            display.complete_error(&error_content);
-                                        }
-
-                                        results.push(ToolResult {
-                                            tool_use_id: call.id.clone(),
-                                            content: error_content,
-                                            is_error: true,
-                                        });
-                                    }
-                                }
-                            } else {
-                                let error_content =
-                                    format!("Invalid MCP tool name format: {}", call.name);
-                                if should_use_pretty_output() {
-                                    display.complete_error(&error_content);
-                                } else {
-                                    display.complete_error(&error_content);
-                                }
-
-                                results.push(ToolResult {
-                                    tool_use_id: call.id.clone(),
-                                    content: error_content,
-                                    is_error: true,
-                                });
-                            }
-                        } else {
-                            let error_content = "MCP manager not available. MCP tools cannot be executed without proper initialization.";
-                            if should_use_pretty_output() {
-                                display.complete_error(error_content);
-                            } else {
-                                display.complete_error(error_content);
-                            }
-
-                            results.push(ToolResult {
-                                tool_use_id: call.id.clone(),
-                                content: error_content.to_string(),
-                                is_error: true,
-                            });
-                        }
-                    } else if call.name == "bash" {
-                        // Handle bash tool with security
-                        let security_manager = self.bash_security_manager.clone();
-                        let call_clone = call.clone();
-
-                        // We need to get a mutable reference to the security manager
-                        let mut manager = security_manager.write().await;
-                        match bash(&call_clone, &mut *manager, self.yolo_mode).await {
-                            Ok(result) => {
-                                debug!("Bash tool executed successfully");
-
-                                // Check if permissions were updated and save to config
-                                if result.content.contains(
-                                    "💾 Note: This command has been added to your allowlist",
-                                ) {
-                                    info!("Permissions updated, scheduling save to config file");
-                                    // Get the current security settings to save in background
-                                    let security_manager_clone = self.bash_security_manager.clone();
-                                    tokio::spawn(async move {
-                                        // Load existing config to preserve other settings
-                                        match crate::config::Config::load(None).await {
-                                            Ok(mut existing_config) => {
-                                                // Get current security settings
-                                                let current_security =
-                                                    security_manager_clone.read().await;
-                                                let updated_security =
-                                                    current_security.get_security().clone();
-                                                drop(current_security);
-
-                                                // Update only the bash_security settings
-                                                existing_config.bash_security = updated_security;
-
-                                                // Save the updated config
-                                                match existing_config.save(None).await {
-                                                    Ok(_) => {
-                                                        info!("Updated bash security settings saved to config (background)");
-                                                    }
-                                                    Err(e) => {
-                                                        warn!("Failed to save bash security settings (background): {}", e);
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                warn!("Failed to load config for saving permissions (background): {}", e);
-                                            }
-                                        }
-                                    });
-                                }
-
-                                if result.is_error {
-                                    if should_use_pretty_output() {
-                                        display.complete_error(&result.content);
-                                    } else {
-                                        display.complete_error(&result.content);
-                                    }
-                                } else {
-                                    if should_use_pretty_output() {
-                                        display.complete_success(&result.content);
-                                    } else {
-                                        display.complete_success(&result.content);
-                                    }
-                                }
-                                results.push(result);
-                            }
-                            Err(e) => {
-                                error!("Error executing bash tool: {}", e);
-                                let error_content = format!("Error executing bash tool: {}", e);
-                                if should_use_pretty_output() {
-                                    display.complete_error(&error_content);
-                                } else {
-                                    display.complete_error(&error_content);
-                                }
-                                results.push(ToolResult {
-                                    tool_use_id: call.id.clone(),
-                                    content: error_content,
-                                    is_error: true,
-                                });
-                            }
-                        };
-                        drop(manager); // Explicitly drop the lock guard
-                    } else if call.name == "write_file" {
-                        // Handle write_file tool with security
-                        let file_security_manager = self.file_security_manager.clone();
-                        let call_clone = call.clone();
-
-                        let mut manager = file_security_manager.write().await;
-                        match write_file(&call_clone, &mut *manager, self.yolo_mode).await {
-                            Ok(result) => {
-                                debug!("Write file tool executed successfully");
-
-                                // Check if permissions were updated and save to config
-                                if result
-                                    .content
-                                    .contains("✅ All file operations allowed for this session")
-                                {
-                                    info!(
-                                        "File permissions updated, scheduling save to config file"
-                                    );
-                                    let file_security_manager_clone =
-                                        self.file_security_manager.clone();
-                                    tokio::spawn(async move {
-                                        // Load existing config to preserve other settings
-                                        match crate::config::Config::load(None).await {
-                                            Ok(mut existing_config) => {
-                                                // Get current file security settings
-                                                let current_file_security =
-                                                    file_security_manager_clone.read().await;
-                                                let updated_file_security = current_file_security
-                                                    .get_file_security()
-                                                    .clone();
-                                                drop(current_file_security);
-
-                                                // Update only the file_security settings
-                                                existing_config.file_security =
-                                                    updated_file_security;
-
-                                                // Save the updated config
-                                                match existing_config.save(None).await {
-                                                    Ok(_) => {
-                                                        info!("Updated file security settings saved to config (background)");
-                                                    }
-                                                    Err(e) => {
-                                                        warn!("Failed to save file security settings (background): {}", e);
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                warn!("Failed to load config for saving file permissions (background): {}", e);
-                                            }
-                                        }
-                                    });
-                                }
-
-                                if result.is_error {
-                                    if should_use_pretty_output() {
-                                        display.complete_error(&result.content);
-                                    } else {
-                                        display.complete_error(&result.content);
-                                    }
-                                } else {
-                                    if should_use_pretty_output() {
-                                        display.complete_success(&result.content);
-                                    } else {
-                                        display.complete_success(&result.content);
-                                    }
-                                }
-                                results.push(result);
-                            }
-                            Err(e) => {
-                                error!("Error executing write file tool: {}", e);
-                                let error_content =
-                                    format!("Error executing write file tool: {}", e);
-                                if should_use_pretty_output() {
-                                    display.complete_error(&error_content);
-                                } else {
-                                    display.complete_error(&error_content);
-                                }
-                                results.push(ToolResult {
-                                    tool_use_id: call.id.clone(),
-                                    content: error_content,
-                                    is_error: true,
-                                });
-                            }
-                        };
-                        drop(manager); // Explicitly drop the lock guard
-                    } else if call.name == "edit_file" {
-                        // Handle edit_file tool with security
-                        let file_security_manager = self.file_security_manager.clone();
-                        let call_clone = call.clone();
-
-                        let mut manager = file_security_manager.write().await;
-                        match edit_file(&call_clone, &mut *manager, self.yolo_mode).await {
-                            Ok(result) => {
-                                debug!("Edit file tool executed successfully");
-
-                                // Check if permissions were updated and save to config
-                                if result
-                                    .content
-                                    .contains("✅ All file operations allowed for this session")
-                                {
-                                    info!(
-                                        "File permissions updated, scheduling save to config file"
-                                    );
-                                    let file_security_manager_clone =
-                                        self.file_security_manager.clone();
-                                    tokio::spawn(async move {
-                                        // Load existing config to preserve other settings
-                                        match crate::config::Config::load(None).await {
-                                            Ok(mut existing_config) => {
-                                                // Get current file security settings
-                                                let current_file_security =
-                                                    file_security_manager_clone.read().await;
-                                                let updated_file_security = current_file_security
-                                                    .get_file_security()
-                                                    .clone();
-                                                drop(current_file_security);
-
-                                                // Update only the file_security settings
-                                                existing_config.file_security =
-                                                    updated_file_security;
-
-                                                // Save the updated config
-                                                match existing_config.save(None).await {
-                                                    Ok(_) => {
-                                                        info!("Updated file security settings saved to config (background)");
-                                                    }
-                                                    Err(e) => {
-                                                        warn!("Failed to save file security settings (background): {}", e);
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                warn!("Failed to load config for saving file permissions (background): {}", e);
-                                            }
-                                        }
-                                    });
-                                }
-
-                                if result.is_error {
-                                    if should_use_pretty_output() {
-                                        display.complete_error(&result.content);
-                                    } else {
-                                        display.complete_error(&result.content);
-                                    }
-                                } else {
-                                    if should_use_pretty_output() {
-                                        display.complete_success(&result.content);
-                                    } else {
-                                        display.complete_success(&result.content);
-                                    }
-                                }
-                                results.push(result);
-                            }
-                            Err(e) => {
-                                error!("Error executing edit file tool: {}", e);
-                                let error_content =
-                                    format!("Error executing edit file tool: {}", e);
-                                if should_use_pretty_output() {
-                                    display.complete_error(&error_content);
-                                } else {
-                                    display.complete_error(&error_content);
-                                }
-                                results.push(ToolResult {
-                                    tool_use_id: call.id.clone(),
-                                    content: error_content,
-                                    is_error: true,
-                                });
-                            }
-                        };
-                        drop(manager); // Explicitly drop the lock guard
-                    } else if call.name == "delete_file" {
-                        // Handle delete_file tool with security
-                        let file_security_manager = self.file_security_manager.clone();
-                        let call_clone = call.clone();
-
-                        let mut manager = file_security_manager.write().await;
-                        match delete_file(&call_clone, &mut *manager, self.yolo_mode).await {
-                            Ok(result) => {
-                                debug!("Delete file tool executed successfully");
-
-                                // Check if permissions were updated and save to config
-                                if result
-                                    .content
-                                    .contains("✅ All file operations allowed for this session")
-                                {
-                                    info!(
-                                        "File permissions updated, scheduling save to config file"
-                                    );
-                                    let file_security_manager_clone =
-                                        self.file_security_manager.clone();
-                                    tokio::spawn(async move {
-                                        // Load existing config to preserve other settings
-                                        match crate::config::Config::load(None).await {
-                                            Ok(mut existing_config) => {
-                                                // Get current file security settings
-                                                let current_file_security =
-                                                    file_security_manager_clone.read().await;
-                                                let updated_file_security = current_file_security
-                                                    .get_file_security()
-                                                    .clone();
-                                                drop(current_file_security);
-
-                                                // Update only the file_security settings
-                                                existing_config.file_security =
-                                                    updated_file_security;
-
-                                                // Save the updated config
-                                                match existing_config.save(None).await {
-                                                    Ok(_) => {
-                                                        info!("Updated file security settings saved to config (background)");
-                                                    }
-                                                    Err(e) => {
-                                                        warn!("Failed to save file security settings (background): {}", e);
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                warn!("Failed to load config for saving file permissions (background): {}", e);
-                                            }
-                                        }
-                                    });
-                                }
-
-                                if result.is_error {
-                                    if should_use_pretty_output() {
-                                        display.complete_error(&result.content);
-                                    } else {
-                                        display.complete_error(&result.content);
-                                    }
-                                } else {
-                                    if should_use_pretty_output() {
-                                        display.complete_success(&result.content);
-                                    } else {
-                                        display.complete_success(&result.content);
-                                    }
-                                }
-                                results.push(result);
-                            }
-                            Err(e) => {
-                                error!("Error executing delete file tool: {}", e);
-                                let error_content =
-                                    format!("Error executing delete file tool: {}", e);
-                                if should_use_pretty_output() {
-                                    display.complete_error(&error_content);
-                                } else {
-                                    display.complete_error(&error_content);
-                                }
-                                results.push(ToolResult {
-                                    tool_use_id: call.id.clone(),
-                                    content: error_content,
-                                    is_error: true,
-                                });
-                            }
-                        };
-                        drop(manager); // Explicitly drop the lock guard
-                    } else if call.name == "create_directory" {
-                        // Handle create_directory tool with security
-                        let file_security_manager = self.file_security_manager.clone();
-                        let call_clone = call.clone();
-
-                        let mut manager = file_security_manager.write().await;
-                        match create_directory(&call_clone, &mut *manager, self.yolo_mode).await {
-                            Ok(result) => {
-                                debug!("Create directory tool executed successfully");
-
-                                // Check if permissions were updated and save to config
-                                if result
-                                    .content
-                                    .contains("✅ All file operations allowed for this session")
-                                {
-                                    info!(
-                                        "File permissions updated, scheduling save to config file"
-                                    );
-                                    let file_security_manager_clone =
-                                        self.file_security_manager.clone();
-                                    tokio::spawn(async move {
-                                        // Load existing config to preserve other settings
-                                        match crate::config::Config::load(None).await {
-                                            Ok(mut existing_config) => {
-                                                // Get current file security settings
-                                                let current_file_security =
-                                                    file_security_manager_clone.read().await;
-                                                let updated_file_security = current_file_security
-                                                    .get_file_security()
-                                                    .clone();
-                                                drop(current_file_security);
-
-                                                // Update only the file_security settings
-                                                existing_config.file_security =
-                                                    updated_file_security;
-
-                                                // Save the updated config
-                                                match existing_config.save(None).await {
-                                                    Ok(_) => {
-                                                        info!("Updated file security settings saved to config (background)");
-                                                    }
-                                                    Err(e) => {
-                                                        warn!("Failed to save file security settings (background): {}", e);
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                warn!("Failed to load config for saving file permissions (background): {}", e);
-                                            }
-                                        }
-                                    });
-                                }
-
-                                if result.is_error {
-                                    if should_use_pretty_output() {
-                                        display.complete_error(&result.content);
-                                    } else {
-                                        display.complete_error(&result.content);
-                                    }
-                                } else {
-                                    if should_use_pretty_output() {
-                                        display.complete_success(&result.content);
-                                    } else {
-                                        display.complete_success(&result.content);
-                                    }
-                                }
-                                results.push(result);
-                            }
-                            Err(e) => {
-                                error!("Error executing create directory tool: {}", e);
-                                let error_content =
-                                    format!("Error executing create directory tool: {}", e);
-                                if should_use_pretty_output() {
-                                    display.complete_error(&error_content);
-                                } else {
-                                    display.complete_error(&error_content);
-                                }
-                                results.push(ToolResult {
-                                    tool_use_id: call.id.clone(),
-                                    content: error_content,
-                                    is_error: true,
-                                });
-                            }
-                        };
-                        drop(manager); // Explicitly drop the lock guard
-                    } else if let Some(tool) = {
-                        let tools = self.tools.read().await;
-                        tools.get(&call.name).cloned()
-                    } {
-                        match (tool.handler)(call.clone()).await {
-                            Ok(result) => {
-                                debug!("Tool '{}' executed successfully", call.name);
-                                if result.is_error {
-                                    if should_use_pretty_output() {
-                                        display.complete_error(&result.content);
-                                    } else {
-                                        display.complete_error(&result.content);
-                                    }
-                                } else {
-                                    if should_use_pretty_output() {
-                                        display.complete_success(&result.content);
-                                    } else {
-                                        display.complete_success(&result.content);
-                                    }
-                                }
-                                results.push(result);
-                            }
-                            Err(e) => {
-                                error!("Error executing tool '{}': {}", call.name, e);
-                                let error_content =
-                                    format!("Error executing tool '{}': {}", call.name, e);
-                                if should_use_pretty_output() {
-                                    display.complete_error(&error_content);
-                                } else {
-                                    display.complete_error(&error_content);
-                                }
-                                results.push(ToolResult {
-                                    tool_use_id: call.id.clone(),
-                                    content: error_content,
-                                    is_error: true,
-                                });
-                            }
-                        }
-                    } else {
-                        error!("Unknown tool: {}", call.name);
-                        let error_content = format!("Unknown tool: {}", call.name);
-                        if should_use_pretty_output() {
-                            display.complete_error(&error_content);
-                        } else {
-                            display.complete_error(&error_content);
-                        }
-                        results.push(ToolResult {
-                            tool_use_id: call.id.clone(),
-                            content: error_content,
-                            is_error: true,
-                        });
-                    }
+                    // Use the new display system and execute tool
+                    let result = self.execute_tool_with_display(call).await;
+                    results.push(result);
                 }
                 results
             };
@@ -1555,5 +973,183 @@ impl Agent {
     pub async fn clear_conversation_keep_agents_md(&mut self) -> Result<()> {
         self.conversation_manager.clear_conversation_keep_agents_md().await?;
         Ok(())
+    }
+
+    /// Execute a tool with the new display system
+    async fn execute_tool_with_display(
+        &self,
+        call: &ToolCall,
+    ) -> ToolResult {
+        // Use the new display system
+        let registry = self.tool_registry.read().await;
+        let mut display = DisplayFactory::create_display(
+            &call.name,
+            &call.arguments,
+            &registry,
+        );
+        
+        // Show tool call details
+        display.show_call_details(&call.arguments);
+        
+        // Execute the tool using internal logic
+        let result = self.execute_tool_internal(call).await;
+        
+        // Complete the display
+        match &result {
+            Ok(tool_result) => {
+                if tool_result.is_error {
+                    display.complete_error(&tool_result.content);
+                } else {
+                    display.complete_success(&tool_result.content);
+                }
+            }
+            Err(e) => {
+                display.complete_error(&e.to_string());
+            }
+        }
+        
+        result.unwrap_or_else(|e| ToolResult {
+            tool_use_id: call.id.clone(),
+            content: e.to_string(),
+            is_error: true,
+        })
+    }
+
+    /// Internal tool execution logic (shared between old and new display systems)
+    async fn execute_tool_internal(&self, call: &ToolCall) -> Result<ToolResult> {
+        // Handle MCP tools
+        if call.name.starts_with("mcp_") {
+            if let Some(mcp_manager) = &self.mcp_manager {
+                // Extract server name and tool name from the call
+                let parts: Vec<&str> = call.name.splitn(3, '_').collect();
+                if parts.len() >= 3 {
+                    let server_name = parts[1];
+                    let tool_name = parts[2..].join("_");
+
+                    match mcp_manager
+                        .call_tool(
+                            server_name,
+                            &tool_name,
+                            Some(call.arguments.clone()),
+                        )
+                        .await
+                    {
+                        Ok(result) => {
+                            debug!("MCP tool '{}' executed successfully", call.name);
+                            let result_content = serde_json::to_string_pretty(&result)
+                                .unwrap_or_else(|_| "Invalid JSON result".to_string());
+
+                            Ok(ToolResult {
+                                tool_use_id: call.id.clone(),
+                                content: result_content,
+                                is_error: false,
+                            })
+                        }
+                        Err(e) => {
+                            error!("Error executing MCP tool '{}': {}", call.name, e);
+                            error!("MCP server '{}' may have encountered an error or is unavailable", server_name);
+
+                            // Provide detailed error information
+                            let error_content = format!(
+                                "MCP tool call failed: {}. \n\
+                                Tool: {}\n\
+                                Server: {}\n\
+                                Arguments: {}\n\
+                                Please check:\n\
+                                1. MCP server '{}' is running\n\
+                                2. Server is responsive\n\
+                                3. Tool arguments are correct\n\
+                                4. Server has proper permissions",
+                                e,
+                                call.name,
+                                server_name,
+                                serde_json::to_string_pretty(&call.arguments)
+                                    .unwrap_or_else(|_| "Invalid JSON".to_string()),
+                                server_name
+                            );
+
+                            Ok(ToolResult {
+                                tool_use_id: call.id.clone(),
+                                content: error_content,
+                                is_error: true,
+                            })
+                        }
+                    }
+                } else {
+                    let error_content = format!("Invalid MCP tool name format: {}", call.name);
+                    Ok(ToolResult {
+                        tool_use_id: call.id.clone(),
+                        content: error_content,
+                        is_error: true,
+                    })
+                }
+            } else {
+                let error_content = "MCP manager not available. MCP tools cannot be executed without proper initialization.";
+                Ok(ToolResult {
+                    tool_use_id: call.id.clone(),
+                    content: error_content.to_string(),
+                    is_error: true,
+                })
+            }
+        } else if call.name == "bash" {
+            // Handle bash tool with security
+            let security_manager = self.bash_security_manager.clone();
+            let call_clone = call.clone();
+
+            // We need to get a mutable reference to the security manager
+            let mut manager = security_manager.write().await;
+            let result = bash(&call_clone, &mut *manager, self.yolo_mode).await;
+            drop(manager); // Explicitly drop the lock guard
+            result
+        } else if call.name == "write_file" {
+            // Handle write_file tool with security
+            let file_security_manager = self.file_security_manager.clone();
+            let call_clone = call.clone();
+
+            let mut manager = file_security_manager.write().await;
+            let result = write_file(&call_clone, &mut *manager, self.yolo_mode).await;
+            drop(manager); // Explicitly drop the lock guard
+            result
+        } else if call.name == "edit_file" {
+            // Handle edit_file tool with security
+            let file_security_manager = self.file_security_manager.clone();
+            let call_clone = call.clone();
+
+            let mut manager = file_security_manager.write().await;
+            let result = edit_file(&call_clone, &mut *manager, self.yolo_mode).await;
+            drop(manager); // Explicitly drop the lock guard
+            result
+        } else if call.name == "delete_file" {
+            // Handle delete_file tool with security
+            let file_security_manager = self.file_security_manager.clone();
+            let call_clone = call.clone();
+
+            let mut manager = file_security_manager.write().await;
+            let result = delete_file(&call_clone, &mut *manager, self.yolo_mode).await;
+            drop(manager); // Explicitly drop the lock guard
+            result
+        } else if call.name == "create_directory" {
+            // Handle create_directory tool with security
+            let file_security_manager = self.file_security_manager.clone();
+            let call_clone = call.clone();
+
+            let mut manager = file_security_manager.write().await;
+            let result = create_directory(&call_clone, &mut *manager, self.yolo_mode).await;
+            drop(manager); // Explicitly drop the lock guard
+            result
+        } else if let Some(tool) = {
+            let tools = self.tools.read().await;
+            tools.get(&call.name).cloned()
+        } {
+            // Execute the tool with its handler
+            (tool.handler)(call.clone()).await
+        } else {
+            let error_content = format!("Unknown tool: {}", call.name);
+            Ok(ToolResult {
+                tool_use_id: call.id.clone(),
+                content: error_content,
+                is_error: true,
+            })
+        }
     }
 }

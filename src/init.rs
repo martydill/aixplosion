@@ -152,7 +152,7 @@ fn collect_architecture_overview() -> Vec<String> {
         ("src/input.rs", "Interactive input reader with syntax highlighting, history, cancellation, and multi-line support."),
         ("src/autocomplete.rs", "Tab completion for slash commands and @file paths."),
         ("src/formatter.rs", "Output formatter with syntax highlighting, streaming renderer, and safe truncation."),
-        ("src/tool_display.rs", "Pretty/pragmatic display helpers for tool call progress and results."),
+        ("src/tools/display/mod.rs", "Modular display system with Pretty, Simple, and JSON outputs for tool calls."),
         ("src/security.rs", "Security policy for bash/file operations with ask/allow/deny and session-level overrides."),
         ("src/mcp.rs", "Model Context Protocol client for managing configured servers and surfacing their tools."),
         ("src/config.rs", "Config loader/saver with env overrides for API keys, defaults, and security settings."),
