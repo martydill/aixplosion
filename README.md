@@ -6,7 +6,7 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
 
 ## Features
  - Interactive and non-interactive mode
- - Built-in file editing, bash, and code search tools
+ - Built-in file editing, bash, code search, and glob tools
  - Syntax highlighting for code snippets
  - Direct bash command execution with !
  - Adding context files with @path_to_file_name

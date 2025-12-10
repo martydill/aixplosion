@@ -265,6 +265,7 @@ async fn handle_agent_command(
                 "search_in_files".to_string(),
                 "list_directory".to_string(),
                 "read_file".to_string(),
+                "glob".to_string(),
             ];
 
             match subagent_manager.create_subagent(name, &system_prompt, allowed_tools, vec![]).await {

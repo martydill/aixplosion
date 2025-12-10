@@ -38,6 +38,7 @@ impl Tool {
             "list_directory" => Box::new(crate::tools::list_directory::list_directory_sync),
             "read_file" => Box::new(crate::tools::read_file::read_file_sync),
             "search_in_files" => Box::new(crate::tools::search_in_files::search_in_files_sync),
+            "glob" => Box::new(crate::tools::glob::glob_files_sync),
             "write_file" => Box::new(crate::tools::write_file::write_file_sync),
             "edit_file" => Box::new(crate::tools::edit_file::edit_file_sync),
             "delete_file" => Box::new(crate::tools::delete_file::delete_file_sync),

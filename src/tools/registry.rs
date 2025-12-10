@@ -164,6 +164,14 @@ impl ToolRegistry {
             display_format: DisplayFormat::Generic,
         });
 
+        registry.register_tool(ToolMetadata {
+            name: "glob".to_string(),
+            description: "Find files and directories using glob patterns (read-only)".to_string(),
+            icon: "🔎",
+            color: Some(colored::Color::Blue),
+            display_format: DisplayFormat::Generic,
+        });
+
         registry
     }
 }

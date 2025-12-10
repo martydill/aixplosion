@@ -3,6 +3,7 @@ use crate::tools::{
     list_directory::create_list_directory_tool,
     read_file::create_read_file_tool,
     search_in_files::create_search_in_files_tool,
+    glob::create_glob_tool,
     write_file::write_file_sync,
     edit_file::edit_file_sync,
     delete_file::delete_file_sync,
@@ -16,6 +17,7 @@ pub fn get_builtin_tools() -> Vec<Tool> {
         create_list_directory_tool(),
         create_read_file_tool(),
         create_search_in_files_tool(),
+        create_glob_tool(),
         Tool {
             name: "write_file".to_string(),
             description: "Write content to a file (creates file if it doesn't exist)".to_string(),

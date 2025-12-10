@@ -30,6 +30,7 @@ The AIxplosion supports the following features:
 - **write_file**: Write content to a file (creates if doesn't exist)
 - **edit_file**: Replace specific text in a file with new text
 - **list_directory**: List contents of a directory
+- **glob**: Find files and directories using glob patterns (read-only)
 - **create_directory**: Create a directory (and parent directories if needed)
 - **delete_file**: Delete a file or directory
 - **bash**: Execute shell commands and return the output

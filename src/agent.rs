@@ -173,7 +173,7 @@ impl Agent {
     fn is_plan_safe_tool(tool_name: &str) -> bool {
         matches!(
             tool_name,
-            "list_directory" | "read_file" | "search_in_files"
+            "list_directory" | "read_file" | "search_in_files" | "glob"
         )
     }
 
@@ -1137,6 +1137,9 @@ impl Agent {
             let result = create_directory(&call_clone, &mut *manager, self.yolo_mode).await;
             drop(manager); // Explicitly drop the lock guard
             result
+        } else if call.name == "glob" {
+            // Handle glob tool (read-only, no security needed)
+            crate::tools::glob::glob_files(&call).await
         } else if let Some(tool) = {
             let tools = self.tools.read().await;
             tools.get(&call.name).cloned()
