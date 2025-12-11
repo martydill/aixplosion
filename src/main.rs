@@ -620,6 +620,7 @@ async fn select_conversation_index(
             Select::new()
                 .with_prompt(prompt_text)
                 .items(&options_clone)
+                .default(0) // Set first option as default
                 .interact_opt()
         }),
     )
