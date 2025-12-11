@@ -50,6 +50,17 @@ mod tests {
         history.add_entry("test2".to_string());
         assert_eq!(history.entries.len(), 2); // Should not increase
     }
+
+    #[test]
+    fn test_char_boundaries_with_multibyte() {
+        let text = "│ a"; // '│' is multibyte
+        let cursor_end = normalize_cursor_pos(text, text.len());
+        let prev = previous_char_boundary(text, cursor_end);
+        let next = next_char_boundary(text, 0);
+
+        assert_eq!(prev, '│'.len_utf8()); // moving left from end lands after the first char
+        assert_eq!(next, '│'.len_utf8()); // moving right from start skips the full multibyte char
+    }
 }
 
 /// Input history management
@@ -135,6 +146,52 @@ impl InputHistory {
     }
 }
 
+/// Normalize a cursor position to the nearest valid char boundary within the string.
+fn normalize_cursor_pos(text: &str, pos: usize) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+
+    if pos >= text.len() || text.is_char_boundary(pos) {
+        return pos.min(text.len());
+    }
+
+    text.char_indices()
+        .take_while(|(idx, _)| *idx < pos)
+        .map(|(idx, _)| idx)
+        .last()
+        .unwrap_or(0)
+}
+
+/// Find the previous char boundary (moving left) from the given cursor position.
+fn previous_char_boundary(text: &str, cursor_pos: usize) -> usize {
+    let pos = normalize_cursor_pos(text, cursor_pos);
+    if pos == 0 {
+        return 0;
+    }
+
+    text[..pos]
+        .chars()
+        .rev()
+        .next()
+        .map(|c| pos.saturating_sub(c.len_utf8()))
+        .unwrap_or(0)
+}
+
+/// Find the next char boundary (moving right) from the given cursor position.
+fn next_char_boundary(text: &str, cursor_pos: usize) -> usize {
+    let pos = normalize_cursor_pos(text, cursor_pos);
+    if pos >= text.len() {
+        return text.len();
+    }
+
+    text[pos..]
+        .chars()
+        .next()
+        .map(|c| pos + c.len_utf8())
+        .unwrap_or(pos)
+}
+
 /// Read input with autocompletion support and file highlighting
 pub fn read_input_with_completion_and_highlighting(
     formatter: Option<&formatter::CodeFormatter>,
@@ -144,6 +201,7 @@ pub fn read_input_with_completion_and_highlighting(
     terminal::enable_raw_mode()?;
 
     let mut input = String::new();
+    // Cursor position is tracked as a byte offset that always sits on a char boundary.
     let mut cursor_pos = 0;
 
     // Reset render tracking when starting a new prompt
@@ -217,8 +275,9 @@ pub fn read_input_with_completion_and_highlighting(
                     // Reset history navigation when user edits input
                     history.reset_navigation();
 
-                    input.remove(cursor_pos - 1);
-                    cursor_pos -= 1;
+                    let prev_boundary = previous_char_boundary(&input, cursor_pos);
+                    input.drain(prev_boundary..cursor_pos);
+                    cursor_pos = prev_boundary;
 
                     // Use fast redraw unless @ symbol is present
                     if input.contains('@') {
@@ -235,7 +294,7 @@ pub fn read_input_with_completion_and_highlighting(
                 ..
             }) => {
                 if cursor_pos > 0 {
-                    cursor_pos -= 1;
+                    cursor_pos = previous_char_boundary(&input, cursor_pos);
                     redraw_input_line_fast(&input, cursor_pos)?;
                 }
             }
@@ -246,7 +305,7 @@ pub fn read_input_with_completion_and_highlighting(
                 ..
             }) => {
                 if cursor_pos < input.len() {
-                    cursor_pos += 1;
+                    cursor_pos = next_char_boundary(&input, cursor_pos);
                     redraw_input_line_fast(&input, cursor_pos)?;
                 }
             }
@@ -312,7 +371,7 @@ pub fn read_input_with_completion_and_highlighting(
                 history.reset_navigation();
 
                 input.insert(cursor_pos, c);
-                cursor_pos += 1;
+                cursor_pos += c.len_utf8();
 
                 // Use fast redraw for most typing, only use highlighting when @ symbol is present
                 if input.contains('@') {
@@ -466,9 +525,10 @@ fn redraw_input_line(
         .map(|(w, _)| w as usize)
         .unwrap_or(80)
         .max(1);
+    let cursor_pos = normalize_cursor_pos(input, cursor_pos);
     let prompt_length = 2; // "> " length
     let visible_len = input.chars().count();
-    let cursor_visible = input.chars().take(cursor_pos).count();
+    let cursor_visible = input[..cursor_pos].chars().count();
 
     let total_lines = calculate_line_usage(visible_len, prompt_length, terminal_width);
     let cursor_line = (prompt_length + cursor_visible) / terminal_width;
