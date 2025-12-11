@@ -2,18 +2,97 @@ use anyhow::Result;
 use colored::*;
 use crossterm::{
     cursor,
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers,
+    },
     terminal, ExecutableCommand, QueueableCommand,
 };
 use std::cell::Cell;
 use std::io::{self, Write};
 use std::thread_local;
+use std::time::Duration;
 
 use crate::autocomplete;
 use crate::formatter;
 
 thread_local! {
     static LAST_RENDERED_LINES: Cell<usize> = Cell::new(1);
+}
+
+fn disable_raw_mode_and_bracketed_paste() -> Result<()> {
+    io::stdout().execute(DisableBracketedPaste)?;
+    terminal::disable_raw_mode()?;
+    Ok(())
+}
+
+/// When bracketed paste is unavailable, a multiline paste arrives as a burst of Key events.
+/// If the user hits Enter and more events are queued immediately, treat this as a paste newline
+/// instead of submitting and drain the pending events into a single string.
+fn drain_queued_input_after_enter() -> Result<Option<String>> {
+    // Small window to catch paste bursts
+    let mut collected = String::from("\n"); // Include the Enter that triggered this
+    let mut has_non_newline = false;
+    let mut seen_paste = false;
+
+    // Drain everything currently queued (pastes typically arrive as a burst)
+    while event::poll(Duration::from_millis(10))? {
+        match event::read()? {
+            Event::Paste(pasted) => {
+                seen_paste = true;
+                if pasted.chars().any(|c| c != '\n' && c != '\r') {
+                    has_non_newline = true;
+                }
+                collected.push_str(&pasted.replace('\r', ""));
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(c),
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                if seen_paste {
+                    // Some terminals send both Paste and Key events; avoid duplicating content
+                    continue;
+                }
+                if c != '\r' {
+                    if c != '\n' {
+                        has_non_newline = true;
+                    }
+                    collected.push(c);
+                }
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Enter,
+                kind: KeyEventKind::Press,
+                ..
+            }) => {
+                if seen_paste {
+                    continue;
+                }
+                collected.push('\n')
+            }
+            _ => {}
+        }
+    }
+
+    if has_non_newline {
+        Ok(Some(collected))
+    } else {
+        Ok(None)
+    }
+}
+
+fn print_final_input(content: &str) {
+    if let Some((_, tail)) = content.split_once('\n') {
+        // First line is already shown on the prompt; only show the remaining lines
+        println!();
+        if !tail.is_empty() {
+            println!("{}", tail);
+        }
+    } else {
+        // Single-line: just move to the next line like normal submit
+        println!();
+    }
 }
 
 #[cfg(test)]
@@ -199,6 +278,7 @@ pub fn read_input_with_completion_and_highlighting(
 ) -> Result<String> {
     // Enable raw mode for keyboard input
     terminal::enable_raw_mode()?;
+    io::stdout().execute(EnableBracketedPaste)?;
 
     let mut input = String::new();
     // Cursor position is tracked as a byte offset that always sits on a char boundary.
@@ -217,26 +297,32 @@ pub fn read_input_with_completion_and_highlighting(
                 kind: KeyEventKind::Press,
                 ..
             }) => {
+                // If more events are queued immediately, this is likely a paste that includes newlines.
+                if let Some(extra) = drain_queued_input_after_enter()? {
+                    history.reset_navigation();
+                    let extra = extra.replace("\r\n", "\n").replace('\r', "\n");
+
+                    input.insert_str(cursor_pos, &extra);
+                    cursor_pos += extra.chars().count();
+
+                    // Finish input immediately to avoid duplicate consumption from stdin
+                    let final_input = input.clone();
+                    disable_raw_mode_and_bracketed_paste()?;
+                    print_final_input(&final_input);
+                    return Ok(final_input);
+                }
+
                 // Check if this might be the start of multiline input BEFORE disabling raw mode
                 let trimmed_input = input.trim();
                 if should_start_multiline(trimmed_input) {
                     // Disable raw mode first
-                    terminal::disable_raw_mode()?;
+                    disable_raw_mode_and_bracketed_paste()?;
 
                     // Clear the current line completely and move to start
                     io::stdout()
                         .execute(terminal::Clear(terminal::ClearType::CurrentLine))?
                         .execute(cursor::MoveToColumn(0))?
                         .flush()?;
-
-                    // Show the prompt and what we've typed so far with file highlighting
-                    if let Some(fmt) = formatter {
-                        let highlighted_input =
-                            fmt.format_input_with_file_highlighting(trimmed_input);
-                        println!("> {}", highlighted_input);
-                    } else {
-                        println!("> {}", trimmed_input);
-                    }
 
                     // Start multiline input mode with the current input
                     let multiline_result = read_multiline_input(trimmed_input, None); // Don't double-highlight
@@ -246,7 +332,7 @@ pub fn read_input_with_completion_and_highlighting(
                     let trimmed_input = input.trim().to_string();
                     history.add_entry(trimmed_input.clone());
                     println!();
-                    terminal::disable_raw_mode()?;
+                    disable_raw_mode_and_bracketed_paste()?;
                     return Ok(trimmed_input);
                 }
             }
@@ -346,7 +432,7 @@ pub fn read_input_with_completion_and_highlighting(
             }) if c == 'c' => {
                 // Handle Ctrl+C
                 println!();
-                terminal::disable_raw_mode()?;
+                disable_raw_mode_and_bracketed_paste()?;
                 std::process::exit(0);
             }
 
@@ -357,8 +443,30 @@ pub fn read_input_with_completion_and_highlighting(
             }) => {
                 // Handle ESC key - return cancellation signal
                 println!();
-                terminal::disable_raw_mode()?;
+                disable_raw_mode_and_bracketed_paste()?;
                 return Err(anyhow::anyhow!("CANCELLED"));
+            }
+
+            Event::Paste(pasted) => {
+                history.reset_navigation();
+                let normalized = pasted.replace("\r\n", "\n").replace('\r', "\n");
+                input.insert_str(cursor_pos, &normalized);
+                cursor_pos += normalized.chars().count();
+
+                // If the pasted content includes newlines, finish immediately with the full text
+                if normalized.contains('\n') {
+                    let final_input = input.clone();
+                    disable_raw_mode_and_bracketed_paste()?;
+                    print_final_input(&final_input);
+                    return Ok(final_input);
+                }
+
+                // For single-line pastes, redraw appropriately
+                if input.contains('@') {
+                    redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+                } else {
+                    redraw_input_line_fast(&input, cursor_pos)?;
+                }
             }
 
             Event::Key(KeyEvent {
