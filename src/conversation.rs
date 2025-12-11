@@ -43,7 +43,7 @@ impl ConversationManager {
                 .create_conversation(
                     self.system_prompt.clone(),
                     &self.model,
-                    self.subagent.as_deref()
+                    self.subagent.as_deref(),
                 )
                 .await?;
 
@@ -239,10 +239,15 @@ impl ConversationManager {
             .collect()
     }
 
-    /// Remove @file syntax from message and return cleaned message
+    /// Replace @file syntax with actual file paths and return cleaned message
     pub fn clean_message(&self, message: &str) -> String {
-        let re = Regex::new(r"@[^\s@]+").unwrap();
-        re.replace_all(message, "").trim().to_string()
+        let re = Regex::new(r"@([^\s@]+)").unwrap();
+        re.replace_all(message, |caps: &regex::Captures| {
+            let file_path = &caps[1];
+            file_path.to_string()
+        })
+        .trim()
+        .to_string()
     }
 
     /// Replace the current in-memory conversation with records loaded from storage
