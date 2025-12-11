@@ -1,4 +1,4 @@
-use crate::tools::registry::{DisplayContext, OutputMode, ToolMetadata};
+use crate::tools::registry::{DisplayContext, OutputMode};
 use serde_json::Value;
 use std::time::Instant;
 
