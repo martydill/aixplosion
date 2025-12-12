@@ -68,10 +68,7 @@ impl ToolRegistry {
 
     /// Get icon for a specific tool
     pub fn get_icon(&self, name: &str) -> &'static str {
-        self.tools
-            .get(name)
-            .map(|m| m.icon)
-            .unwrap_or("🔧")
+        self.tools.get(name).map(|m| m.icon).unwrap_or("🔧")
     }
 
     /// Get all registered tools
@@ -98,14 +95,16 @@ impl ToolRegistry {
     /// Initialize the registry with built-in tool metadata
     pub fn with_builtin_tools() -> Self {
         let mut registry = Self::new();
-        
+
         // Register built-in tools
         registry.register_tool(ToolMetadata {
             name: "list_directory".to_string(),
             description: "List contents of a directory".to_string(),
             icon: "📁",
             color: Some(colored::Color::Blue),
-            display_format: DisplayFormat::Directory { show_item_count: true },
+            display_format: DisplayFormat::Directory {
+                show_item_count: true,
+            },
         });
 
         registry.register_tool(ToolMetadata {
@@ -145,7 +144,9 @@ impl ToolRegistry {
             description: "Create a directory (and parent directories if needed)".to_string(),
             icon: "📁",
             color: Some(colored::Color::Blue),
-            display_format: DisplayFormat::Directory { show_item_count: false },
+            display_format: DisplayFormat::Directory {
+                show_item_count: false,
+            },
         });
 
         registry.register_tool(ToolMetadata {
@@ -153,7 +154,9 @@ impl ToolRegistry {
             description: "Execute shell commands and return the output".to_string(),
             icon: "💻",
             color: Some(colored::Color::Magenta),
-            display_format: DisplayFormat::Command { show_working_dir: true },
+            display_format: DisplayFormat::Command {
+                show_working_dir: true,
+            },
         });
 
         registry.register_tool(ToolMetadata {

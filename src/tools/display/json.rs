@@ -56,26 +56,26 @@ impl JsonDisplay {
     /// Format specific arguments based on tool type
     fn format_specific_arguments(&self) -> Option<Value> {
         let arguments = &self.context.arguments;
-        
+
         match &self.context.metadata.display_format {
             DisplayFormat::File { show_size: _ } => {
                 if let Some(path) = arguments.get("path").and_then(|v| v.as_str()) {
                     let mut formatted = json!({
                         "path": path
                     });
-                    
+
                     if let Some(content) = arguments.get("content").and_then(|v| v.as_str()) {
                         formatted["content_size"] = json!(content.len());
                     }
-                    
+
                     if let Some(old_text) = arguments.get("old_text").and_then(|v| v.as_str()) {
                         formatted["old_text_size"] = json!(old_text.len());
                     }
-                    
+
                     if let Some(new_text) = arguments.get("new_text").and_then(|v| v.as_str()) {
                         formatted["new_text_size"] = json!(new_text.len());
                     }
-                    
+
                     Some(formatted)
                 } else {
                     None
@@ -83,17 +83,17 @@ impl JsonDisplay {
             }
             DisplayFormat::Command { show_working_dir } => {
                 let mut formatted = json!({});
-                
+
                 if let Some(command) = arguments.get("command").and_then(|v| v.as_str()) {
                     formatted["command"] = json!(command);
                 }
-                
+
                 if *show_working_dir {
                     if let Ok(current_dir) = std::env::current_dir() {
                         formatted["working_directory"] = json!(current_dir.to_string_lossy());
                     }
                 }
-                
+
                 Some(formatted)
             }
             DisplayFormat::Directory { show_item_count: _ } => {
@@ -115,7 +115,7 @@ impl JsonDisplay {
     /// Convert result to JSON format
     fn result_to_json(&self, content: &str, is_error: bool) -> Value {
         let duration = self.context.start_time.elapsed();
-        
+
         json!({
             "type": "tool_result",
             "tool": {

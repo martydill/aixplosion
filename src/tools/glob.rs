@@ -20,7 +20,10 @@ pub async fn glob_files(call: &ToolCall) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .unwrap_or(".");
 
-    debug!("TOOL CALL: glob_files(pattern='{}', base_path='{}')", pattern, base_path);
+    debug!(
+        "TOOL CALL: glob_files(pattern='{}', base_path='{}')",
+        pattern, base_path
+    );
 
     let tool_use_id = call.id.clone();
 
@@ -34,7 +37,10 @@ pub async fn glob_files(call: &ToolCall) -> Result<ToolResult> {
         shellexpand::tilde(pattern).to_string()
     } else {
         // Otherwise, join with base path
-        absolute_base_path.join(pattern).to_string_lossy().to_string()
+        absolute_base_path
+            .join(pattern)
+            .to_string_lossy()
+            .to_string()
     };
 
     debug!("Using glob pattern: {}", full_pattern);

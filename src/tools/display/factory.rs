@@ -15,7 +15,9 @@ impl DisplayFactory {
         let metadata = registry
             .get_metadata(tool_name)
             .cloned()
-            .unwrap_or_else(|| crate::tools::registry::ToolRegistry::get_default_metadata(tool_name));
+            .unwrap_or_else(|| {
+                crate::tools::registry::ToolRegistry::get_default_metadata(tool_name)
+            });
 
         let context = DisplayContext {
             tool_name: tool_name.to_string(),
@@ -53,7 +55,9 @@ impl DisplayFactory {
         let metadata = registry
             .get_metadata(tool_name)
             .cloned()
-            .unwrap_or_else(|| crate::tools::registry::ToolRegistry::get_default_metadata(tool_name));
+            .unwrap_or_else(|| {
+                crate::tools::registry::ToolRegistry::get_default_metadata(tool_name)
+            });
 
         let context = DisplayContext {
             tool_name: tool_name.to_string(),

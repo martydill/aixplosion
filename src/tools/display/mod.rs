@@ -16,9 +16,9 @@ pub trait ToolDisplay {
 }
 
 pub mod factory;
+pub mod json;
 pub mod pretty;
 pub mod simple;
-pub mod json;
 
 // Re-export for convenience
 pub use factory::DisplayFactory;

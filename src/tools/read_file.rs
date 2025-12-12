@@ -1,5 +1,5 @@
+use crate::tools::registry::{DisplayFormat, ToolMetadata, ToolMetadataProvider};
 use crate::tools::types::{Tool, ToolCall, ToolResult};
-use crate::tools::registry::{ToolMetadata, DisplayFormat, ToolMetadataProvider};
 use anyhow::Result;
 use log::debug;
 use path_absolutize::*;
@@ -74,7 +74,7 @@ pub fn read_file_sync(
 
 pub fn create_read_file_tool() -> Tool {
     let metadata = ReadFileTool::get_metadata();
-    
+
     Tool {
         name: metadata.name.clone(),
         description: metadata.description.clone(),

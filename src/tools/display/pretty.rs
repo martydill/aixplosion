@@ -55,7 +55,7 @@ impl PrettyDisplay {
                                 content.len().to_string().green()
                             ));
                         }
-                        
+
                         // For edit operations, show old/new sizes
                         if let Some(old_text) = arguments.get("old_text").and_then(|v| v.as_str()) {
                             lines.push(format!(
@@ -122,7 +122,7 @@ impl PrettyDisplay {
                     } else {
                         serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
                     };
-                    
+
                     lines.push(format!(
                         "{} {} {} {}",
                         "│".dimmed(),
@@ -147,7 +147,11 @@ impl PrettyDisplay {
         if total_lines == 0 {
             if is_error {
                 lines.push(format!("│",).dimmed().to_string());
-                lines.push(format!("{}   {}", "│".dimmed(), "[No error details]".dimmed()));
+                lines.push(format!(
+                    "{}   {}",
+                    "│".dimmed(),
+                    "[No error details]".dimmed()
+                ));
             } else {
                 lines.push(format!("│",).dimmed().to_string());
                 lines.push(format!("{}   {}", "│".dimmed(), "[No output]".dimmed()));

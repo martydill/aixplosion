@@ -1,5 +1,5 @@
-use crate::tools::types::{Tool, ToolCall, ToolResult};
 use crate::security::BashSecurityManager;
+use crate::tools::types::{Tool, ToolCall, ToolResult};
 use anyhow::Result;
 use log::{debug, info};
 use serde_json::json;
@@ -269,9 +269,7 @@ pub fn create_bash_tool(
                 // Create a wrapper function that handles the mutable reference
                 async fn bash_wrapper(
                     call: ToolCall,
-                    security_manager: std::sync::Arc<
-                        tokio::sync::RwLock<BashSecurityManager>,
-                    >,
+                    security_manager: std::sync::Arc<tokio::sync::RwLock<BashSecurityManager>>,
                     yolo_mode: bool,
                 ) -> Result<ToolResult> {
                     let mut manager = security_manager.write().await;

@@ -51,10 +51,10 @@ impl SubagentManager {
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".aixplosion")
             .join("agents");
-        
+
         // Create directory if it doesn't exist
         std::fs::create_dir_all(&agents_dir)?;
-        
+
         Ok(Self {
             agents_dir,
             active_subagent: None,
@@ -108,22 +108,29 @@ impl SubagentManager {
 
     async fn load_subagent_from_file(&self, path: &Path) -> Result<SubagentConfig> {
         let content = fs::read_to_string(path).await?;
-        
+
         // Normalize line endings to handle both Windows (\r\n) and Unix (\n)
         let normalized_content = content.replace("\r\n", "\n");
-        
+
         // Remove BOM if present
         let cleaned_content = normalized_content.trim_start_matches('\u{FEFF}');
-        
+
         // Parse frontmatter using a more straightforward approach
         if !cleaned_content.starts_with("---\n") {
-            return Err(anyhow!("Invalid subagent file format: must start with ---. File: {}", path.display()));
+            return Err(anyhow!(
+                "Invalid subagent file format: must start with ---. File: {}",
+                path.display()
+            ));
         }
-        
+
         // Find the end of the frontmatter
-        let frontmatter_end = cleaned_content.find("\n---\n")
-            .ok_or_else(|| anyhow!("Invalid subagent file format: missing closing ---. File: {}", path.display()))?;
-        
+        let frontmatter_end = cleaned_content.find("\n---\n").ok_or_else(|| {
+            anyhow!(
+                "Invalid subagent file format: missing closing ---. File: {}",
+                path.display()
+            )
+        })?;
+
         // Extract frontmatter and content
         let frontmatter_str = &cleaned_content[4..frontmatter_end]; // Skip opening "---\n"
         let system_prompt = cleaned_content[frontmatter_end + 5..].to_string(); // Skip closing "\n---\n"
@@ -150,7 +157,7 @@ impl SubagentManager {
 
     pub async fn save_subagent(&self, config: &SubagentConfig) -> Result<()> {
         let file_path = self.agents_dir.join(format!("{}.md", config.name));
-        
+
         // Create frontmatter structure without system_prompt
         let frontmatter = SubagentFrontmatter {
             name: config.name.clone(),
@@ -162,7 +169,7 @@ impl SubagentManager {
             created_at: config.created_at,
             updated_at: config.updated_at,
         };
-        
+
         let frontmatter_yaml = serde_yaml::to_string(&frontmatter)?;
 
         let content = format!(
@@ -213,12 +220,12 @@ impl SubagentManager {
         let file_path = self.agents_dir.join(format!("{}.md", name));
         fs::remove_file(&file_path).await?;
         self.subagents.remove(name);
-        
+
         // If this was the active subagent, deactivate it
         if self.active_subagent.as_ref() == Some(&name.to_string()) {
             self.active_subagent = None;
         }
-        
+
         log::info!("Deleted subagent: {}", name);
         Ok(())
     }
@@ -226,7 +233,7 @@ impl SubagentManager {
     pub async fn update_subagent(&mut self, config: &SubagentConfig) -> Result<()> {
         let mut updated_config = config.clone();
         updated_config.updated_at = Utc::now();
-        
+
         self.save_subagent(&updated_config).await?;
         self.subagents.insert(config.name.clone(), updated_config);
         Ok(())

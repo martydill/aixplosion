@@ -40,7 +40,10 @@ use database::{
     Message as StoredMessage,
 };
 use formatter::create_code_formatter;
-use help::{print_agent_help, display_mcp_yolo_warning, display_yolo_warning, print_file_permissions_help, print_help, print_mcp_help, print_permissions_help};
+use help::{
+    display_mcp_yolo_warning, display_yolo_warning, print_agent_help, print_file_permissions_help,
+    print_help, print_mcp_help, print_permissions_help,
+};
 use input::InputHistory;
 use mcp::McpManager;
 
@@ -225,28 +228,40 @@ async fn handle_agent_command(
         "list" => {
             let subagents = subagent_manager.list_subagents();
             if subagents.is_empty() {
-                println!("{}", "No subagents configured. Use '/agent create' to create one.".yellow());
+                println!(
+                    "{}",
+                    "No subagents configured. Use '/agent create' to create one.".yellow()
+                );
                 return Ok(());
             }
 
             println!("{}", "🤖 Available Subagents".cyan().bold());
             println!();
             for subagent in subagents {
-                let status = if agent.is_subagent_mode() &&
-                             agent.get_system_prompt()
-                                .map_or(false, |p| p.contains(&subagent.system_prompt)) {
+                let status = if agent.is_subagent_mode()
+                    && agent
+                        .get_system_prompt()
+                        .map_or(false, |p| p.contains(&subagent.system_prompt))
+                {
                     "✅ Active".green().to_string()
                 } else {
                     "⏸️ Inactive".yellow().to_string()
                 };
 
-                println!("  {} {} ({})", "Agent:".bold(), subagent.name.cyan(), status);
+                println!(
+                    "  {} {} ({})",
+                    "Agent:".bold(),
+                    subagent.name.cyan(),
+                    status
+                );
                 if !subagent.allowed_tools.is_empty() {
-                    let allowed_tools: Vec<&str> = subagent.allowed_tools.iter().map(|s| s.as_str()).collect();
+                    let allowed_tools: Vec<&str> =
+                        subagent.allowed_tools.iter().map(|s| s.as_str()).collect();
                     println!("  Allowed tools: {}", allowed_tools.join(", "));
                 }
                 if !subagent.denied_tools.is_empty() {
-                    let denied_tools: Vec<&str> = subagent.denied_tools.iter().map(|s| s.as_str()).collect();
+                    let denied_tools: Vec<&str> =
+                        subagent.denied_tools.iter().map(|s| s.as_str()).collect();
                     println!("  Denied tools: {}", denied_tools.join(", "));
                 }
                 println!();
@@ -254,8 +269,14 @@ async fn handle_agent_command(
         }
         "create" => {
             if args.len() < 3 {
-                println!("{} Usage: /agent create <name> <system_prompt>", "⚠️".yellow());
-                println!("{} Example: /agent create rust-expert \"You are a Rust expert...\"", "💡".blue());
+                println!(
+                    "{} Usage: /agent create <name> <system_prompt>",
+                    "⚠️".yellow()
+                );
+                println!(
+                    "{} Example: /agent create rust-expert \"You are a Rust expert...\"",
+                    "💡".blue()
+                );
                 return Ok(());
             }
 
@@ -270,7 +291,10 @@ async fn handle_agent_command(
                 "glob".to_string(),
             ];
 
-            match subagent_manager.create_subagent(name, &system_prompt, allowed_tools, vec![]).await {
+            match subagent_manager
+                .create_subagent(name, &system_prompt, allowed_tools, vec![])
+                .await
+            {
                 Ok(config) => {
                     println!("{} Created subagent: {}", "✅".green(), name.cyan());
                     println!("  Config file: ~/.aixplosion/agents/{}.md", name);
@@ -298,7 +322,11 @@ async fn handle_agent_command(
                             }
                             Err(e) => {
                                 println!("{} Switched to subagent: {}", "✅".green(), name.cyan());
-                                eprintln!("{} Failed to clear conversation context: {}", "⚠️".yellow(), e);
+                                eprintln!(
+                                    "{} Failed to clear conversation context: {}",
+                                    "⚠️".yellow(),
+                                    e
+                                );
                             }
                         }
                     }
@@ -308,21 +336,27 @@ async fn handle_agent_command(
                 }
             } else {
                 eprintln!("{} Subagent '{}' not found", "✗".red(), name);
-                println!("{} Available subagents: {}", "💡".blue(),
-                    subagent_manager.list_subagents().iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", "));
+                println!(
+                    "{} Available subagents: {}",
+                    "💡".blue(),
+                    subagent_manager
+                        .list_subagents()
+                        .iter()
+                        .map(|s| s.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
             }
         }
-        "exit" => {
-            match agent.exit_subagent().await {
-                Ok(_) => {
-                    println!("{} Exited subagent mode", "✅".green());
-                    println!("{} Previous conversation context restored", "🔄".blue());
-                }
-                Err(e) => {
-                    eprintln!("{} Failed to exit subagent mode: {}", "✗".red(), e);
-                }
+        "exit" => match agent.exit_subagent().await {
+            Ok(_) => {
+                println!("{} Exited subagent mode", "✅".green());
+                println!("{} Previous conversation context restored", "🔄".blue());
             }
-        }
+            Err(e) => {
+                eprintln!("{} Failed to exit subagent mode: {}", "✗".red(), e);
+            }
+        },
         "delete" => {
             if args.len() < 2 {
                 println!("{} Usage: /agent delete <name>", "⚠️".yellow());
@@ -330,10 +364,14 @@ async fn handle_agent_command(
             }
 
             let name = args[1];
-            println!("{} Are you sure you want to delete subagent '{}'?", "⚠️".yellow(), name);
+            println!(
+                "{} Are you sure you want to delete subagent '{}'?",
+                "⚠️".yellow(),
+                name
+            );
             println!("  This action cannot be undone.");
             println!("  Use '/agent delete {} --confirm' to proceed", name);
-            
+
             if args.len() > 2 && args[2] == "--confirm" {
                 match subagent_manager.delete_subagent(name).await {
                     Ok(_) => {
@@ -359,12 +397,18 @@ async fn handle_agent_command(
                 .join(format!("{}.md", name));
 
             if file_path.exists() {
-                println!("{} Opening subagent config for editing: {}", "📝".blue(), file_path.display());
-                
+                println!(
+                    "{} Opening subagent config for editing: {}",
+                    "📝".blue(),
+                    file_path.display()
+                );
+
                 // Try to open in default editor
                 #[cfg(target_os = "windows")]
-                let _ = std::process::Command::new("notepad").arg(&file_path).status();
-                
+                let _ = std::process::Command::new("notepad")
+                    .arg(&file_path)
+                    .status();
+
                 #[cfg(not(target_os = "windows"))]
                 {
                     if let Ok(editor) = std::env::var("EDITOR") {
@@ -373,8 +417,12 @@ async fn handle_agent_command(
                         let _ = std::process::Command::new("nano").arg(&file_path).status();
                     }
                 }
-                
-                println!("{} After editing, use '/agent reload {}' to apply changes", "💡".blue(), name);
+
+                println!(
+                    "{} After editing, use '/agent reload {}' to apply changes",
+                    "💡".blue(),
+                    name
+                );
             } else {
                 eprintln!("{} Subagent '{}' not found", "✗".red(), name);
             }
@@ -394,7 +442,6 @@ async fn handle_agent_command(
 
     Ok(())
 }
-
 
 async fn handle_shell_command(command: &str, _agent: &mut Agent) -> Result<()> {
     // Extract the shell command by removing the '!' prefix
@@ -863,7 +910,8 @@ async fn handle_slash_command(
                     );
                     let cancellation_flag = Arc::new(AtomicBool::new(false));
                     if stream {
-                        let (streaming_state, stream_callback) = create_streaming_renderer(formatter);
+                        let (streaming_state, stream_callback) =
+                            create_streaming_renderer(formatter);
                         let response = agent
                             .process_message_with_stream(
                                 &message,
@@ -879,9 +927,7 @@ async fn handle_slash_command(
                         response?;
                     } else {
                         let spinner = create_spinner();
-                        let response = agent
-                            .process_message(&message, cancellation_flag)
-                            .await?;
+                        let response = agent.process_message(&message, cancellation_flag).await?;
                         spinner.finish_and_clear();
                         formatter.print_formatted(&response)?;
                     }
@@ -1825,9 +1871,6 @@ async fn save_file_permissions_to_config(agent: &Agent) -> Result<()> {
     Ok(())
 }
 
-
-
-
 #[derive(Parser)]
 #[command(name = "aixplosion")]
 #[command(about = "A CLI coding agent powered by Anthropic AI")]
@@ -2188,7 +2231,15 @@ async fn main() -> Result<()> {
             {
                 // Check for slash commands first
                 if input.starts_with('/') {
-                    match handle_slash_command(&input, &mut agent, &mcp_manager, &formatter, cli.stream).await {
+                    match handle_slash_command(
+                        &input,
+                        &mut agent,
+                        &mcp_manager,
+                        &formatter,
+                        cli.stream,
+                    )
+                    .await
+                    {
                         Ok(_) => {} // Command handled successfully
                         Err(e) => {
                             eprintln!("{} Error handling command: {}", "✗".red(), e);
@@ -2272,5 +2323,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-
-

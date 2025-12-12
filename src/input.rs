@@ -270,7 +270,7 @@ impl InputHistory {
     /// Update reverse search query and find matches
     pub fn update_reverse_search(&mut self, query: &str) {
         self.reverse_search.search_query = query.to_string();
-        
+
         if query.is_empty() {
             self.reverse_search.matched_entry = None;
             self.reverse_search.all_matches.clear();
@@ -280,7 +280,8 @@ impl InputHistory {
 
         // Find all entries that contain the query (case-insensitive)
         let query_lower = query.to_lowercase();
-        self.reverse_search.all_matches = self.entries
+        self.reverse_search.all_matches = self
+            .entries
             .iter()
             .rev() // Start from most recent
             .filter(|entry| entry.to_lowercase().contains(&query_lower))
@@ -298,24 +299,26 @@ impl InputHistory {
     /// Navigate to next match in reverse search
     pub fn reverse_search_next(&mut self) {
         if !self.reverse_search.all_matches.is_empty() {
-            self.reverse_search.current_match_index = 
-                (self.reverse_search.current_match_index + 1) % self.reverse_search.all_matches.len();
-            self.reverse_search.matched_entry = 
-                Some(self.reverse_search.all_matches[self.reverse_search.current_match_index].clone());
+            self.reverse_search.current_match_index = (self.reverse_search.current_match_index + 1)
+                % self.reverse_search.all_matches.len();
+            self.reverse_search.matched_entry = Some(
+                self.reverse_search.all_matches[self.reverse_search.current_match_index].clone(),
+            );
         }
     }
 
     /// Navigate to previous match in reverse search
     pub fn reverse_search_prev(&mut self) {
         if !self.reverse_search.all_matches.is_empty() {
-            self.reverse_search.current_match_index = 
+            self.reverse_search.current_match_index =
                 if self.reverse_search.current_match_index == 0 {
                     self.reverse_search.all_matches.len() - 1
                 } else {
                     self.reverse_search.current_match_index - 1
                 };
-            self.reverse_search.matched_entry = 
-                Some(self.reverse_search.all_matches[self.reverse_search.current_match_index].clone());
+            self.reverse_search.matched_entry = Some(
+                self.reverse_search.all_matches[self.reverse_search.current_match_index].clone(),
+            );
         }
     }
 
@@ -957,11 +960,12 @@ fn redraw_reverse_search_prompt(
         stdout.queue(Print("(reverse-i-search)`"))?;
         stdout.queue(Print(state.search_query.yellow().bold()))?;
         stdout.queue(Print("': "))?;
-        
+
         // Apply highlighting to the matched entry if formatter is available and contains @
         if let Some(fmt) = _formatter {
             if matched_entry.contains('@') {
-                let with_file_highlighting = fmt.format_input_with_file_highlighting(&highlighted_match);
+                let with_file_highlighting =
+                    fmt.format_input_with_file_highlighting(&highlighted_match);
                 stdout.queue(Print(with_file_highlighting))?;
             } else {
                 stdout.queue(Print(highlighted_match))?;
@@ -995,16 +999,16 @@ fn highlight_search_in_text(text: &str, query: &str) -> String {
     for (start, _part) in text.to_lowercase().match_indices(&query_lower) {
         // Add the part before the match
         result.push_str(&text[last_end..start]);
-        
+
         // Add the highlighted match
         let match_end = start + query.len();
         result.push_str(&text[start..match_end].yellow().bold().to_string());
-        
+
         last_end = match_end;
     }
-    
+
     // Add the remaining part
     result.push_str(&text[last_end..]);
-    
+
     result
 }

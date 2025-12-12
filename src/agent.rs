@@ -23,12 +23,12 @@ use crate::anthropic::{AnthropicClient, ContentBlock, Message, Usage};
 use crate::config::Config;
 use crate::conversation::ConversationManager;
 use crate::database::{Conversation as StoredConversation, DatabaseManager};
+use crate::subagent;
 use crate::tools::{
     bash, create_bash_tool, create_create_directory_tool, create_delete_file_tool,
     create_directory, create_edit_file_tool, create_write_file_tool, delete_file, edit_file,
-    get_builtin_tools, write_file, Tool, ToolCall, ToolResult, ToolRegistry,
+    get_builtin_tools, write_file, Tool, ToolCall, ToolRegistry, ToolResult,
 };
-use crate::subagent;
 
 #[derive(Debug, Clone)]
 pub struct TokenUsage {
@@ -178,21 +178,19 @@ impl Agent {
     }
 
     fn derive_plan_title(plan_markdown: &str) -> Option<String> {
-        plan_markdown
-            .lines()
-            .find_map(|line| {
-                let trimmed = line.trim();
-                if trimmed.starts_with('#') {
-                    let title = trimmed.trim_start_matches('#').trim().to_string();
-                    if !title.is_empty() {
-                        Some(title)
-                    } else {
-                        None
-                    }
+        plan_markdown.lines().find_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') {
+                let title = trimmed.trim_start_matches('#').trim().to_string();
+                if !title.is_empty() {
+                    Some(title)
                 } else {
                     None
                 }
-            })
+            } else {
+                None
+            }
+        })
     }
 
     async fn persist_plan(
@@ -644,10 +642,7 @@ impl Agent {
                 }
 
                 if self.plan_mode && !final_response.is_empty() {
-                    match self
-                        .persist_plan(&cleaned_message, &final_response)
-                        .await
-                    {
+                    match self.persist_plan(&cleaned_message, &final_response).await {
                         Ok(Some(plan_id)) => {
                             final_response
                                 .push_str(&format!("\n\n_Plan saved with ID: `{}`._", plan_id));
@@ -674,10 +669,8 @@ impl Agent {
 
                     // Handle plan mode restrictions
                     if self.plan_mode && !Self::is_plan_safe_tool(&call.name) {
-                        let error_content = format!(
-                            "Plan mode is read-only. Tool '{}' is disabled.",
-                            call.name
-                        );
+                        let error_content =
+                            format!("Plan mode is read-only. Tool '{}' is disabled.", call.name);
                         results.push(ToolResult {
                             tool_use_id: call.id.clone(),
                             content: error_content,
@@ -947,7 +940,8 @@ impl Agent {
         if let Some(saved_context) = self.saved_conversation_context.take() {
             self.conversation_manager.conversation = saved_context.conversation;
             self.conversation_manager.system_prompt = saved_context.system_prompt;
-            self.conversation_manager.current_conversation_id = saved_context.current_conversation_id;
+            self.conversation_manager.current_conversation_id =
+                saved_context.current_conversation_id;
             self.model = saved_context.model;
         } else {
             // Reset to default configuration if no saved context
@@ -960,10 +954,13 @@ impl Agent {
     }
 
     pub fn is_subagent_mode(&self) -> bool {
-        self.conversation_manager.system_prompt.is_some() &&
-        !self.conversation_manager.system_prompt.as_ref()
-            .unwrap_or(&String::new())
-            .contains("default_system_prompt")
+        self.conversation_manager.system_prompt.is_some()
+            && !self
+                .conversation_manager
+                .system_prompt
+                .as_ref()
+                .unwrap_or(&String::new())
+                .contains("default_system_prompt")
     }
 
     pub fn get_system_prompt(&self) -> Option<&String> {
@@ -971,29 +968,24 @@ impl Agent {
     }
 
     pub async fn clear_conversation_keep_agents_md(&mut self) -> Result<()> {
-        self.conversation_manager.clear_conversation_keep_agents_md().await?;
+        self.conversation_manager
+            .clear_conversation_keep_agents_md()
+            .await?;
         Ok(())
     }
 
     /// Execute a tool with the new display system
-    async fn execute_tool_with_display(
-        &self,
-        call: &ToolCall,
-    ) -> ToolResult {
+    async fn execute_tool_with_display(&self, call: &ToolCall) -> ToolResult {
         // Use the new display system
         let registry = self.tool_registry.read().await;
-        let mut display = DisplayFactory::create_display(
-            &call.name,
-            &call.arguments,
-            &registry,
-        );
-        
+        let mut display = DisplayFactory::create_display(&call.name, &call.arguments, &registry);
+
         // Show tool call details
         display.show_call_details(&call.arguments);
-        
+
         // Execute the tool using internal logic
         let result = self.execute_tool_internal(call).await;
-        
+
         // Complete the display
         match &result {
             Ok(tool_result) => {
@@ -1007,7 +999,7 @@ impl Agent {
                 display.complete_error(&e.to_string());
             }
         }
-        
+
         result.unwrap_or_else(|e| ToolResult {
             tool_use_id: call.id.clone(),
             content: e.to_string(),
@@ -1027,11 +1019,7 @@ impl Agent {
                     let tool_name = parts[2..].join("_");
 
                     match mcp_manager
-                        .call_tool(
-                            server_name,
-                            &tool_name,
-                            Some(call.arguments.clone()),
-                        )
+                        .call_tool(server_name, &tool_name, Some(call.arguments.clone()))
                         .await
                     {
                         Ok(result) => {
@@ -1047,7 +1035,10 @@ impl Agent {
                         }
                         Err(e) => {
                             error!("Error executing MCP tool '{}': {}", call.name, e);
-                            error!("MCP server '{}' may have encountered an error or is unavailable", server_name);
+                            error!(
+                                "MCP server '{}' may have encountered an error or is unavailable",
+                                server_name
+                            );
 
                             // Provide detailed error information
                             let error_content = format!(
