@@ -79,15 +79,14 @@ pub struct Agent {
     // Store previous context when switching to subagent
     saved_conversation_context: Option<SavedConversationContext>,
     // New display system components
-    tool_registry: Arc<RwLock<ToolRegistry>>,
+    pub tool_registry: Arc<RwLock<ToolRegistry>>,
 }
 
 impl Agent {
     pub fn new(config: Config, model: String, yolo_mode: bool, plan_mode: bool) -> Self {
         let client = AnthropicClient::new(config.api_key, config.base_url);
-        let mut tools: std::collections::HashMap<String, Tool> = get_builtin_tools()
+        let tools = get_builtin_tools()
             .into_iter()
-            .filter(|tool| !plan_mode || Self::is_plan_safe_tool(&tool.name))
             .map(|tool| (tool.name.clone(), tool))
             .collect();
 
@@ -105,10 +104,41 @@ impl Agent {
         let conversation_manager =
             ConversationManager::new(config.default_system_prompt, None, model.clone());
 
-        // Add bash tool with security to the initial tools
-        let security_manager = bash_security_manager.clone();
+        // Initialize the new tool registry
+        let tool_registry = Arc::new(RwLock::new(ToolRegistry::with_builtin_tools()));
+
+        Self {
+            client,
+            model,
+            tools: Arc::new(RwLock::new(tools)),
+            conversation_manager,
+            token_usage: TokenUsage::new(),
+            mcp_manager: None,
+            last_mcp_tools_version: 0,
+            bash_security_manager,
+            file_security_manager,
+            yolo_mode,
+            plan_mode,
+            plan_mode_saved_system_prompt: None,
+            saved_conversation_context: None,
+            tool_registry,
+        }
+    }
+
+    /// Create a new agent and apply plan mode filtering if needed
+    pub async fn new_with_plan_mode(
+        config: Config,
+        model: String,
+        yolo_mode: bool,
+        plan_mode: bool,
+    ) -> Self {
+        let mut agent = Self::new(config, model, yolo_mode, plan_mode);
+
+        // Add bash tool with security
+        let security_manager = agent.bash_security_manager.clone();
         let yolo_mode = yolo_mode;
         if !plan_mode {
+            let mut tools = agent.tools.write().await;
             tools.insert(
                 "bash".to_string(),
                 Tool {
@@ -151,30 +181,21 @@ impl Agent {
             );
         }
 
-        Self {
-            client,
-            model,
-            tools: Arc::new(RwLock::new(tools)),
-            conversation_manager,
-            token_usage: TokenUsage::new(),
-            mcp_manager: None,
-            last_mcp_tools_version: 0,
-            bash_security_manager,
-            file_security_manager,
-            yolo_mode,
-            plan_mode,
-            plan_mode_saved_system_prompt: None,
-            saved_conversation_context: None,
-            // Initialize the new tool registry
-            tool_registry: Arc::new(RwLock::new(ToolRegistry::with_builtin_tools())),
-        }
+        // Apply plan mode filtering
+        let _ = agent.apply_plan_mode_filtering().await;
+        agent
     }
 
-    fn is_plan_safe_tool(tool_name: &str) -> bool {
-        matches!(
-            tool_name,
-            "list_directory" | "read_file" | "search_in_files" | "glob"
-        )
+    /// Apply plan mode filtering to tools (async version)
+    async fn apply_plan_mode_filtering(&mut self) -> Result<()> {
+        if self.plan_mode {
+            let mut tools = self.tools.write().await;
+            let registry = self.tool_registry.read().await;
+
+            // Filter tools based on readonly status
+            tools.retain(|name, _| registry.is_readonly(name));
+        }
+        Ok(())
     }
 
     fn derive_plan_title(plan_markdown: &str) -> Option<String> {
@@ -417,7 +438,9 @@ impl Agent {
         {
             let mut tools = self.tools.write().await;
             if enabled {
-                tools.retain(|name, _| Self::is_plan_safe_tool(name));
+                // Filter tools based on readonly status from metadata
+                let registry = self.tool_registry.read().await;
+                tools.retain(|name, _| registry.is_readonly(name));
             } else {
                 // Rebuild essential tools when exiting plan mode
                 if !tools.contains_key("bash") {
@@ -563,9 +586,10 @@ impl Agent {
 
             let available_tools: Vec<Tool> = {
                 let tools = self.tools.read().await;
+                let registry = self.tool_registry.read().await;
                 tools
                     .values()
-                    .filter(|tool| !self.plan_mode || Self::is_plan_safe_tool(&tool.name))
+                    .filter(|tool| !self.plan_mode || registry.is_readonly(&tool.name))
                     .cloned()
                     .collect()
             };
@@ -668,15 +692,20 @@ impl Agent {
                     debug!("Executing tool: {} with ID: {}", call.name, call.id);
 
                     // Handle plan mode restrictions
-                    if self.plan_mode && !Self::is_plan_safe_tool(&call.name) {
-                        let error_content =
-                            format!("Plan mode is read-only. Tool '{}' is disabled.", call.name);
-                        results.push(ToolResult {
-                            tool_use_id: call.id.clone(),
-                            content: error_content,
-                            is_error: true,
-                        });
-                        continue;
+                    if self.plan_mode {
+                        let registry = self.tool_registry.read().await;
+                        if !registry.is_readonly(&call.name) {
+                            let error_content = format!(
+                                "Plan mode is read-only. Tool '{}' is disabled.",
+                                call.name
+                            );
+                            results.push(ToolResult {
+                                tool_use_id: call.id.clone(),
+                                content: error_content,
+                                is_error: true,
+                            });
+                            continue;
+                        }
                     }
 
                     // Use the new display system and execute tool

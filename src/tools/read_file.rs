@@ -8,20 +8,6 @@ use shellexpand;
 use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
-
-// Implement metadata provider for read_file tool
-impl ToolMetadataProvider for ReadFileTool {
-    fn get_metadata() -> ToolMetadata {
-        ToolMetadata {
-            name: "read_file".to_string(),
-            description: "Read the contents of a file".to_string(),
-            icon: "📖",
-            color: Some(colored::Color::Cyan),
-            display_format: DisplayFormat::File { show_size: false },
-        }
-    }
-}
-
 // Dummy struct for metadata implementation
 pub struct ReadFileTool;
 
@@ -73,11 +59,9 @@ pub fn read_file_sync(
 }
 
 pub fn create_read_file_tool() -> Tool {
-    let metadata = ReadFileTool::get_metadata();
-
     Tool {
-        name: metadata.name.clone(),
-        description: metadata.description.clone(),
+        name: "read_file".to_string(),
+        description: "Read the contents of a file".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -89,6 +73,6 @@ pub fn create_read_file_tool() -> Tool {
             "required": ["path"]
         }),
         handler: Box::new(read_file_sync),
-        metadata: Some(metadata),
+        metadata: None,
     }
 }

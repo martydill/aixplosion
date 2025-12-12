@@ -283,13 +283,13 @@ async fn handle_agent_command(
             let name = args[1];
             let system_prompt = args[2..].join(" ");
 
-            // Default tool set for new subagent
-            let allowed_tools = vec![
-                "search_in_files".to_string(),
-                "list_directory".to_string(),
-                "read_file".to_string(),
-                "glob".to_string(),
-            ];
+            // Default tool set for new subagent - use readonly tools from metadata
+            let registry = agent.tool_registry.read().await;
+            let allowed_tools: Vec<String> = registry
+                .get_all_tools()
+                .filter(|metadata| metadata.readonly)
+                .map(|metadata| metadata.name.clone())
+                .collect();
 
             match subagent_manager
                 .create_subagent(name, &system_prompt, allowed_tools, vec![])
@@ -1990,8 +1990,9 @@ async fn main() -> Result<()> {
     // Create code formatter
     let formatter = create_code_formatter()?;
 
-    // Create and run agent
-    let mut agent = Agent::new(config.clone(), cli.model, cli.yolo, cli.plan_mode);
+    // Create and run agent using the new async constructor
+    let mut agent =
+        Agent::new_with_plan_mode(config.clone(), cli.model, cli.yolo, cli.plan_mode).await;
 
     // Initialize MCP manager
     let mcp_manager = Arc::new(McpManager::new());

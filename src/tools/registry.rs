@@ -11,6 +11,7 @@ pub struct ToolMetadata {
     pub icon: &'static str,
     pub color: Option<Color>,
     pub display_format: DisplayFormat,
+    pub readonly: bool,
 }
 
 /// Different display formats for different tool types
@@ -81,6 +82,11 @@ impl ToolRegistry {
         self.tools.contains_key(name)
     }
 
+    /// Check if a tool is readonly
+    pub fn is_readonly(&self, name: &str) -> bool {
+        self.tools.get(name).map(|m| m.readonly).unwrap_or(false)
+    }
+
     /// Get default metadata for unknown tools
     pub fn get_default_metadata(name: &str) -> ToolMetadata {
         ToolMetadata {
@@ -89,6 +95,7 @@ impl ToolRegistry {
             icon: "🔧",
             color: None,
             display_format: DisplayFormat::Generic,
+            readonly: false,
         }
     }
 
@@ -105,6 +112,7 @@ impl ToolRegistry {
             display_format: DisplayFormat::Directory {
                 show_item_count: true,
             },
+            readonly: true,
         });
 
         registry.register_tool(ToolMetadata {
@@ -113,6 +121,7 @@ impl ToolRegistry {
             icon: "📖",
             color: Some(colored::Color::Cyan),
             display_format: DisplayFormat::File { show_size: false },
+            readonly: true,
         });
 
         registry.register_tool(ToolMetadata {
@@ -121,6 +130,7 @@ impl ToolRegistry {
             icon: "✏️",
             color: Some(colored::Color::Green),
             display_format: DisplayFormat::File { show_size: true },
+            readonly: false,
         });
 
         registry.register_tool(ToolMetadata {
@@ -129,6 +139,7 @@ impl ToolRegistry {
             icon: "🔄",
             color: Some(colored::Color::Yellow),
             display_format: DisplayFormat::File { show_size: true },
+            readonly: false,
         });
 
         registry.register_tool(ToolMetadata {
@@ -137,6 +148,7 @@ impl ToolRegistry {
             icon: "🗑️",
             color: Some(colored::Color::Red),
             display_format: DisplayFormat::File { show_size: false },
+            readonly: false,
         });
 
         registry.register_tool(ToolMetadata {
@@ -147,6 +159,7 @@ impl ToolRegistry {
             display_format: DisplayFormat::Directory {
                 show_item_count: false,
             },
+            readonly: false,
         });
 
         registry.register_tool(ToolMetadata {
@@ -157,6 +170,7 @@ impl ToolRegistry {
             display_format: DisplayFormat::Command {
                 show_working_dir: true,
             },
+            readonly: false,
         });
 
         registry.register_tool(ToolMetadata {
@@ -165,6 +179,7 @@ impl ToolRegistry {
             icon: "🔍",
             color: Some(colored::Color::Cyan),
             display_format: DisplayFormat::Generic,
+            readonly: true,
         });
 
         registry.register_tool(ToolMetadata {
@@ -173,6 +188,7 @@ impl ToolRegistry {
             icon: "🔎",
             color: Some(colored::Color::Blue),
             display_format: DisplayFormat::Generic,
+            readonly: true,
         });
 
         registry
