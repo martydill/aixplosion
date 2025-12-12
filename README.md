@@ -21,6 +21,7 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
  - Full text conversation search via /search
  - Plan mode and /plan command support for managing plans and toggling plan mode
  - Subagent support via /agent
+ - Command line history navigation with up and down arrow keys and Ctrl-R search
  
 
 ## Todo 
