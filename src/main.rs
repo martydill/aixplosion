@@ -2092,8 +2092,18 @@ fn print_help() {
     println!("  ↑ / ↓ Arrow   - Navigate through input history");
     println!("  ← / → Arrow   - Move cursor left/right in current input");
     println!("  Tab           - Auto-complete file paths and commands");
+    println!("  Ctrl+R        - Start reverse history search (like readline)");
     println!("  ESC           - Cancel current AI conversation (during processing)");
     println!("  Ctrl+C        - Exit the program immediately");
+    println!();
+    println!("{}", "Reverse Search (Ctrl+R):".green().bold());
+    println!("  Ctrl+R        - Start reverse search mode");
+    println!("  Type text     - Search for matching history entries");
+    println!("  Ctrl+R / r    - Find next match");
+    println!("  ↑ / ↓ Arrow   - Navigate between matches");
+    println!("  Enter         - Accept current match");
+    println!("  ESC           - Cancel search and restore original input");
+    println!("  Backspace     - Remove last character from search query");
     println!();
     println!("{}", "Shell Commands:".green().bold());
     println!("  !<command>    - Execute a shell command directly (bypasses all security)");
@@ -2156,6 +2166,7 @@ fn print_help() {
     println!("{}", "History Navigation:".green().bold());
     println!("  • Press UP arrow to cycle through previous commands");
     println!("  • Press DOWN arrow to cycle through more recent commands");
+    println!("  • Press Ctrl+R to start reverse history search");
     println!("  • Start typing to exit history navigation mode");
     println!("  • History is preserved across the entire session");
     println!("  • Duplicate and empty commands are not stored");

@@ -16,6 +16,37 @@ use std::time::Duration;
 use crate::autocomplete;
 use crate::formatter;
 
+/// Reverse search state
+#[derive(Debug, Clone)]
+pub struct ReverseSearchState {
+    pub search_query: String,
+    pub matched_entry: Option<String>,
+    pub current_match_index: usize,
+    pub all_matches: Vec<String>,
+}
+
+impl ReverseSearchState {
+    pub fn new() -> Self {
+        Self {
+            search_query: String::new(),
+            matched_entry: None,
+            current_match_index: 0,
+            all_matches: Vec::new(),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.search_query.clear();
+        self.matched_entry = None;
+        self.current_match_index = 0;
+        self.all_matches.clear();
+    }
+
+    pub fn is_active(&self) -> bool {
+        !self.search_query.is_empty() || self.matched_entry.is_some()
+    }
+}
+
 thread_local! {
     static LAST_RENDERED_LINES: Cell<usize> = Cell::new(1);
 }
@@ -142,11 +173,12 @@ mod tests {
     }
 }
 
-/// Input history management
+/// Input history management with reverse search support
 pub struct InputHistory {
     entries: Vec<String>,
     index: Option<usize>,
     temp_input: String,
+    reverse_search: ReverseSearchState,
 }
 
 impl InputHistory {
@@ -155,6 +187,7 @@ impl InputHistory {
             entries: Vec::new(),
             index: None,
             temp_input: String::new(),
+            reverse_search: ReverseSearchState::new(),
         }
     }
 
@@ -175,6 +208,7 @@ impl InputHistory {
         // Reset navigation state
         self.index = None;
         self.temp_input.clear();
+        self.reverse_search.reset();
     }
 
     pub fn navigate_up(&mut self, current_input: &str) -> Option<String> {
@@ -222,6 +256,87 @@ impl InputHistory {
     pub fn reset_navigation(&mut self) {
         self.index = None;
         self.temp_input.clear();
+        self.reverse_search.reset();
+    }
+
+    /// Start reverse search mode
+    pub fn start_reverse_search(&mut self, current_input: &str) {
+        self.temp_input = current_input.to_string();
+        self.reverse_search.reset();
+        self.reverse_search.search_query = String::new();
+        self.index = None;
+    }
+
+    /// Update reverse search query and find matches
+    pub fn update_reverse_search(&mut self, query: &str) {
+        self.reverse_search.search_query = query.to_string();
+        
+        if query.is_empty() {
+            self.reverse_search.matched_entry = None;
+            self.reverse_search.all_matches.clear();
+            self.reverse_search.current_match_index = 0;
+            return;
+        }
+
+        // Find all entries that contain the query (case-insensitive)
+        let query_lower = query.to_lowercase();
+        self.reverse_search.all_matches = self.entries
+            .iter()
+            .rev() // Start from most recent
+            .filter(|entry| entry.to_lowercase().contains(&query_lower))
+            .cloned()
+            .collect();
+
+        if !self.reverse_search.all_matches.is_empty() {
+            self.reverse_search.current_match_index = 0;
+            self.reverse_search.matched_entry = Some(self.reverse_search.all_matches[0].clone());
+        } else {
+            self.reverse_search.matched_entry = None;
+        }
+    }
+
+    /// Navigate to next match in reverse search
+    pub fn reverse_search_next(&mut self) {
+        if !self.reverse_search.all_matches.is_empty() {
+            self.reverse_search.current_match_index = 
+                (self.reverse_search.current_match_index + 1) % self.reverse_search.all_matches.len();
+            self.reverse_search.matched_entry = 
+                Some(self.reverse_search.all_matches[self.reverse_search.current_match_index].clone());
+        }
+    }
+
+    /// Navigate to previous match in reverse search
+    pub fn reverse_search_prev(&mut self) {
+        if !self.reverse_search.all_matches.is_empty() {
+            self.reverse_search.current_match_index = 
+                if self.reverse_search.current_match_index == 0 {
+                    self.reverse_search.all_matches.len() - 1
+                } else {
+                    self.reverse_search.current_match_index - 1
+                };
+            self.reverse_search.matched_entry = 
+                Some(self.reverse_search.all_matches[self.reverse_search.current_match_index].clone());
+        }
+    }
+
+    /// Get the current reverse search state
+    pub fn get_reverse_search_state(&self) -> &ReverseSearchState {
+        &self.reverse_search
+    }
+
+    /// Finish reverse search and return the matched entry
+    pub fn finish_reverse_search(&mut self) -> Option<String> {
+        let result = self.reverse_search.matched_entry.clone();
+        self.reverse_search.reset();
+        self.index = None;
+        result
+    }
+
+    /// Cancel reverse search and restore original input
+    pub fn cancel_reverse_search(&mut self) -> String {
+        self.reverse_search.reset();
+        self.index = None;
+        self.temp_input.clone()
     }
 }
 
@@ -271,7 +386,7 @@ fn next_char_boundary(text: &str, cursor_pos: usize) -> usize {
         .unwrap_or(pos)
 }
 
-/// Read input with autocompletion support and file highlighting
+/// Read input with autocompletion support, file highlighting, and reverse search
 pub fn read_input_with_completion_and_highlighting(
     formatter: Option<&formatter::CodeFormatter>,
     history: &mut InputHistory,
@@ -283,6 +398,7 @@ pub fn read_input_with_completion_and_highlighting(
     let mut input = String::new();
     // Cursor position is tracked as a byte offset that always sits on a char boundary.
     let mut cursor_pos = 0;
+    let mut reverse_search_mode = false;
 
     // Reset render tracking when starting a new prompt
     LAST_RENDERED_LINES.with(|cell| cell.set(1));
@@ -292,6 +408,108 @@ pub fn read_input_with_completion_and_highlighting(
 
     loop {
         match event::read()? {
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('r'),
+                kind: KeyEventKind::Press,
+                modifiers: KeyModifiers::CONTROL,
+                state: _,
+            }) => {
+                // Handle Ctrl+R - start reverse search
+                if !reverse_search_mode {
+                    reverse_search_mode = true;
+                    history.start_reverse_search(&input);
+                    redraw_reverse_search_prompt(history, formatter)?;
+                } else {
+                    // If already in reverse search, find next match
+                    history.reverse_search_next();
+                    redraw_reverse_search_prompt(history, formatter)?;
+                }
+            }
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Char('r'),
+                kind: KeyEventKind::Press,
+                ..
+            }) if reverse_search_mode => {
+                // In reverse search mode, 'r' without Ctrl also searches for next match
+                history.reverse_search_next();
+                redraw_reverse_search_prompt(history, formatter)?;
+            }
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Up,
+                kind: KeyEventKind::Press,
+                ..
+            }) if reverse_search_mode => {
+                // In reverse search mode, up arrow goes to previous match
+                history.reverse_search_prev();
+                redraw_reverse_search_prompt(history, formatter)?;
+            }
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Down,
+                kind: KeyEventKind::Press,
+                ..
+            }) if reverse_search_mode => {
+                // In reverse search mode, down arrow goes to next match
+                history.reverse_search_next();
+                redraw_reverse_search_prompt(history, formatter)?;
+            }
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Enter,
+                kind: KeyEventKind::Press,
+                ..
+            }) if reverse_search_mode => {
+                // In reverse search mode, Enter accepts the current match
+                if let Some(matched_entry) = history.finish_reverse_search() {
+                    input = matched_entry;
+                    cursor_pos = input.len();
+                }
+                reverse_search_mode = false;
+                redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+            }
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Esc,
+                kind: KeyEventKind::Press,
+                ..
+            }) if reverse_search_mode => {
+                // In reverse search mode, Esc cancels and restores original input
+                input = history.cancel_reverse_search();
+                cursor_pos = input.len();
+                reverse_search_mode = false;
+                redraw_input_line_with_highlighting(&input, cursor_pos, formatter)?;
+            }
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Backspace,
+                kind: KeyEventKind::Press,
+                ..
+            }) if reverse_search_mode => {
+                // In reverse search mode, backspace removes last character from search query
+                let state = history.get_reverse_search_state();
+                let mut query = state.search_query.clone();
+                if !query.is_empty() {
+                    query.pop();
+                    history.update_reverse_search(&query);
+                    redraw_reverse_search_prompt(history, formatter)?;
+                }
+            }
+
+            Event::Key(KeyEvent {
+                code: KeyCode::Char(c),
+                kind: KeyEventKind::Press,
+                ..
+            }) if reverse_search_mode => {
+                // In reverse search mode, typing adds to search query
+                let state = history.get_reverse_search_state();
+                let mut query = state.search_query.clone();
+                query.push(c);
+                history.update_reverse_search(&query);
+                redraw_reverse_search_prompt(history, formatter)?;
+            }
+
             Event::Key(KeyEvent {
                 code: KeyCode::Enter,
                 kind: KeyEventKind::Press,
@@ -698,4 +916,95 @@ fn redraw_input_line_with_highlighting(
 /// Fast redraw without highlighting for cursor movements (up/down arrows, etc.)
 fn redraw_input_line_fast(input: &str, cursor_pos: usize) -> Result<()> {
     redraw_input_line(input, cursor_pos, None, false)
+}
+
+/// Redraw the reverse search prompt
+fn redraw_reverse_search_prompt(
+    history: &InputHistory,
+    _formatter: Option<&formatter::CodeFormatter>,
+) -> Result<()> {
+    use crossterm::{
+        style::{Print, ResetColor},
+        terminal,
+    };
+
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+
+    let _terminal_width = terminal::size()
+        .map(|(w, _)| w as usize)
+        .unwrap_or(80)
+        .max(1);
+
+    let state = history.get_reverse_search_state();
+    let _prompt_length = 19; // "(reverse-i-search)`' " length
+
+    // Clear previous lines
+    let previous_lines = LAST_RENDERED_LINES.with(|cell| {
+        let prev = cell.get();
+        cell.set(1);
+        prev.max(1)
+    });
+
+    clear_previous_render(&mut stdout, previous_lines)?;
+
+    // Display reverse search prompt
+    if state.search_query.is_empty() {
+        stdout.queue(Print("(reverse-i-search)`' "))?;
+    } else if let Some(matched_entry) = &state.matched_entry {
+        // Highlight the search query within the matched entry
+        let highlighted_match = highlight_search_in_text(matched_entry, &state.search_query);
+        stdout.queue(Print("(reverse-i-search)`"))?;
+        stdout.queue(Print(state.search_query.yellow().bold()))?;
+        stdout.queue(Print("': "))?;
+        
+        // Apply highlighting to the matched entry if formatter is available and contains @
+        if let Some(fmt) = _formatter {
+            if matched_entry.contains('@') {
+                let with_file_highlighting = fmt.format_input_with_file_highlighting(&highlighted_match);
+                stdout.queue(Print(with_file_highlighting))?;
+            } else {
+                stdout.queue(Print(highlighted_match))?;
+            }
+        } else {
+            stdout.queue(Print(highlighted_match))?;
+        }
+    } else {
+        stdout.queue(Print("(reverse-i-search)`"))?;
+        stdout.queue(Print(state.search_query.yellow().bold()))?;
+        stdout.queue(Print("': "))?;
+        stdout.queue(Print("(failed)".red()))?;
+    }
+
+    stdout.queue(ResetColor)?.flush()?;
+
+    Ok(())
+}
+
+/// Highlight the search query within text
+fn highlight_search_in_text(text: &str, query: &str) -> String {
+    if query.is_empty() {
+        return text.to_string();
+    }
+
+    let query_lower = query.to_lowercase();
+    let mut result = String::new();
+    let mut last_end = 0;
+
+    // Find all occurrences of the query (case-insensitive)
+    for (start, _part) in text.to_lowercase().match_indices(&query_lower) {
+        // Add the part before the match
+        result.push_str(&text[last_end..start]);
+        
+        // Add the highlighted match
+        let match_end = start + query.len();
+        result.push_str(&text[start..match_end].yellow().bold().to_string());
+        
+        last_end = match_end;
+    }
+    
+    // Add the remaining part
+    result.push_str(&text[last_end..]);
+    
+    result
 }
