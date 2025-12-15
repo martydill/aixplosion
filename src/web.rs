@@ -178,7 +178,10 @@ pub async fn launch_web_ui(state: WebState, port: u16) -> Result<()> {
             post(send_message_to_conversation),
         )
         .route("/api/plans", get(list_plans).post(create_plan))
-        .route("/api/plans/:id", get(get_plan).put(update_plan))
+        .route(
+            "/api/plans/:id",
+            get(get_plan).put(update_plan).delete(delete_plan),
+        )
         .route(
             "/api/mcp/servers",
             get(list_mcp_servers).post(upsert_mcp_server),
@@ -446,6 +449,17 @@ async fn update_plan(
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to update plan: {}", e),
+            )
+                .into_response(),
+    }
+}
+
+async fn delete_plan(State(state): State<WebState>, Path(id): Path<String>) -> impl IntoResponse {
+    match state.database.delete_plan(&id).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to delete plan: {}", e),
         )
             .into_response(),
     }

@@ -1,3 +1,5 @@
+const READONLY_TOOLS = ["search_in_files", "glob"];
+
 const state = {
   conversations: [],
   activeConversationId: null,
@@ -9,7 +11,16 @@ const state = {
   activeAgent: null,
   activeAgentEditing: null,
   theme: "dark",
+  activeTab: "chats",
 };
+
+function setPlanForm(plan) {
+  state.activePlanId = plan.id;
+  document.getElementById("plan-title").value = plan.title || "";
+  document.getElementById("plan-user-request").value = plan.user_request || "";
+  document.getElementById("plan-markdown").value = plan.plan_markdown || "";
+  renderPlanList();
+}
 
 function applyTheme(theme) {
   state.theme = theme;
@@ -155,11 +166,7 @@ function renderPlanList() {
       <small>${new Date(plan.created_at).toLocaleString()}</small>
     `;
     item.addEventListener("click", () => {
-      state.activePlanId = plan.id;
-      document.getElementById("plan-title").value = plan.title || "";
-      document.getElementById("plan-user-request").value = plan.user_request || "";
-      document.getElementById("plan-markdown").value = plan.plan_markdown || "";
-      renderPlanList();
+      setPlanForm(plan);
     });
     list.appendChild(item);
   });
@@ -172,6 +179,33 @@ function resetPlanForm() {
   document.getElementById("plan-markdown").value = "";
 }
 
+function resetMcpForm() {
+  state.activeServer = null;
+  document.getElementById("mcp-name").value = "";
+  document.getElementById("mcp-command").value = "";
+  document.getElementById("mcp-args").value = "";
+  document.getElementById("mcp-url").value = "";
+  document.getElementById("mcp-env").value = "";
+  document.getElementById("mcp-enabled").value = "true";
+  renderMcpList();
+}
+
+function setMcpForm(server) {
+  if (!server) {
+    resetMcpForm();
+    return;
+  }
+  state.activeServer = server.name;
+  document.getElementById("mcp-name").value = server.name;
+  document.getElementById("mcp-command").value = server.config.command || "";
+  document.getElementById("mcp-args").value = (server.config.args || []).join(" ");
+  document.getElementById("mcp-url").value = server.config.url || "";
+  const env = server.config.env || {};
+  document.getElementById("mcp-env").value = Object.entries(env)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(", ");
+  document.getElementById("mcp-enabled").value = String(server.config.enabled);
+}
 async function savePlan() {
   if (!state.activePlanId) return;
   const payload = {
@@ -196,6 +230,13 @@ async function createPlan() {
   await loadPlans();
 }
 
+async function deletePlan() {
+  if (!state.activePlanId) return;
+  await api(`/api/plans/${state.activePlanId}`, { method: "DELETE" });
+  resetPlanForm();
+  await loadPlans();
+}
+
 // MCP
 async function loadMcp() {
   state.mcpServers = await api("/api/mcp/servers");
@@ -207,7 +248,7 @@ function renderMcpList() {
   list.innerHTML = "";
   state.mcpServers.forEach((server) => {
     const item = document.createElement("div");
-    item.className = "card";
+    item.className = "list-item" + (server.name === state.activeServer ? " active" : "");
     const status = server.connected ? "Connected" : server.config.enabled ? "Ready" : "Disabled";
     item.innerHTML = `
       <div class="flex-between">
@@ -215,41 +256,12 @@ function renderMcpList() {
           <div style="font-weight:700;">${server.name}</div>
           <small class="muted">${status}</small>
         </div>
-        <div class="stack">
-          <button class="secondary" data-action="connect">Connect</button>
-          <button class="secondary" data-action="disconnect">Disconnect</button>
-          <button class="secondary danger" data-action="delete">Delete</button>
-        </div>
       </div>
       <div class="muted" style="margin-top:6px;">${server.config.url || server.config.command || "No endpoint configured"}</div>
     `;
-    item.addEventListener("click", (e) => {
-      if (e.target.dataset.action) return;
-      state.activeServer = server.name;
-      document.getElementById("mcp-name").value = server.name;
-      document.getElementById("mcp-command").value = server.config.command || "";
-      document.getElementById("mcp-args").value = (server.config.args || []).join(" ");
-      document.getElementById("mcp-url").value = server.config.url || "";
-      const env = server.config.env || {};
-      document.getElementById("mcp-env").value = Object.entries(env)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(", ");
-      document.getElementById("mcp-enabled").value = String(server.config.enabled);
-    });
-    item.querySelector('[data-action="connect"]').addEventListener("click", async (e) => {
-      e.stopPropagation();
-      await api(`/api/mcp/servers/${server.name}/connect`, { method: "POST" });
-      await loadMcp();
-    });
-    item.querySelector('[data-action="disconnect"]').addEventListener("click", async (e) => {
-      e.stopPropagation();
-      await api(`/api/mcp/servers/${server.name}/disconnect`, { method: "POST" });
-      await loadMcp();
-    });
-    item.querySelector('[data-action="delete"]').addEventListener("click", async (e) => {
-      e.stopPropagation();
-      await api(`/api/mcp/servers/${server.name}`, { method: "DELETE" });
-      await loadMcp();
+    item.addEventListener("click", () => {
+      setMcpForm(server);
+      renderMcpList();
     });
     list.appendChild(item);
   });
@@ -309,14 +321,7 @@ function renderAgents() {
       <small class="muted">${agent.model || "model inherits"} • ${agent.allowed_tools.length} allowed</small>
     `;
     item.addEventListener("click", () => {
-      state.activeAgentEditing = agent.name;
-      document.getElementById("agent-name").value = agent.name;
-      document.getElementById("agent-model").value = agent.model || "";
-      document.getElementById("agent-temp").value = agent.temperature ?? "";
-      document.getElementById("agent-max-tokens").value = agent.max_tokens ?? "";
-      document.getElementById("agent-allowed").value = agent.allowed_tools.join(", ");
-      document.getElementById("agent-denied").value = agent.denied_tools.join(", ");
-      document.getElementById("agent-prompt").value = agent.system_prompt;
+      setAgentForm(agent);
       renderAgents();
     });
     list.appendChild(item);
@@ -329,10 +334,53 @@ function resetAgentForm() {
   document.getElementById("agent-model").value = "";
   document.getElementById("agent-temp").value = "";
   document.getElementById("agent-max-tokens").value = "";
-  document.getElementById("agent-allowed").value = "";
+  document.getElementById("agent-allowed").value = READONLY_TOOLS.join(", ");
   document.getElementById("agent-denied").value = "";
   document.getElementById("agent-prompt").value = "";
   renderAgents();
+}
+
+function setAgentForm(agent) {
+  state.activeAgentEditing = agent.name;
+  document.getElementById("agent-name").value = agent.name;
+  document.getElementById("agent-model").value = agent.model || "";
+  document.getElementById("agent-temp").value = agent.temperature ?? "";
+  document.getElementById("agent-max-tokens").value = agent.max_tokens ?? "";
+  document.getElementById("agent-allowed").value = agent.allowed_tools.join(", ");
+  document.getElementById("agent-denied").value = agent.denied_tools.join(", ");
+  document.getElementById("agent-prompt").value = agent.system_prompt;
+}
+
+function selectFirstConversation() {
+  if (state.conversations.length > 0) {
+    selectConversation(state.conversations[0].id);
+  }
+}
+
+function selectFirstPlan() {
+  if (state.plans.length > 0) {
+    setPlanForm(state.plans[0]);
+  } else {
+    resetPlanForm();
+  }
+}
+
+function selectFirstMcp() {
+  if (state.mcpServers.length > 0) {
+    setMcpForm(state.mcpServers[0]);
+    renderMcpList();
+  } else {
+    resetMcpForm();
+  }
+}
+
+function selectFirstAgent() {
+  if (state.agents.length > 0) {
+    setAgentForm(state.agents[0]);
+    renderAgents();
+  } else {
+    resetAgentForm();
+  }
 }
 
 async function saveAgent() {
@@ -367,6 +415,12 @@ async function deleteAgent() {
   await api(`/api/agents/${name}`, { method: "DELETE" });
   state.activeAgentEditing = null;
   await loadAgents();
+  if (state.agents.length > 0) {
+    setAgentForm(state.agents[0]);
+    renderAgents();
+  } else {
+    resetAgentForm();
+  }
 }
 
 function splitList(text) {
@@ -386,10 +440,29 @@ function initTabs() {
   document.querySelectorAll(".top-tab").forEach((btn) => {
     btn.addEventListener("click", () => {
       const target = btn.dataset.tab;
+      state.activeTab = target;
+      const url = new URL(window.location);
+      url.searchParams.set("tab", target);
+      window.history.replaceState({}, "", url);
       document.querySelectorAll(".top-tab").forEach((b) => b.classList.remove("active"));
       document.querySelectorAll(".tab-content").forEach((tab) => tab.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById(`tab-${target}`).classList.add("active");
+
+      switch (target) {
+        case "plans":
+          selectFirstPlan();
+          break;
+        case "mcp":
+          selectFirstMcp();
+          break;
+        case "agents":
+          selectFirstAgent();
+          break;
+        default:
+          selectFirstConversation();
+          break;
+      }
     });
   });
 }
@@ -415,13 +488,38 @@ function bindEvents() {
     }
   });
   document.getElementById("new-conversation").addEventListener("click", createConversation);
-  document.getElementById("refresh-conversations").addEventListener("click", loadConversations);
 
   document.getElementById("save-plan").addEventListener("click", savePlan);
   document.getElementById("create-plan").addEventListener("click", createPlan);
   document.getElementById("create-plan-sidebar").addEventListener("click", createPlan);
+  document.getElementById("delete-plan").addEventListener("click", deletePlan);
 
-  document.getElementById("add-mcp").addEventListener("click", saveMcpServer);
+  document.getElementById("new-mcp").addEventListener("click", resetMcpForm);
+  document.getElementById("save-mcp-detail").addEventListener("click", saveMcpServer);
+  document.getElementById("connect-mcp-detail").addEventListener("click", async () => {
+    const name = document.getElementById("mcp-name").value.trim();
+    if (!name) return;
+    await api(`/api/mcp/servers/${name}/connect`, { method: "POST" });
+    await loadMcp();
+  });
+  document.getElementById("disconnect-mcp-detail").addEventListener("click", async () => {
+    const name = document.getElementById("mcp-name").value.trim();
+    if (!name) return;
+    await api(`/api/mcp/servers/${name}/disconnect`, { method: "POST" });
+    await loadMcp();
+  });
+  document.getElementById("delete-mcp-detail").addEventListener("click", async () => {
+    const name = document.getElementById("mcp-name").value.trim();
+    if (!name) return;
+    await api(`/api/mcp/servers/${name}`, { method: "DELETE" });
+    await loadMcp();
+    if (state.mcpServers.length > 0) {
+      setMcpForm(state.mcpServers[0]);
+      renderMcpList();
+    } else {
+      resetMcpForm();
+    }
+  });
 
   document.getElementById("save-agent").addEventListener("click", saveAgent);
   document.getElementById("activate-agent").addEventListener("click", () => {
@@ -434,6 +532,17 @@ function bindEvents() {
 }
 
 async function bootstrap() {
+  // Restore tab from URL
+  const url = new URL(window.location);
+  const tabFromUrl = url.searchParams.get("tab");
+  if (tabFromUrl && document.querySelector(`.top-tab[data-tab=\"${tabFromUrl}\"]`)) {
+    state.activeTab = tabFromUrl;
+    document.querySelectorAll(".top-tab").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".tab-content").forEach((tab) => tab.classList.remove("active"));
+    document.querySelector(`.top-tab[data-tab=\"${tabFromUrl}\"]`).classList.add("active");
+    document.getElementById(`tab-${tabFromUrl}`).classList.add("active");
+  }
+
   initTabs();
   initTheme();
   bindEvents();
@@ -442,6 +551,20 @@ async function bootstrap() {
     await loadPlans();
     await loadMcp();
     await loadAgents();
+    switch (state.activeTab) {
+      case "plans":
+        selectFirstPlan();
+        break;
+      case "mcp":
+        selectFirstMcp();
+        break;
+      case "agents":
+        selectFirstAgent();
+        break;
+      default:
+        selectFirstConversation();
+        break;
+    }
     setStatus("Ready");
   } catch (err) {
     setStatus(`Startup failed: ${err.message}`);

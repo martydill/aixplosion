@@ -554,6 +554,15 @@ impl DatabaseManager {
             .ok_or_else(|| anyhow!("Plan {} not found after update", plan_id))
     }
 
+    /// Delete a plan
+    pub async fn delete_plan(&self, plan_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM plans WHERE id = ?")
+            .bind(plan_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Get a conversation by ID
     pub async fn get_conversation(&self, conversation_id: &str) -> Result<Option<Conversation>> {
         let row = sqlx::query(

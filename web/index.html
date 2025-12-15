@@ -10,34 +10,35 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/modern-normalize/modern-normalize.css">
   <style>
     :root {
-      --bg: #0b1021;
-      --surface: #0f172a;
-      --panel: #111a30;
-      --border: #1e293b;
-      --accent: #4dd4ac;
-      --accent-2: #f4b860;
-      --text: #e2e8f0;
-      --muted: #94a3b8;
+      --bg: #05070d;
+      --surface: #0a0d18;
+      --panel: #0d111f;
+      --border: #1a2338;
+      --accent: #36e3ac;
+      --accent-2: #f5a623;
+      --text: #e7ecf8;
+      --muted: #8d97b0;
       --danger: #ef4444;
+      --shadow: 0 12px 26px rgba(0,0,0,0.32);
     }
     :root.light {
-      --bg: #f7f8fb;
+      --bg: #f4f6fb;
       --surface: #ffffff;
-      --panel: #f3f4f6;
-      --border: #d6d8e0;
-      --accent: #0f766e;
+      --panel: #eef1f8;
+      --border: #c6cede;
+      --accent: #0b8fe0;
       --accent-2: #f59e0b;
-      --text: #0f172a;
-      --muted: #4b5563;
+      --text: #0b162b;
+      --muted: #525b6c;
       --danger: #dc2626;
+      --shadow: 0 10px 22px rgba(15,23,42,0.08);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: "Space Grotesk", "DM Sans", sans-serif;
-      background: radial-gradient(circle at 25% 20%, rgba(77,212,172,0.16), transparent 35%),
-                  radial-gradient(circle at 80% 10%, rgba(244,184,96,0.18), transparent 30%),
-                  var(--bg);
+      font-size: 14px;
+      background: var(--bg);
       color: var(--text);
       height: 100vh;
       display: flex;
@@ -57,37 +58,40 @@
       justify-content: space-between;
       padding: 12px 16px;
       border-bottom: 1px solid var(--border);
-      backdrop-filter: blur(8px);
+      background: var(--surface);
+      box-shadow: var(--shadow);
     }
     .top-tabs {
       display: inline-flex;
       gap: 8px;
-      background: rgba(255,255,255,0.04);
+      background: var(--panel);
       padding: 6px;
-      border-radius: 12px;
+      border-radius: 0;
       border: 1px solid var(--border);
+      box-shadow: var(--shadow);
     }
     .top-tab {
-      background: transparent;
-      color: var(--muted);
+      background: var(--surface);
+      color: var(--text);
       padding: 8px 12px;
-      border-radius: 10px;
-      border: none;
+      border-radius: 0;
+      border: 1px solid var(--border);
       cursor: pointer;
       font-weight: 600;
       transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     }
     .top-tab.active {
-      color: var(--text);
-      background: rgba(77,212,172,0.12);
-      border: 1px solid rgba(77,212,172,0.4);
+      background: var(--accent);
+      color: #04131c;
+      border: 1px solid var(--accent);
+      box-shadow: none;
     }
     .top-tab:hover {
       transform: none;
       opacity: 1;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid var(--border);
-      color: var(--text);
+      background: var(--accent-2);
+      border: 1px solid var(--accent-2);
+      color: #0a0a0a;
     }
     .top-actions {
       display: inline-flex;
@@ -95,11 +99,11 @@
       align-items: center;
     }
     .mode-toggle {
-      background: transparent;
+      background: var(--panel);
       border: 1px solid var(--border);
       color: var(--text);
       padding: 8px 10px;
-      border-radius: 10px;
+      border-radius: 0;
       cursor: pointer;
       width: 40px;
       height: 36px;
@@ -107,6 +111,7 @@
       align-items: center;
       justify-content: center;
       font-size: 16px;
+      box-shadow: var(--shadow);
     }
     .tab-content {
       flex: 1;
@@ -124,7 +129,7 @@
       min-height: 0;
     }
     aside {
-      background: var(--surface);
+      background: var(--panel);
       border: 1px solid var(--border);
       padding: 16px;
       display: flex;
@@ -132,19 +137,20 @@
       gap: 16px;
       height: 100%;
       overflow-y: auto;
-      border-radius: 14px;
-      box-shadow: 0 16px 30px rgba(0,0,0,0.12);
+      border-radius: 10px;
+      box-shadow: var(--shadow);
     }
     .sidebar-panel {
-      background: var(--surface);
+      background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 10px;
       padding: 14px;
       display: flex;
       flex-direction: column;
       gap: 12px;
       height: 100%;
       overflow-y: auto;
+      box-shadow: var(--shadow);
       box-shadow: 0 16px 30px rgba(0,0,0,0.12);
     }
     .split-layout .sidebar-panel { min-width: 260px; }
@@ -169,25 +175,27 @@
       gap: 8px;
     }
     button {
-      border: none;
-      border-radius: 10px;
+      border: 1px solid var(--border);
+      border-radius: 0;
       padding: 10px 14px;
       font-weight: 600;
       cursor: pointer;
-      transition: transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+      background: var(--panel);
+      color: var(--text);
     }
     button.primary {
-      background: linear-gradient(135deg, var(--accent), #7fffd1);
-      color: #0b172a;
-      box-shadow: 0 10px 30px rgba(77,212,172,0.28);
+      background: var(--accent);
+      color: #04131c;
+      border-color: var(--accent);
+      box-shadow: none;
     }
     button.secondary {
-      background: rgba(255,255,255,0.06);
+      background: var(--surface);
       color: var(--text);
-      border: 1px solid var(--border);
     }
-    button:hover { transform: translateY(-1px); opacity: 0.95; }
-    button:active { transform: translateY(0); opacity: 0.85; }
+    button:hover { background: var(--accent-2); color: #0a0a0a; border-color: var(--accent-2); }
+    button:active { opacity: 0.9; }
     .list {
       display: flex;
       flex-direction: column;
@@ -197,36 +205,36 @@
     }
     .list-item {
       padding: 12px;
-      border-radius: 12px;
+      border-radius: 0;
       border: 1px solid var(--border);
-      background: rgba(255,255,255,0.02);
+      background: var(--surface);
       cursor: pointer;
       transition: border-color 0.2s ease, background 0.2s ease;
     }
     .list-item.active {
       border-color: var(--accent);
-      background: rgba(77,212,172,0.12);
+      background: color-mix(in srgb, var(--accent) 12%, var(--panel));
     }
     .list-item small { color: var(--muted); }
     .panel {
-      background: var(--surface);
+      background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 16px;
+      border-radius: 0;
       display: flex;
       flex-direction: column;
       overflow: hidden;
       min-height: 0;
       height: 100%;
-      box-shadow: 0 16px 30px rgba(0,0,0,0.12);
+      box-shadow: var(--shadow);
     }
     .chat {
-      background: var(--surface);
+      background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 18px;
+      border-radius: 0;
       display: grid;
       grid-template-rows: auto 1fr auto;
       overflow: hidden;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+      box-shadow: var(--shadow);
       min-height: 0;
     }
     .chat-header {
@@ -235,7 +243,7 @@
       align-items: center;
       justify-content: space-between;
       border-bottom: 1px solid var(--border);
-      background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 12%, transparent), var(--surface));
+      background: var(--surface);
     }
     .status-dot {
       width: 8px; height: 8px;
@@ -280,7 +288,7 @@
     }
     textarea {
       width: 100%;
-      border-radius: 12px;
+      border-radius: 0;
       padding: 12px;
       border: 1px solid var(--border);
       background: var(--surface);
@@ -288,6 +296,8 @@
       resize: vertical;
       min-height: 80px;
       font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s ease, background 0.15s ease;
     }
     .tab-body {
       padding: 16px;
@@ -323,12 +333,18 @@
     }
     input, select {
       width: 100%;
-      border-radius: 10px;
+      border-radius: 0;
       padding: 10px;
       border: 1px solid var(--border);
-      background: rgba(255,255,255,0.04);
+      background: var(--surface);
       color: var(--text);
       font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+      background: var(--panel);
     }
     textarea.small {
       min-height: 90px;
@@ -385,7 +401,6 @@
         <aside class="chat-sidebar">
           <div class="sidebar-actions">
             <button class="primary" id="new-conversation">New Chat</button>
-            <button class="secondary" id="refresh-conversations">Refresh</button>
           </div>
           <div class="muted">Conversations</div>
           <div class="list" id="conversation-list"></div>
@@ -434,6 +449,7 @@
             <div class="stack" style="margin-top:8px;">
               <button class="primary" id="save-plan">Save Plan</button>
               <button class="secondary" id="create-plan">Create New Plan</button>
+              <button class="secondary danger" id="delete-plan">Delete Plan</button>
             </div>
           </div>
         </section>
@@ -441,27 +457,38 @@
     </div>
 
     <div class="tab-content" id="tab-mcp">
-      <div class="panel">
-        <div class="tab-body">
+      <div class="split-layout">
+        <aside class="sidebar-panel">
           <div class="section-title">MCP Servers</div>
-          <div class="muted" style="margin-bottom:6px;">Manage servers and connections.</div>
-          <div class="form-grid">
-            <input id="mcp-name" placeholder="Name">
-            <input id="mcp-command" placeholder="Command (optional)">
-            <input id="mcp-args" placeholder="Args (space separated)">
-            <input id="mcp-url" placeholder="WebSocket URL (optional)">
-            <input id="mcp-env" placeholder="ENV (KEY=VALUE, comma separated)">
-            <select id="mcp-enabled">
-              <option value="true">Enabled</option>
-              <option value="false">Disabled</option>
-            </select>
+          <div class="stack" style="justify-content: space-between; align-items: center;">
+            <div class="muted">Configured servers</div>
+            <button class="secondary" id="new-mcp">New</button>
           </div>
-          <div class="stack" style="margin-top:8px;">
-            <button class="primary" id="add-mcp">Save Server</button>
-          </div>
-          <div class="muted" style="margin-top:10px;">Configured servers</div>
           <div class="list" id="mcp-list"></div>
-        </div>
+        </aside>
+        <section class="panel">
+          <div class="tab-body">
+            <div class="section-title">Server Details</div>
+            <div class="muted" style="margin-bottom:6px;">Manage servers and connections.</div>
+            <div class="form-grid">
+              <input id="mcp-name" placeholder="Name">
+              <input id="mcp-command" placeholder="Command (optional)">
+              <input id="mcp-args" placeholder="Args (space separated)">
+              <input id="mcp-url" placeholder="WebSocket URL (optional)">
+              <input id="mcp-env" placeholder="ENV (KEY=VALUE, comma separated)">
+              <select id="mcp-enabled">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+            </div>
+            <div class="stack" style="margin-top:8px; flex-wrap: wrap; gap:8px;">
+              <button class="primary" id="save-mcp-detail">Save Server</button>
+              <button class="secondary" id="connect-mcp-detail">Connect</button>
+              <button class="secondary" id="disconnect-mcp-detail">Disconnect</button>
+              <button class="secondary danger" id="delete-mcp-detail">Delete</button>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
 
