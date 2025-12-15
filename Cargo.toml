@@ -17,6 +17,7 @@ shellexpand = "3.0"
 regex = "1.0"
 path-absolutize = "3.0"
 uuid = { version = "1.0", features = ["v4"] }
+axum = { version = "0.7", features = ["macros", "json"] }
 toml = "0.8"
 syntect = "5.0"
 console = "0.15"

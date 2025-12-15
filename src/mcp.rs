@@ -902,6 +902,11 @@ impl McpManager {
         Ok(self.config.read().await.clone())
     }
 
+    pub async fn get_server(&self, name: &str) -> Option<McpServerConfig> {
+        let config = self.config.read().await;
+        config.servers.get(name).cloned()
+    }
+
     pub async fn add_server(&self, name: &str, server_config: McpServerConfig) -> Result<()> {
         let mut config = self.config.write().await;
         config.servers.insert(name.to_string(), server_config);
@@ -920,6 +925,22 @@ impl McpManager {
         let mut connections = self.connections.write().await;
         if let Some(mut connection) = connections.remove(name) {
             let _ = connection.disconnect().await;
+        }
+
+        Ok(())
+    }
+
+    pub async fn upsert_server(&self, name: &str, server_config: McpServerConfig) -> Result<()> {
+        {
+            let mut config = self.config.write().await;
+            config.servers.insert(name.to_string(), server_config.clone());
+        }
+        self.save_to_config_file().await?;
+
+        // Restart the connection based on the new config
+        let _ = self.disconnect_server(name).await;
+        if server_config.enabled {
+            let _ = self.connect_server(name).await?;
         }
 
         Ok(())
@@ -1048,6 +1069,11 @@ impl McpManager {
         }
 
         Ok(())
+    }
+
+    pub async fn is_connected(&self, name: &str) -> bool {
+        let connections = self.connections.read().await;
+        connections.contains_key(name)
     }
 
     /// Get the global tools version (sum of all connection versions)

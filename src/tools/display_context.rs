@@ -2,7 +2,7 @@ use serde_json::Value;
 use std::time::Duration;
 
 /// Common trait for tool display implementations
-pub trait ToolDisplay {
+pub trait ToolDisplay: Send {
     /// Show the tool call details (optional for simple display)
     fn show_call_details(&self, arguments: &Value) {
         let _ = arguments;

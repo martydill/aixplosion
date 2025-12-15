@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use log::{debug, info};
 use sqlx::{Row, SqlitePool};
@@ -327,7 +327,6 @@ pub struct Message {
 }
 
 /// Represents a saved plan
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Plan {
     pub id: String,
@@ -481,6 +480,78 @@ impl DatabaseManager {
             plan_markdown: row.get("plan_markdown"),
             created_at: row.get("created_at"),
         }))
+    }
+
+    /// List plans ordered by creation time (descending)
+    pub async fn list_plans(&self, limit: Option<i64>) -> Result<Vec<Plan>> {
+        let mut query = String::from(
+            r#"
+            SELECT id, conversation_id, title, user_request, plan_markdown, created_at
+            FROM plans
+            ORDER BY created_at DESC
+            "#,
+        );
+
+        if limit.is_some() {
+            query.push_str(" LIMIT ?");
+        }
+
+        let mut sql = sqlx::query(&query);
+        if let Some(limit) = limit {
+            sql = sql.bind(limit);
+        }
+
+        let rows = sql.fetch_all(&self.pool).await?;
+
+        let plans = rows
+            .into_iter()
+            .map(|row| Plan {
+                id: row.get("id"),
+                conversation_id: row.get::<Option<String>, _>("conversation_id"),
+                title: row.get::<Option<String>, _>("title"),
+                user_request: row.get("user_request"),
+                plan_markdown: row.get("plan_markdown"),
+                created_at: row.get("created_at"),
+            })
+            .collect();
+
+        Ok(plans)
+    }
+
+    /// Update a plan with new metadata/content
+    pub async fn update_plan(
+        &self,
+        plan_id: &str,
+        title: Option<String>,
+        user_request: Option<String>,
+        plan_markdown: Option<String>,
+    ) -> Result<Plan> {
+        let existing = self
+            .get_plan(plan_id)
+            .await?
+            .ok_or_else(|| anyhow!("Plan {} not found", plan_id))?;
+
+        let new_title = title.or(existing.title);
+        let new_user_request = user_request.unwrap_or(existing.user_request);
+        let new_plan_markdown = plan_markdown.unwrap_or(existing.plan_markdown);
+
+        sqlx::query(
+            r#"
+            UPDATE plans
+            SET title = ?, user_request = ?, plan_markdown = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(&new_title)
+        .bind(&new_user_request)
+        .bind(&new_plan_markdown)
+        .bind(plan_id)
+        .execute(&self.pool)
+        .await?;
+
+        self.get_plan(plan_id)
+            .await?
+            .ok_or_else(|| anyhow!("Plan {} not found after update", plan_id))
     }
 
     /// Get a conversation by ID

@@ -833,6 +833,11 @@ impl Agent {
         self.conversation_manager.current_conversation_id.clone()
     }
 
+    /// Get the currently active subagent name (if any)
+    pub fn active_subagent_name(&self) -> Option<String> {
+        self.conversation_manager.subagent.clone()
+    }
+
     /// Get the number of messages in the active conversation
     pub fn conversation_len(&self) -> usize {
         self.conversation_manager.conversation.len()

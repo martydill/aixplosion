@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AIxplosion Web UI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/modern-normalize/modern-normalize.css">
+  <style>
+    :root {
+      --bg: #0b1021;
+      --surface: #0f172a;
+      --panel: #111a30;
+      --border: #1e293b;
+      --accent: #4dd4ac;
+      --accent-2: #f4b860;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Space Grotesk", "DM Sans", sans-serif;
+      background: radial-gradient(circle at 25% 20%, rgba(77,212,172,0.16), transparent 35%),
+                  radial-gradient(circle at 80% 10%, rgba(244,184,96,0.18), transparent 30%),
+                  var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      align-items: stretch;
+      overflow: hidden;
+    }
+    .app-shell {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: 100vh;
+      min-height: 0;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+    }
+    .top-tabs {
+      display: inline-flex;
+      gap: 8px;
+      background: rgba(255,255,255,0.04);
+      padding: 6px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+    .top-tab {
+      background: transparent;
+      color: var(--muted);
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .top-tab.active {
+      color: var(--text);
+      background: rgba(77,212,172,0.12);
+      border: 1px solid rgba(77,212,172,0.4);
+    }
+    .tab-content {
+      flex: 1;
+      min-height: 0;
+      display: none;
+      padding: 14px 16px;
+      overflow: hidden;
+    }
+    .tab-content.active { display: block; }
+    .chat-layout, .split-layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 14px;
+      height: 100%;
+      min-height: 0;
+    }
+    aside {
+      background: linear-gradient(180deg, rgba(15,23,42,0.92) 0%, rgba(15,23,42,0.8) 100%);
+      border: 1px solid var(--border);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      height: 100%;
+      overflow-y: auto;
+      border-radius: 14px;
+    }
+    .sidebar-panel {
+      background: linear-gradient(180deg, rgba(15,23,42,0.92) 0%, rgba(15,23,42,0.8) 100%);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      height: 100%;
+      overflow-y: auto;
+    }
+    .split-layout .sidebar-panel { min-width: 260px; }
+    .brand {
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pill {
+      display: inline-flex;
+      padding: 4px 10px;
+      background: rgba(77,212,172,0.12);
+      color: var(--accent);
+      border-radius: 999px;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+    }
+    .sidebar-actions {
+      display: flex;
+      gap: 8px;
+    }
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+    }
+    button.primary {
+      background: linear-gradient(135deg, var(--accent), #7fffd1);
+      color: #0b172a;
+      box-shadow: 0 10px 30px rgba(77,212,172,0.28);
+    }
+    button.secondary {
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    button:hover { transform: translateY(-1px); opacity: 0.95; }
+    button:active { transform: translateY(0); opacity: 0.85; }
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .list-item {
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.02);
+      cursor: pointer;
+      transition: border-color 0.2s ease, background 0.2s ease;
+    }
+    .list-item.active {
+      border-color: var(--accent);
+      background: rgba(77,212,172,0.12);
+    }
+    .list-item small { color: var(--muted); }
+    .panel {
+      background: rgba(15,23,42,0.9);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      overflow: hidden;
+      min-height: 0;
+      height: 100%;
+    }
+    .chat {
+      background: rgba(15,23,42,0.78);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+      min-height: 0;
+    }
+    .chat-header {
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(90deg, rgba(77,212,172,0.08), rgba(15,23,42,0.95));
+    }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 12px rgba(77,212,172,0.9);
+      margin-right: 8px;
+    }
+    #messages {
+      padding: 18px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+    }
+    .bubble {
+      max-width: 80%;
+      padding: 12px 14px;
+      border-radius: 14px;
+      line-height: 1.45;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03);
+      white-space: pre-wrap;
+    }
+    .bubble.user {
+      margin-left: auto;
+      background: rgba(77,212,172,0.1);
+      border-color: rgba(77,212,172,0.4);
+    }
+    .bubble.assistant {
+      margin-right: auto;
+      background: rgba(255,255,255,0.04);
+    }
+    .composer {
+      border-top: 1px solid var(--border);
+      padding: 14px;
+      display: grid;
+      grid-template-columns: 1fr 120px;
+      gap: 10px;
+      background: rgba(0,0,0,0.2);
+    }
+    textarea {
+      width: 100%;
+      border-radius: 12px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.04);
+      color: var(--text);
+      resize: vertical;
+      min-height: 80px;
+      font-family: inherit;
+    }
+    .tab-body {
+      padding: 16px;
+      overflow-y: auto;
+    }
+    .section-title {
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .muted { color: var(--muted); }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    input, select {
+      width: 100%;
+      border-radius: 10px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.04);
+      color: var(--text);
+      font-family: inherit;
+    }
+    textarea.small {
+      min-height: 90px;
+    }
+    .card {
+      border: 1px solid var(--border);
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.03);
+      margin-bottom: 8px;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      color: var(--muted);
+      font-size: 12px;
+      margin-right: 6px;
+      margin-bottom: 4px;
+    }
+    .stack { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .flex-between { display: flex; justify-content: space-between; align-items: center; }
+    a { color: var(--accent); }
+    .danger { color: var(--danger); }
+    @media (max-width: 1100px) {
+      .chat-layout { grid-template-columns: 1fr; }
+      aside { order: 2; }
+      .chat { order: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="pill">WEB</span>
+        <span>AIxplosion</span>
+      </div>
+      <div class="top-tabs">
+        <button class="top-tab active" data-tab="chats">Chats</button>
+        <button class="top-tab" data-tab="plans">Plans</button>
+        <button class="top-tab" data-tab="mcp">MCP Servers</button>
+        <button class="top-tab" data-tab="agents">Agents</button>
+      </div>
+    </header>
+
+    <div class="tab-content active" id="tab-chats">
+      <div class="chat-layout">
+        <aside class="chat-sidebar">
+          <div class="sidebar-actions">
+            <button class="primary" id="new-conversation">New Chat</button>
+            <button class="secondary" id="refresh-conversations">Refresh</button>
+          </div>
+          <div class="muted">Conversations</div>
+          <div class="list" id="conversation-list"></div>
+        </aside>
+        <section class="chat">
+          <div class="chat-header">
+            <div class="flex-between" style="gap:10px;">
+              <div class="flex-between" style="gap:6px;">
+                <span class="status-dot"></span>
+                <div>
+                  <div style="font-weight:700;">Live Chat</div>
+                  <div class="muted" id="conversation-meta">Ready</div>
+                </div>
+              </div>
+            </div>
+            <div class="muted" id="active-agent-label"></div>
+          </div>
+          <div id="messages"></div>
+          <div class="composer">
+            <textarea id="message-input" placeholder="Ask anything..."></textarea>
+            <button class="primary" id="send-message">Send</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-plans">
+      <div class="split-layout">
+        <aside class="sidebar-panel">
+          <div class="section-title">Plans</div>
+          <div class="muted">All saved plans</div>
+          <div class="list" id="plan-list"></div>
+        </aside>
+        <section class="panel">
+          <div class="tab-body">
+            <div class="section-title">Plan Details</div>
+            <div class="muted" style="margin-bottom:8px;">View, edit, or create saved plans.</div>
+            <div class="form-grid">
+              <input id="plan-title" placeholder="Title (optional)">
+              <input id="plan-user-request" placeholder="User request">
+            </div>
+            <textarea id="plan-markdown" class="small" placeholder="Plan markdown"></textarea>
+            <div class="stack" style="margin-top:8px;">
+              <button class="primary" id="save-plan">Save Plan</button>
+              <button class="secondary" id="create-plan">Create New Plan</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-mcp">
+      <div class="panel">
+        <div class="tab-body">
+          <div class="section-title">MCP Servers</div>
+          <div class="muted" style="margin-bottom:6px;">Manage servers and connections.</div>
+          <div class="form-grid">
+            <input id="mcp-name" placeholder="Name">
+            <input id="mcp-command" placeholder="Command (optional)">
+            <input id="mcp-args" placeholder="Args (space separated)">
+            <input id="mcp-url" placeholder="WebSocket URL (optional)">
+            <input id="mcp-env" placeholder="ENV (KEY=VALUE, comma separated)">
+            <select id="mcp-enabled">
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+            </select>
+          </div>
+          <div class="stack" style="margin-top:8px;">
+            <button class="primary" id="add-mcp">Save Server</button>
+          </div>
+          <div class="muted" style="margin-top:10px;">Configured servers</div>
+          <div class="list" id="mcp-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-agents">
+      <div class="split-layout">
+        <aside class="sidebar-panel">
+          <div class="section-title">Agents</div>
+          <div class="muted">All agents</div>
+          <div class="list" id="agent-list"></div>
+        </aside>
+        <section class="panel">
+          <div class="tab-body">
+            <div class="section-title">Agent Details</div>
+            <div class="muted" style="margin-bottom:6px;">View, edit, and activate agents.</div>
+            <div class="form-grid">
+              <input id="agent-name" placeholder="Name">
+              <input id="agent-model" placeholder="Model (optional)">
+              <input id="agent-temp" placeholder="Temperature (optional)">
+              <input id="agent-max-tokens" placeholder="Max tokens (optional)">
+            </div>
+            <textarea id="agent-allowed" class="small" placeholder="Allowed tools (comma separated)"></textarea>
+            <textarea id="agent-denied" class="small" placeholder="Denied tools (comma separated)"></textarea>
+            <textarea id="agent-prompt" class="small" placeholder="System prompt"></textarea>
+            <div class="stack" style="margin-top:8px;">
+              <button class="primary" id="save-agent">Save Agent</button>
+              <button class="secondary" id="activate-agent">Activate</button>
+              <button class="secondary" id="deactivate-agent">Deactivate</button>
+              <button class="secondary danger" id="delete-agent">Delete</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

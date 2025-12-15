@@ -9,6 +9,7 @@ use std::io::{self, Read};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use tokio::sync::Mutex as AsyncMutex;
 
 use env_logger::Builder;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -27,6 +28,7 @@ mod logo;
 mod mcp;
 mod security;
 mod subagent;
+mod web;
 
 mod tools;
 
@@ -1915,6 +1917,14 @@ struct Cli {
     /// Enable plan-only mode (generate a plan in Markdown without making changes)
     #[arg(long = "plan-mode")]
     plan_mode: bool,
+
+    /// Enable the optional web UI
+    #[arg(long)]
+    web: bool,
+
+    /// Port for the web UI
+    #[arg(long, default_value = "3000")]
+    web_port: u16,
 }
 
 #[tokio::main]
@@ -2109,6 +2119,32 @@ async fn main() -> Result<()> {
         Err(e) => {
             warn!("Failed to create initial conversation: {}", e);
         }
+    }
+
+    if cli.web {
+        if cli.message.is_some() || cli.non_interactive {
+            println!(
+                "{} Ignoring -m/--message and --non-interactive flags because --web was supplied.",
+                "?".yellow()
+            );
+        }
+
+        let shared_agent = Arc::new(AsyncMutex::new(agent));
+        let subagent_manager = Arc::new(AsyncMutex::new(subagent::SubagentManager::new()?));
+        {
+            let mut manager = subagent_manager.lock().await;
+            manager.load_all_subagents().await?;
+        }
+
+        let state = web::WebState {
+            agent: shared_agent,
+            database: database_manager.clone(),
+            mcp_manager: mcp_manager.clone(),
+            subagent_manager,
+        };
+
+        web::launch_web_ui(state, cli.web_port).await?;
+        return Ok(());
     }
 
     let is_interactive = cli.message.is_none() && !cli.non_interactive;
