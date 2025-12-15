@@ -8,7 +8,22 @@ const state = {
   agents: [],
   activeAgent: null,
   activeAgentEditing: null,
+  theme: "dark",
 };
+
+function applyTheme(theme) {
+  state.theme = theme;
+  if (theme === "light") {
+    document.documentElement.classList.add("light");
+  } else {
+    document.documentElement.classList.remove("light");
+  }
+  const btn = document.getElementById("mode-toggle");
+  if (btn) {
+    btn.textContent = theme === "light" ? "☾" : "☀";
+  }
+  localStorage.setItem("aixplosion-theme", theme);
+}
 
 function setStatus(text) {
   document.getElementById("conversation-meta").textContent = text;
@@ -150,6 +165,13 @@ function renderPlanList() {
   });
 }
 
+function resetPlanForm() {
+  state.activePlanId = null;
+  document.getElementById("plan-title").value = "";
+  document.getElementById("plan-user-request").value = "";
+  document.getElementById("plan-markdown").value = "";
+}
+
 async function savePlan() {
   if (!state.activePlanId) return;
   const payload = {
@@ -162,10 +184,11 @@ async function savePlan() {
 }
 
 async function createPlan() {
+  resetPlanForm();
   const payload = {
-    title: document.getElementById("plan-title").value,
-    user_request: document.getElementById("plan-user-request").value,
-    plan_markdown: document.getElementById("plan-markdown").value,
+    title: "",
+    user_request: "",
+    plan_markdown: "",
     conversation_id: state.activeConversationId,
   };
   const res = await api("/api/plans", { method: "POST", body: payload });
@@ -359,6 +382,18 @@ function initTabs() {
   });
 }
 
+function initTheme() {
+  const stored = localStorage.getItem("aixplosion-theme");
+  const initial = stored === "light" || stored === "dark" ? stored : "dark";
+  applyTheme(initial);
+  const toggle = document.getElementById("mode-toggle");
+  if (toggle) {
+    toggle.addEventListener("click", () => {
+      applyTheme(state.theme === "light" ? "dark" : "light");
+    });
+  }
+}
+
 function bindEvents() {
   document.getElementById("send-message").addEventListener("click", sendMessage);
   document.getElementById("message-input").addEventListener("keydown", (e) => {
@@ -386,6 +421,7 @@ function bindEvents() {
 
 async function bootstrap() {
   initTabs();
+  initTheme();
   bindEvents();
   try {
     await loadConversations();

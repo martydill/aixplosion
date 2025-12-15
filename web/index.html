@@ -20,6 +20,17 @@
       --muted: #94a3b8;
       --danger: #ef4444;
     }
+    :root.light {
+      --bg: #f7f8fb;
+      --surface: #ffffff;
+      --panel: #f3f4f6;
+      --border: #d6d8e0;
+      --accent: #0f766e;
+      --accent-2: #f59e0b;
+      --text: #0f172a;
+      --muted: #4b5563;
+      --danger: #dc2626;
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -70,6 +81,25 @@
       background: rgba(77,212,172,0.12);
       border: 1px solid rgba(77,212,172,0.4);
     }
+    .top-actions {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .mode-toggle {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      width: 40px;
+      height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
     .tab-content {
       flex: 1;
       min-height: 0;
@@ -86,7 +116,7 @@
       min-height: 0;
     }
     aside {
-      background: linear-gradient(180deg, rgba(15,23,42,0.92) 0%, rgba(15,23,42,0.8) 100%);
+      background: var(--surface);
       border: 1px solid var(--border);
       padding: 16px;
       display: flex;
@@ -95,9 +125,10 @@
       height: 100%;
       overflow-y: auto;
       border-radius: 14px;
+      box-shadow: 0 16px 30px rgba(0,0,0,0.12);
     }
     .sidebar-panel {
-      background: linear-gradient(180deg, rgba(15,23,42,0.92) 0%, rgba(15,23,42,0.8) 100%);
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 14px;
       padding: 14px;
@@ -106,6 +137,7 @@
       gap: 12px;
       height: 100%;
       overflow-y: auto;
+      box-shadow: 0 16px 30px rgba(0,0,0,0.12);
     }
     .split-layout .sidebar-panel { min-width: 260px; }
     .brand {
@@ -169,23 +201,24 @@
     }
     .list-item small { color: var(--muted); }
     .panel {
-      background: rgba(15,23,42,0.9);
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 16px;
-      display: grid;
-      grid-template-rows: auto 1fr;
+      display: flex;
+      flex-direction: column;
       overflow: hidden;
       min-height: 0;
       height: 100%;
+      box-shadow: 0 16px 30px rgba(0,0,0,0.12);
     }
     .chat {
-      background: rgba(15,23,42,0.78);
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 18px;
       display: grid;
       grid-template-rows: auto 1fr auto;
       overflow: hidden;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.25);
       min-height: 0;
     }
     .chat-header {
@@ -194,7 +227,7 @@
       align-items: center;
       justify-content: space-between;
       border-bottom: 1px solid var(--border);
-      background: linear-gradient(90deg, rgba(77,212,172,0.08), rgba(15,23,42,0.95));
+      background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 12%, transparent), var(--surface));
     }
     .status-dot {
       width: 8px; height: 8px;
@@ -242,7 +275,7 @@
       border-radius: 12px;
       padding: 12px;
       border: 1px solid var(--border);
-      background: rgba(255,255,255,0.04);
+      background: var(--surface);
       color: var(--text);
       resize: vertical;
       min-height: 80px;
@@ -251,6 +284,23 @@
     .tab-body {
       padding: 16px;
       overflow-y: auto;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      gap: 10px;
+    }
+    .plan-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      gap: 10px;
+    }
+    .plan-body textarea#plan-markdown {
+      flex: 1;
+      min-height: 0;
+      max-height: none;
     }
     .section-title {
       font-weight: 700;
@@ -317,6 +367,9 @@
         <button class="top-tab" data-tab="mcp">MCP Servers</button>
         <button class="top-tab" data-tab="agents">Agents</button>
       </div>
+      <div class="top-actions">
+        <button class="mode-toggle" id="mode-toggle">Light mode</button>
+      </div>
     </header>
 
     <div class="tab-content active" id="tab-chats">
@@ -359,7 +412,7 @@
           <div class="list" id="plan-list"></div>
         </aside>
         <section class="panel">
-          <div class="tab-body">
+          <div class="tab-body plan-body">
             <div class="section-title">Plan Details</div>
             <div class="muted" style="margin-bottom:8px;">View, edit, or create saved plans.</div>
             <div class="form-grid">
