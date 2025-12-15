@@ -75,11 +75,19 @@
       border: none;
       cursor: pointer;
       font-weight: 600;
+      transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
     }
     .top-tab.active {
       color: var(--text);
       background: rgba(77,212,172,0.12);
       border: 1px solid rgba(77,212,172,0.4);
+    }
+    .top-tab:hover {
+      transform: none;
+      opacity: 1;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border);
+      color: var(--text);
     }
     .top-actions {
       display: inline-flex;
@@ -408,7 +416,10 @@
       <div class="split-layout">
         <aside class="sidebar-panel">
           <div class="section-title">Plans</div>
-          <div class="muted">All saved plans</div>
+          <div class="stack" style="justify-content: space-between; align-items: center;">
+            <div class="muted">All saved plans</div>
+            <button class="secondary" id="create-plan-sidebar">New</button>
+          </div>
           <div class="list" id="plan-list"></div>
         </aside>
         <section class="panel">
@@ -458,7 +469,10 @@
       <div class="split-layout">
         <aside class="sidebar-panel">
           <div class="section-title">Agents</div>
-          <div class="muted">All agents</div>
+          <div class="stack" style="justify-content: space-between; align-items: center;">
+            <div class="muted">All agents</div>
+            <button class="secondary" id="new-agent">New</button>
+          </div>
           <div class="list" id="agent-list"></div>
         </aside>
         <section class="panel">

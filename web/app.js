@@ -323,6 +323,18 @@ function renderAgents() {
   });
 }
 
+function resetAgentForm() {
+  state.activeAgentEditing = null;
+  document.getElementById("agent-name").value = "";
+  document.getElementById("agent-model").value = "";
+  document.getElementById("agent-temp").value = "";
+  document.getElementById("agent-max-tokens").value = "";
+  document.getElementById("agent-allowed").value = "";
+  document.getElementById("agent-denied").value = "";
+  document.getElementById("agent-prompt").value = "";
+  renderAgents();
+}
+
 async function saveAgent() {
   const payload = {
     system_prompt: document.getElementById("agent-prompt").value,
@@ -407,6 +419,7 @@ function bindEvents() {
 
   document.getElementById("save-plan").addEventListener("click", savePlan);
   document.getElementById("create-plan").addEventListener("click", createPlan);
+  document.getElementById("create-plan-sidebar").addEventListener("click", createPlan);
 
   document.getElementById("add-mcp").addEventListener("click", saveMcpServer);
 
@@ -417,6 +430,7 @@ function bindEvents() {
   });
   document.getElementById("deactivate-agent").addEventListener("click", () => activateAgent(null));
   document.getElementById("delete-agent").addEventListener("click", deleteAgent);
+  document.getElementById("new-agent").addEventListener("click", resetAgentForm);
 }
 
 async function bootstrap() {
