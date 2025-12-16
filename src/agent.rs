@@ -19,6 +19,20 @@ struct SavedConversationContext {
     model: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct SnapshotMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConversationSnapshot {
+    pub id: Option<String>,
+    pub system_prompt: Option<String>,
+    pub model: String,
+    pub messages: Vec<SnapshotMessage>,
+}
+
 use crate::anthropic::{AnthropicClient, ContentBlock, Message, Usage};
 use crate::config::Config;
 use crate::conversation::ConversationManager;
@@ -83,6 +97,29 @@ pub struct Agent {
 }
 
 impl Agent {
+    pub fn snapshot_conversation(&self) -> ConversationSnapshot {
+        let messages = self
+            .conversation_manager
+            .conversation
+            .iter()
+            .map(|m| SnapshotMessage {
+                role: m.role.clone(),
+                content: m
+                    .content
+                    .iter()
+                    .filter_map(|b| b.text.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            })
+            .collect();
+
+        ConversationSnapshot {
+            id: self.conversation_manager.current_conversation_id.clone(),
+            system_prompt: self.conversation_manager.system_prompt.clone(),
+            model: self.conversation_manager.model.clone(),
+            messages,
+        }
+    }
     pub fn new(config: Config, model: String, yolo_mode: bool, plan_mode: bool) -> Self {
         let client = AnthropicClient::new(config.api_key, config.base_url);
         let tools = get_builtin_tools()

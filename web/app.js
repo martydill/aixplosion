@@ -32,6 +32,8 @@ function applyTheme(theme) {
   const btn = document.getElementById("mode-toggle");
   if (btn) {
     btn.textContent = theme === "light" ? "☾" : "☀";
+    btn.title = theme === "light" ? "Switch to dark mode" : "Switch to light mode";
+    btn.setAttribute("aria-label", btn.title);
   }
   localStorage.setItem("aixplosion-theme", theme);
 }
@@ -65,7 +67,7 @@ function renderConversationList() {
     const item = document.createElement("div");
     item.className = "list-item" + (conv.id === state.activeConversationId ? " active" : "");
     item.innerHTML = `
-      <div style="font-weight:600;">${conv.last_message ? conv.last_message.slice(0, 50) : "New conversation"}</div>
+      <div style="font-weight:600;">${conv.last_message ? conv.last_message.slice(0, 50) : "new chat"}</div>
       <small>${new Date(conv.updated_at).toLocaleString()} • ${conv.model}</small>
     `;
     item.addEventListener("click", () => selectConversation(conv.id));
@@ -96,7 +98,7 @@ function appendMessage(role, content) {
 
 async function loadConversations() {
   const data = await api("/api/conversations");
-  state.conversations = data;
+  mergeConversations(data);
   renderConversationList();
   if (!state.activeConversationId && data.length > 0) {
     await selectConversation(data[0].id);
@@ -109,7 +111,6 @@ async function selectConversation(id) {
   setStatus("Loading conversation...");
   const detail = await api(`/api/conversations/${id}`);
   const meta = detail.conversation;
-  document.getElementById("active-agent-label").textContent = meta.subagent ? `Agent: ${meta.subagent}` : "Default agent";
   setStatus(`${detail.messages.length} messages • ${meta.model}`);
   renderMessages(detail.messages);
 }
@@ -118,12 +119,21 @@ async function createConversation() {
   setStatus("Creating conversation...");
   const res = await api("/api/conversations", { method: "POST", body: {} });
   const newId = res.id;
-  await loadConversations();
+  const placeholder = {
+    id: newId,
+    last_message: null,
+    updated_at: new Date().toISOString(),
+    model: res.model || state.conversations[0]?.model || "glm-4.6",
+    created_at: new Date().toISOString(),
+  };
+  state.activeConversationId = newId;
+  mergeConversations([placeholder]);
   if (newId) {
     await selectConversation(newId);
-  } else if (state.conversations[0]) {
-    await selectConversation(state.conversations[0].id);
   }
+  const input = document.getElementById("message-input");
+  if (input) input.focus();
+  await loadConversations();
 }
 
 async function sendMessage() {
@@ -132,6 +142,7 @@ async function sendMessage() {
   if (!text || !state.activeConversationId) return;
 
   appendMessage("user", text);
+  updateConversationPreview(state.activeConversationId, text);
   input.value = "";
   setStatus("Waiting for response...");
   try {
@@ -172,6 +183,39 @@ function renderPlanList() {
   });
 }
 
+function mergeConversations(incoming) {
+  const map = new Map();
+  incoming.forEach((c) => map.set(c.id, c));
+  state.conversations.forEach((c) => {
+    if (!map.has(c.id)) map.set(c.id, c);
+  });
+  const merged = Array.from(map.values());
+  merged.sort(
+    (a, b) =>
+      new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0),
+  );
+  state.conversations = merged;
+}
+
+function updateConversationPreview(id, lastMessage) {
+  if (!id) return;
+  const existing = state.conversations.find((c) => c.id === id);
+  const now = new Date().toISOString();
+  if (existing) {
+    existing.last_message = lastMessage;
+    existing.updated_at = now;
+  } else {
+    state.conversations.unshift({
+      id,
+      last_message: lastMessage,
+      updated_at: now,
+      created_at: now,
+      model: "glm-4.6",
+    });
+  }
+  renderConversationList();
+}
+
 function resetPlanForm() {
   state.activePlanId = null;
   document.getElementById("plan-title").value = "";
@@ -188,6 +232,9 @@ function resetMcpForm() {
   document.getElementById("mcp-env").value = "";
   document.getElementById("mcp-enabled").value = "true";
   renderMcpList();
+  document.getElementById("connect-mcp-detail").style.display = "none";
+  document.getElementById("disconnect-mcp-detail").style.display = "none";
+  document.getElementById("delete-mcp-detail").style.display = "none";
 }
 
 function setMcpForm(server) {
@@ -205,6 +252,9 @@ function setMcpForm(server) {
     .map(([k, v]) => `${k}=${v}`)
     .join(", ");
   document.getElementById("mcp-enabled").value = String(server.config.enabled);
+  document.getElementById("connect-mcp-detail").style.display = "";
+  document.getElementById("disconnect-mcp-detail").style.display = "";
+  document.getElementById("delete-mcp-detail").style.display = "";
 }
 async function savePlan() {
   if (!state.activePlanId) return;
@@ -235,6 +285,7 @@ async function deletePlan() {
   await api(`/api/plans/${state.activePlanId}`, { method: "DELETE" });
   resetPlanForm();
   await loadPlans();
+  selectFirstPlan();
 }
 
 // MCP
@@ -305,12 +356,10 @@ async function loadAgents() {
   const active = await api("/api/agents/active");
   state.activeAgent = active.active;
   renderAgents();
+  renderAgentSelector();
 }
 
 function renderAgents() {
-  document.getElementById("active-agent-label").textContent = state.activeAgent
-    ? `Agent: ${state.activeAgent}`
-    : "Default agent";
   const list = document.getElementById("agent-list");
   list.innerHTML = "";
   state.agents.forEach((agent) => {
@@ -337,6 +386,9 @@ function resetAgentForm() {
   document.getElementById("agent-allowed").value = READONLY_TOOLS.join(", ");
   document.getElementById("agent-denied").value = "";
   document.getElementById("agent-prompt").value = "";
+  document.getElementById("activate-agent").style.display = "none";
+  document.getElementById("deactivate-agent").style.display = "none";
+  document.getElementById("delete-agent").style.display = "none";
   renderAgents();
 }
 
@@ -349,6 +401,9 @@ function setAgentForm(agent) {
   document.getElementById("agent-allowed").value = agent.allowed_tools.join(", ");
   document.getElementById("agent-denied").value = agent.denied_tools.join(", ");
   document.getElementById("agent-prompt").value = agent.system_prompt;
+  document.getElementById("activate-agent").style.display = "";
+  document.getElementById("deactivate-agent").style.display = "";
+  document.getElementById("delete-agent").style.display = "";
 }
 
 function selectFirstConversation() {
@@ -412,11 +467,13 @@ async function activateAgent(name) {
 async function deleteAgent() {
   const name = document.getElementById("agent-name").value.trim();
   if (!name) return;
+  const idx = state.agents.findIndex((a) => a.name === name);
   await api(`/api/agents/${name}`, { method: "DELETE" });
   state.activeAgentEditing = null;
   await loadAgents();
   if (state.agents.length > 0) {
-    setAgentForm(state.agents[0]);
+    const next = state.agents[Math.min(Math.max(idx, 0), state.agents.length - 1)];
+    setAgentForm(next);
     renderAgents();
   } else {
     resetAgentForm();
@@ -433,6 +490,23 @@ function splitList(text) {
 function numberOrNull(val) {
   const num = parseFloat(val);
   return isNaN(num) ? null : num;
+}
+
+function renderAgentSelector() {
+  const select = document.getElementById("agent-selector");
+  if (!select) return;
+  select.innerHTML = "";
+  const optDefault = document.createElement("option");
+  optDefault.value = "";
+  optDefault.textContent = "Default agent";
+  select.appendChild(optDefault);
+  state.agents.forEach((agent) => {
+    const opt = document.createElement("option");
+    opt.value = agent.name;
+    opt.textContent = agent.name;
+    select.appendChild(opt);
+  });
+  select.value = state.activeAgent || "";
 }
 
 // Tabs
@@ -511,10 +585,12 @@ function bindEvents() {
   document.getElementById("delete-mcp-detail").addEventListener("click", async () => {
     const name = document.getElementById("mcp-name").value.trim();
     if (!name) return;
+    const idx = state.mcpServers.findIndex((s) => s.name === name);
     await api(`/api/mcp/servers/${name}`, { method: "DELETE" });
     await loadMcp();
     if (state.mcpServers.length > 0) {
-      setMcpForm(state.mcpServers[0]);
+      const next = state.mcpServers[Math.min(Math.max(idx, 0), state.mcpServers.length - 1)];
+      setMcpForm(next);
       renderMcpList();
     } else {
       resetMcpForm();
@@ -529,6 +605,15 @@ function bindEvents() {
   document.getElementById("deactivate-agent").addEventListener("click", () => activateAgent(null));
   document.getElementById("delete-agent").addEventListener("click", deleteAgent);
   document.getElementById("new-agent").addEventListener("click", resetAgentForm);
+  document.getElementById("agent-selector").addEventListener("change", (e) => {
+    const name = e.target.value || null;
+    activateAgent(name);
+  });
+  document.getElementById("show-context").addEventListener("click", showContextModal);
+  document.getElementById("close-context").addEventListener("click", closeContextModal);
+  document.getElementById("context-modal").addEventListener("click", (e) => {
+    if (e.target.id === "context-modal") closeContextModal();
+  });
 }
 
 async function bootstrap() {
@@ -572,3 +657,53 @@ async function bootstrap() {
 }
 
 bootstrap();
+
+async function showContextModal() {
+  if (!state.activeConversationId) return;
+  try {
+    setStatus("Loading context...");
+    const detail = await api(`/api/conversations/${state.activeConversationId}`);
+    const meta = detail.conversation;
+    const lines = [];
+    lines.push("Current Conversation Context");
+    lines.push("-".repeat(50));
+    lines.push("");
+
+    const files = detail.context_files || [];
+    if (files.length > 0) {
+      lines.push("Context files:");
+      files.forEach((f) => lines.push(`- ${f}`));
+      lines.push("");
+    }
+
+    if (meta.system_prompt) {
+      lines.push("System Prompt:");
+      lines.push(`  ${meta.system_prompt}`);
+      lines.push("");
+    }
+
+    if (!detail.messages.length) {
+      lines.push("No context yet. Start a conversation to see context here.");
+    } else {
+      detail.messages.forEach((m, idx) => {
+        const role = m.role.toUpperCase();
+        const preview = m.content.replace(/\n/g, " ");
+        const truncated = preview.length > 100 ? `${preview.slice(0, 100)}...` : preview;
+        lines.push(`[${idx + 1}] ${role}: (1 content block)`);
+        lines.push(`  ▶ Block 1: Text ${truncated}`);
+        lines.push("");
+      });
+    }
+
+    document.getElementById("context-content").textContent = lines.join("\n");
+    document.getElementById("context-modal").classList.add("open");
+  } catch (err) {
+    setStatus(`Failed to load context: ${err.message}`);
+  } finally {
+    setStatus("Ready");
+  }
+}
+
+function closeContextModal() {
+  document.getElementById("context-modal").classList.remove("open");
+}

@@ -1,4 +1,5 @@
-use crate::agent::Agent;
+use crate::agent::{Agent, ConversationSnapshot};
+use crate::conversation::ConversationManager;
 use crate::database::{Conversation, DatabaseManager};
 use crate::mcp::{McpManager, McpServerConfig};
 use crate::subagent::{SubagentConfig, SubagentManager};
@@ -48,6 +49,7 @@ struct MessageDto {
 struct ConversationDetail {
     conversation: ConversationMeta,
     messages: Vec<MessageDto>,
+    context_files: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -239,7 +241,11 @@ async fn list_conversations(State(state): State<WebState>) -> impl IntoResponse 
                     .get_conversation_messages(&conversation.id)
                     .await
                     .unwrap_or_default();
-                let last_message = messages.last().map(|m| m.content.clone());
+                let first_user = messages
+                    .iter()
+                    .find(|m| m.role == "user")
+                    .map(|m| m.content.clone());
+                let last_message = first_user.or_else(|| messages.last().map(|m| m.content.clone()));
                 let item = ConversationListItem {
                     id: conversation.id.clone(),
                     created_at: conversation.created_at.to_rfc3339(),
@@ -283,32 +289,58 @@ async fn get_conversation(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let db = state.database.clone();
+    let snapshot = {
+        let agent_guard = state.agent.lock().await;
+        agent_guard.snapshot_conversation()
+    };
     let conversation = db.get_conversation(&id).await;
 
     match conversation {
         Ok(Some(conversation)) => {
-            let messages = match db.get_conversation_messages(&id).await {
-                Ok(messages) => messages
-                    .into_iter()
-                    .map(|m| MessageDto {
-                        id: m.id,
-                        role: m.role,
-                        content: m.content,
-                        created_at: m.created_at.to_rfc3339(),
-                    })
-                    .collect(),
-                Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Failed to load messages: {}", e),
-                    )
-                        .into_response()
+            let use_snapshot = snapshot
+                .id
+                .as_ref()
+                .map(|cid| cid == &conversation.id)
+                .unwrap_or(false);
+
+            let mut meta = conversation_to_meta(&conversation);
+
+            let messages: Vec<MessageDto> = if use_snapshot {
+                meta.system_prompt = snapshot.system_prompt.clone();
+                meta.model = snapshot.model.clone();
+                snapshot_messages_to_dto(&snapshot)
+            } else {
+                match db.get_conversation_messages(&id).await {
+                    Ok(messages) => messages
+                        .into_iter()
+                        .map(|m| MessageDto {
+                            id: m.id,
+                            role: m.role,
+                            content: m.content,
+                            created_at: m.created_at.to_rfc3339(),
+                        })
+                        .collect::<Vec<_>>(),
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Failed to load messages: {}", e),
+                        )
+                            .into_response()
+                    }
                 }
             };
 
+            let mut context_files = extract_context_files_from_messages(&messages);
+            for f in ConversationManager::default_agents_files() {
+                if !context_files.contains(&f) {
+                    context_files.push(f);
+                }
+            }
+
             Json(ConversationDetail {
-                conversation: conversation_to_meta(&conversation),
+                conversation: meta,
                 messages,
+                context_files,
             })
             .into_response()
         }
@@ -816,4 +848,34 @@ async fn set_active_agent(
                 .into_response(),
         }
     }
+}
+
+fn extract_context_files_from_messages(messages: &[MessageDto]) -> Vec<String> {
+    let mut files: Vec<String> = Vec::new();
+    for msg in messages {
+        if let Some(start) = msg.content.find("Context from file '") {
+            let remainder = &msg.content[start + "Context from file '".len()..];
+            if let Some(end_idx) = remainder.find("':") {
+                let path = &remainder[..end_idx];
+                if !files.contains(&path.to_string()) {
+                    files.push(path.to_string());
+                }
+            }
+        }
+    }
+    files
+}
+
+fn snapshot_messages_to_dto(snapshot: &ConversationSnapshot) -> Vec<MessageDto> {
+    snapshot
+        .messages
+        .iter()
+        .enumerate()
+        .map(|(idx, m)| MessageDto {
+            id: format!("snapshot-{}", idx),
+            role: m.role.clone(),
+            content: m.content.clone(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        })
+        .collect()
 }

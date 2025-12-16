@@ -116,40 +116,7 @@ impl ConversationManager {
     /// Clear conversation but keep AGENTS.md files if they exist in context
     /// Create a new conversation in the database and start tracking it
     pub async fn clear_conversation_keep_agents_md(&mut self) -> Result<String> {
-        use std::path::Path;
-
-        // Check for AGENTS.md in ~/.aixplosion/ (priority)
-        let home_agents_md = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".aixplosion")
-            .join("AGENTS.md");
-
-        // Check for AGENTS.md in current directory
-        let local_agents_md = Path::new("AGENTS.md");
-
-        // Store the AGENTS.md content before clearing
-        let mut home_agents_content = None;
-        let mut local_agents_content = None;
-
-        if home_agents_md.exists() {
-            debug!("Reading AGENTS.md from ~/.aixplosion/ before clearing conversation");
-            match std::fs::read_to_string(&home_agents_md) {
-                Ok(content) => home_agents_content = Some(content),
-                Err(e) => {
-                    log::warn!("Failed to read AGENTS.md from ~/.aixplosion/: {}", e);
-                }
-            }
-        }
-
-        if local_agents_md.exists() {
-            debug!("Reading AGENTS.md from current directory before clearing conversation");
-            match std::fs::read_to_string(local_agents_md) {
-                Ok(content) => local_agents_content = Some(content),
-                Err(e) => {
-                    log::warn!("Failed to read AGENTS.md from current directory: {}", e);
-                }
-            }
-        }
+        let agent_files = Self::default_agents_files();
 
         // Clear the conversation first
         self.conversation.clear();
@@ -162,42 +129,36 @@ impl ConversationManager {
         );
 
         // Re-add AGENTS.md content if it was captured
-        if let Some(content) = home_agents_content {
-            let context_message = format!(
-                "Context from file '{}':\n\n```\n{}\n```",
-                home_agents_md.display(),
-                content
-            );
-
-            self.conversation.push(crate::anthropic::Message {
-                role: "user".to_string(),
-                content: vec![crate::anthropic::ContentBlock::text(context_message)],
-            });
-
-            println!(
-                "{} Re-added context file: {}",
-                "\u{2713}", // Using unicode character instead of colored()
-                home_agents_md.display()
-            );
+        for file_path in &agent_files {
+            match self.add_context_file(file_path).await {
+                Ok(_) => println!("{} Re-added context file: {}", "\u{2713}", file_path),
+                Err(e) => log::warn!("Failed to re-add context file '{}': {}", file_path, e),
+            }
         }
 
-        if let Some(content) = local_agents_content {
-            let context_message =
-                format!("Context from file 'AGENTS.md':\n\n```\n{}\n```", content);
-
-            self.conversation.push(crate::anthropic::Message {
-                role: "user".to_string(),
-                content: vec![crate::anthropic::ContentBlock::text(context_message)],
-            });
-
-            println!("{} Re-added context file: AGENTS.md", "\u{2713}");
-        }
-
-        if !home_agents_md.exists() && !local_agents_md.exists() {
+        if agent_files.is_empty() {
             debug!("Clearing conversation (no AGENTS.md files found)");
         }
 
         Ok(new_conversation_id)
+    }
+
+    /// Return the default AGENTS.md files the app will auto-load (home + local)
+    pub fn default_agents_files() -> Vec<String> {
+        let mut files = Vec::new();
+        let home_agents_md = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".aixplosion")
+            .join("AGENTS.md");
+        if home_agents_md.exists() {
+            files.push(home_agents_md.display().to_string());
+        }
+
+        let local_agents_md = PathBuf::from("AGENTS.md");
+        if local_agents_md.exists() {
+            files.push(local_agents_md.display().to_string());
+        }
+        files
     }
 
     /// Add a file as context to the conversation
