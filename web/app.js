@@ -12,6 +12,7 @@ const state = {
   activeAgentEditing: null,
   theme: "dark",
   activeTab: "chats",
+  streaming: localStorage.getItem("aixplosion-stream") === "true",
 };
 
 function setPlanForm(plan) {
@@ -75,25 +76,136 @@ function renderConversationList() {
   });
 }
 
+function formatJson(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (err) {
+    return String(value);
+  }
+}
+
+function normalizeBlocks(blocks, fallback) {
+  if (Array.isArray(blocks) && blocks.length) {
+    return blocks.map((b) => ({
+      ...b,
+      type: b.type || b.block_type,
+    }));
+  }
+  return [{ type: "text", text: fallback || "" }];
+}
+
+function renderBlock(block) {
+  const blockType = block.type || "text";
+  const wrapper = document.createElement("div");
+
+  if (blockType === "tool_use") {
+    wrapper.className = "tool-block tool-call";
+    const head = document.createElement("div");
+    head.className = "tool-head";
+    const title = document.createElement("div");
+    title.className = "tool-title";
+    title.textContent = `🔧 ${block.name || "tool call"}`;
+    const meta = document.createElement("div");
+    meta.className = "tool-meta";
+    meta.textContent = block.id ? `Tool use id: ${block.id}` : "Tool input";
+    const toggle = document.createElement("button");
+    toggle.className = "tool-toggle";
+    toggle.textContent = "Expand";
+    head.appendChild(title);
+    head.appendChild(meta);
+    head.appendChild(toggle);
+    const body = document.createElement("div");
+    body.className = "tool-body";
+    const pre = document.createElement("pre");
+    pre.textContent = formatJson(block.input);
+    body.appendChild(pre);
+    const toggleOpen = () => {
+      const open = wrapper.classList.toggle("open");
+      body.style.display = open ? "block" : "none";
+      toggle.textContent = open ? "Collapse" : "Expand";
+    };
+    head.addEventListener("click", toggleOpen);
+    toggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleOpen();
+    });
+    wrapper.appendChild(head);
+    wrapper.appendChild(body);
+    return wrapper;
+  }
+
+  if (blockType === "tool_result") {
+    wrapper.className = "tool-block tool-result" + (block.is_error ? " error" : "");
+    const head = document.createElement("div");
+    head.className = "tool-head";
+    const title = document.createElement("div");
+    title.className = "tool-title";
+    title.textContent = block.is_error ? "⚠️ Tool error" : "📤 Tool result";
+    const meta = document.createElement("div");
+    meta.className = "tool-meta";
+    meta.textContent = block.tool_use_id ? `For: ${block.tool_use_id}` : "Result";
+    const toggle = document.createElement("button");
+    toggle.className = "tool-toggle";
+    toggle.textContent = "Expand";
+    head.appendChild(title);
+    head.appendChild(meta);
+    head.appendChild(toggle);
+    const body = document.createElement("div");
+    body.className = "tool-body";
+    const pre = document.createElement("pre");
+    pre.textContent = block.content || "(empty result)";
+    body.appendChild(pre);
+    const toggleOpen = () => {
+      const open = wrapper.classList.toggle("open");
+      body.style.display = open ? "block" : "none";
+      toggle.textContent = open ? "Collapse" : "Expand";
+    };
+    head.addEventListener("click", toggleOpen);
+    toggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleOpen();
+    });
+    wrapper.appendChild(head);
+    wrapper.appendChild(body);
+    return wrapper;
+  }
+
+  wrapper.className = "text-block";
+  wrapper.textContent = block.text || block.content || "";
+  return wrapper;
+}
+
+function renderMessageBubble(msg) {
+  const bubble = document.createElement("div");
+  bubble.className = `bubble ${msg.role}`;
+  const blocks = normalizeBlocks(msg.blocks, msg.content);
+  blocks.forEach((block) => bubble.appendChild(renderBlock(block)));
+  return bubble;
+}
+
 function renderMessages(messages) {
   const container = document.getElementById("messages");
   container.innerHTML = "";
   messages.forEach((msg) => {
-    const bubble = document.createElement("div");
-    bubble.className = `bubble ${msg.role}`;
-    bubble.textContent = msg.content;
-    container.appendChild(bubble);
+    container.appendChild(renderMessageBubble(msg));
   });
   container.scrollTop = container.scrollHeight;
 }
 
-function appendMessage(role, content) {
+function appendMessage(role, content, blocks = null) {
   const container = document.getElementById("messages");
-  const bubble = document.createElement("div");
-  bubble.className = `bubble ${role}`;
-  bubble.textContent = content;
+  const bubble = renderMessageBubble({ role, content, blocks });
   container.appendChild(bubble);
   container.scrollTop = container.scrollHeight;
+  return bubble;
+}
+
+function updateBubbleContent(bubble, text) {
+  bubble.innerHTML = "";
+  bubble.appendChild(renderBlock({ type: "text", text }));
+  bubble.scrollIntoView({ block: "end" });
 }
 
 async function loadConversations() {
@@ -144,6 +256,14 @@ async function sendMessage() {
   appendMessage("user", text);
   updateConversationPreview(state.activeConversationId, text);
   input.value = "";
+  if (state.streaming) {
+    await sendMessageStreaming(text);
+  } else {
+    await sendMessageOnce(text);
+  }
+}
+
+async function sendMessageOnce(text) {
   setStatus("Waiting for response...");
   try {
     const result = await api(`/api/conversations/${state.activeConversationId}/message`, {
@@ -155,6 +275,88 @@ async function sendMessage() {
     await loadConversations();
   } catch (err) {
     appendMessage("assistant", `Error: ${err.message}`);
+    setStatus("Error");
+  }
+}
+
+async function sendMessageStreaming(text) {
+  setStatus("Streaming response...");
+  const bubble = appendMessage("assistant", "");
+  let buffer = "";
+  let currentText = "";
+
+  try {
+    const res = await fetch(`/api/conversations/${state.activeConversationId}/message/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text }),
+    });
+
+    if (!res.ok) {
+      const message = await res.text();
+      throw new Error(message || `Request failed: ${res.status}`);
+    }
+    if (!res.body) {
+      throw new Error("Streaming not supported by browser");
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let newlineIndex;
+      while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
+        if (!line) continue;
+
+        let evt = null;
+        try {
+          evt = JSON.parse(line);
+        } catch (err) {
+          continue;
+        }
+
+        if (evt.type === "text" && typeof evt.delta === "string") {
+          currentText += evt.delta;
+          updateBubbleContent(bubble, currentText);
+        } else if (evt.type === "final" && typeof evt.content === "string") {
+          currentText = evt.content;
+          updateBubbleContent(bubble, currentText);
+        } else if (evt.type === "tool_call") {
+          appendMessage("assistant", "", [
+            {
+              type: "tool_use",
+              name: evt.name,
+              id: evt.tool_use_id,
+              input: evt.input,
+            },
+          ]);
+        } else if (evt.type === "tool_result") {
+          appendMessage("assistant", "", [
+            {
+              type: "tool_result",
+              tool_use_id: evt.tool_use_id,
+              content: evt.content,
+              is_error: !!evt.is_error,
+            },
+          ]);
+        } else if (evt.type === "error") {
+          updateBubbleContent(bubble, `Error: ${evt.error || "stream error"}`);
+          setStatus("Error");
+        }
+      }
+    }
+
+    setStatus("Refreshing chat...");
+    await selectConversation(state.activeConversationId);
+    await loadConversations();
+    setStatus("Ready");
+  } catch (err) {
+    updateBubbleContent(bubble, `Error: ${err.message}`);
     setStatus("Error");
   }
 }
@@ -561,6 +763,14 @@ function bindEvents() {
       sendMessage();
     }
   });
+  const streamToggle = document.getElementById("stream-toggle");
+  if (streamToggle) {
+    streamToggle.checked = state.streaming;
+    streamToggle.addEventListener("change", (e) => {
+      state.streaming = e.target.checked;
+      localStorage.setItem("aixplosion-stream", String(state.streaming));
+    });
+  }
   document.getElementById("new-conversation").addEventListener("click", createConversation);
 
   document.getElementById("save-plan").addEventListener("click", savePlan);

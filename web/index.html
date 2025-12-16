@@ -277,13 +277,66 @@
       margin-right: auto;
       background: rgba(255,255,255,0.04);
     }
+    .bubble .text-block {
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
+    .tool-block {
+      margin-top: 8px;
+      padding: 10px 12px;
+      border: 1px dashed var(--border);
+      background: rgba(255,255,255,0.03);
+      cursor: pointer;
+    }
+    .tool-block.tool-call { border-color: var(--accent); background: rgba(49,220,162,0.08); }
+    .tool-block.tool-result { border-color: var(--accent-2); background: rgba(245,159,11,0.08); }
+    .tool-block.tool-result.error { border-color: var(--danger); background: rgba(239,68,68,0.12); }
+    .tool-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+    .tool-title { font-weight: 700; display: flex; gap: 6px; align-items: center; }
+    .tool-meta { color: var(--muted); font-size: 12px; flex: 1; }
+    .tool-toggle {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .tool-body { display: none; margin-top: 8px; }
+    .tool-block.open .tool-body { display: block; }
+    .tool-block pre {
+      margin: 8px 0 0 0;
+      background: rgba(0,0,0,0.2);
+      border: 1px solid var(--border);
+      padding: 8px;
+      color: var(--text);
+      white-space: pre-wrap;
+    }
     .composer {
       border-top: 1px solid var(--border);
       padding: 14px;
       display: grid;
-      grid-template-columns: 1fr 120px;
+      grid-template-columns: 1fr 200px;
       gap: 10px;
       background: var(--surface);
+      align-items: start;
+    }
+    .composer-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: flex-end;
+    }
+    .toggle {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .toggle input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
     }
     textarea {
       width: 100%;
@@ -470,7 +523,13 @@
           <div id="messages"></div>
           <div class="composer">
             <textarea id="message-input" placeholder="Ask anything..."></textarea>
-            <button class="primary" id="send-message">Send</button>
+            <div class="composer-actions">
+              <label class="toggle">
+                <input type="checkbox" id="stream-toggle">
+                <span>Stream responses</span>
+              </label>
+              <button class="primary" id="send-message">Send</button>
+            </div>
           </div>
         </section>
       </div>

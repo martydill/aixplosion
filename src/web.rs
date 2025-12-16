@@ -1,20 +1,27 @@
-use crate::agent::{Agent, ConversationSnapshot};
+use crate::agent::{Agent, ConversationSnapshot, StreamToolEvent};
+use crate::anthropic::ContentBlock;
 use crate::conversation::ConversationManager;
 use crate::database::{Conversation, DatabaseManager};
 use crate::mcp::{McpManager, McpServerConfig};
 use crate::subagent::{SubagentConfig, SubagentManager};
 use anyhow::Result;
+use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use bytes::Bytes;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use chrono::Utc;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 
 #[derive(Clone)]
 pub struct WebState {
@@ -37,11 +44,25 @@ struct ConversationListItem {
     message_count: usize,
 }
 
+#[derive(Serialize, Clone)]
+struct ContentBlockDto {
+    #[serde(rename = "type")]
+    block_type: String,
+    text: Option<String>,
+    id: Option<String>,
+    name: Option<String>,
+    input: Option<serde_json::Value>,
+    tool_use_id: Option<String>,
+    content: Option<String>,
+    is_error: Option<bool>,
+}
+
 #[derive(Serialize)]
 struct MessageDto {
     id: String,
     role: String,
     content: String,
+    blocks: Vec<ContentBlockDto>,
     created_at: String,
 }
 
@@ -179,6 +200,10 @@ pub async fn launch_web_ui(state: WebState, port: u16) -> Result<()> {
             "/api/conversations/:id/message",
             post(send_message_to_conversation),
         )
+        .route(
+            "/api/conversations/:id/message/stream",
+            post(stream_message_to_conversation),
+        )
         .route("/api/plans", get(list_plans).post(create_plan))
         .route(
             "/api/plans/:id",
@@ -313,11 +338,14 @@ async fn get_conversation(
                 match db.get_conversation_messages(&id).await {
                     Ok(messages) => messages
                         .into_iter()
-                        .map(|m| MessageDto {
-                            id: m.id,
-                            role: m.role,
-                            content: m.content,
-                            created_at: m.created_at.to_rfc3339(),
+                        .map(|m| {
+                            let blocks = vec![ContentBlock::text(m.content.clone())];
+                            build_message_dto(
+                                m.id,
+                                m.role,
+                                m.created_at.to_rfc3339(),
+                                blocks,
+                            )
                         })
                         .collect::<Vec<_>>(),
                     Err(e) => {
@@ -413,6 +441,102 @@ async fn send_message_to_conversation(
         )
             .into_response(),
     }
+}
+
+#[axum::debug_handler]
+async fn stream_message_to_conversation(
+    State(state): State<WebState>,
+    Path(id): Path<String>,
+    Json(payload): Json<MessageRequest>,
+) -> impl IntoResponse {
+    let mut agent = state.agent.lock_owned().await;
+
+    if agent.current_conversation_id() != Some(id.clone()) {
+        if let Err(e) = agent.resume_conversation(&id).await {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to load conversation: {}", e),
+            )
+                .into_response();
+        }
+    }
+
+    let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(32);
+    let cancellation_flag = Arc::new(AtomicBool::new(false));
+    let message = payload.message.clone();
+
+    tokio::spawn(async move {
+        let stream_sender = tx.clone();
+        let tool_sender = stream_sender.clone();
+
+        let send_json =
+            |sender: &mpsc::Sender<Result<Bytes, Infallible>>, value: serde_json::Value| {
+                if let Ok(text) = serde_json::to_string(&value) {
+                    let _ = sender.try_send(Ok(Bytes::from(text + "\n")));
+                }
+            };
+
+        let on_stream = {
+            let sender = tx.clone();
+            Arc::new(move |delta: String| {
+                send_json(
+                    &sender,
+                    serde_json::json!({
+                        "type": "text",
+                        "delta": delta
+                    }),
+                );
+            })
+        };
+
+        let result = agent
+            .process_message_with_stream(
+                &message,
+                Some(on_stream),
+                Some(Arc::new(move |evt: StreamToolEvent| {
+                    send_json(
+                        &tool_sender,
+                        serde_json::json!({
+                            "type": evt.event,
+                            "tool_use_id": evt.tool_use_id,
+                            "name": evt.name,
+                            "input": evt.input,
+                            "content": evt.content,
+                            "is_error": evt.is_error,
+                        }),
+                    );
+                })),
+                cancellation_flag.clone(),
+            )
+            .await;
+
+        match result {
+            Ok(final_response) => send_json(
+                &stream_sender,
+                serde_json::json!({
+                    "type": "final",
+                    "content": final_response
+                }),
+            ),
+            Err(e) => send_json(
+                &stream_sender,
+                serde_json::json!({
+                    "type": "error",
+                    "error": e.to_string()
+                }),
+            ),
+        }
+    });
+
+    let stream = ReceiverStream::new(rx);
+    let body = Body::from_stream(stream);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/x-ndjson")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(body)
+        .unwrap()
 }
 
 async fn list_plans(State(state): State<WebState>) -> impl IntoResponse {
@@ -850,15 +974,79 @@ async fn set_active_agent(
     }
 }
 
+fn block_to_dto(block: &ContentBlock) -> ContentBlockDto {
+    ContentBlockDto {
+        block_type: block.block_type.clone(),
+        text: block.text.clone(),
+        id: block.id.clone(),
+        name: block.name.clone(),
+        input: block.input.clone(),
+        tool_use_id: block.tool_use_id.clone(),
+        content: block.content.clone(),
+        is_error: block.is_error,
+    }
+}
+
+fn block_text_summary(block: &ContentBlockDto) -> String {
+    match block.block_type.as_str() {
+        "text" => block.text.clone().unwrap_or_default(),
+        "tool_use" => format!(
+            "Tool call: {}",
+            block.name.as_deref().unwrap_or("unknown tool")
+        ),
+        "tool_result" => {
+            let base = block.content.clone().unwrap_or_else(|| "Tool result".to_string());
+            if block.is_error.unwrap_or(false) {
+                format!("(error) {}", base)
+            } else {
+                base
+            }
+        }
+        _ => "".to_string(),
+    }
+}
+
+fn build_message_dto(
+    id: String,
+    role: String,
+    created_at: String,
+    blocks: Vec<ContentBlock>,
+) -> MessageDto {
+    let block_dtos: Vec<ContentBlockDto> = blocks.iter().map(block_to_dto).collect();
+    let content = {
+        let parts: Vec<String> = block_dtos
+            .iter()
+            .map(block_text_summary)
+            .filter(|s| !s.is_empty())
+            .collect();
+        parts.join("\n")
+    };
+
+    MessageDto {
+        id,
+        role,
+        content,
+        blocks: block_dtos,
+        created_at,
+    }
+}
+
 fn extract_context_files_from_messages(messages: &[MessageDto]) -> Vec<String> {
     let mut files: Vec<String> = Vec::new();
     for msg in messages {
-        if let Some(start) = msg.content.find("Context from file '") {
-            let remainder = &msg.content[start + "Context from file '".len()..];
-            if let Some(end_idx) = remainder.find("':") {
-                let path = &remainder[..end_idx];
-                if !files.contains(&path.to_string()) {
-                    files.push(path.to_string());
+        for text in msg
+            .blocks
+            .iter()
+            .filter_map(|b| b.text.as_deref().or(b.content.as_deref()))
+            .chain(std::iter::once(msg.content.as_str()))
+        {
+            if let Some(start) = text.find("Context from file '") {
+                let remainder = &text[start + "Context from file '".len()..];
+                if let Some(end_idx) = remainder.find("':") {
+                    let path = &remainder[..end_idx];
+                    if !files.contains(&path.to_string()) {
+                        files.push(path.to_string());
+                    }
                 }
             }
         }
@@ -871,11 +1059,13 @@ fn snapshot_messages_to_dto(snapshot: &ConversationSnapshot) -> Vec<MessageDto> 
         .messages
         .iter()
         .enumerate()
-        .map(|(idx, m)| MessageDto {
-            id: format!("snapshot-{}", idx),
-            role: m.role.clone(),
-            content: m.content.clone(),
-            created_at: chrono::Utc::now().to_rfc3339(),
+        .map(|(idx, m)| {
+            build_message_dto(
+                format!("snapshot-{}", idx),
+                m.role.clone(),
+                chrono::Utc::now().to_rfc3339(),
+                m.content.clone(),
+            )
         })
         .collect()
 }

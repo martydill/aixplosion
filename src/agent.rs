@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use colored::*;
 use log::{debug, error, info, warn};
 use serde_json::json;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -22,7 +23,17 @@ struct SavedConversationContext {
 #[derive(Debug, Clone)]
 pub struct SnapshotMessage {
     pub role: String,
-    pub content: String,
+    pub content: Vec<ContentBlock>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StreamToolEvent {
+    pub event: String,
+    pub tool_use_id: String,
+    pub name: String,
+    pub input: Option<serde_json::Value>,
+    pub content: Option<String>,
+    pub is_error: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,12 +115,7 @@ impl Agent {
             .iter()
             .map(|m| SnapshotMessage {
                 role: m.role.clone(),
-                content: m
-                    .content
-                    .iter()
-                    .filter_map(|b| b.text.clone())
-                    .collect::<Vec<_>>()
-                    .join("\n\n"),
+                content: m.content.clone(),
             })
             .collect();
 
@@ -545,7 +551,7 @@ impl Agent {
         message: &str,
         cancellation_flag: Arc<AtomicBool>,
     ) -> Result<String> {
-        self.process_message_with_stream(message, None, cancellation_flag)
+        self.process_message_with_stream(message, None, None, cancellation_flag)
             .await
     }
 
@@ -553,6 +559,7 @@ impl Agent {
         &mut self,
         message: &str,
         on_stream_content: Option<Arc<dyn Fn(String) + Send + Sync + 'static>>,
+        on_tool_event: Option<Arc<dyn Fn(StreamToolEvent) + Send + Sync + 'static>>,
         cancellation_flag: Arc<AtomicBool>,
     ) -> Result<String> {
         // Log incoming user message
@@ -728,6 +735,17 @@ impl Agent {
 
                     debug!("Executing tool: {} with ID: {}", call.name, call.id);
 
+                    if let Some(callback) = &on_tool_event {
+                        callback(StreamToolEvent {
+                            event: "tool_call".to_string(),
+                            tool_use_id: call.id.clone(),
+                            name: call.name.clone(),
+                            input: Some(call.arguments.clone()),
+                            content: None,
+                            is_error: None,
+                        });
+                    }
+
                     // Handle plan mode restrictions
                     if self.plan_mode {
                         let registry = self.tool_registry.read().await;
@@ -747,6 +765,16 @@ impl Agent {
 
                     // Use the new display system and execute tool
                     let result = self.execute_tool_with_display(call).await;
+                    if let Some(callback) = &on_tool_event {
+                        callback(StreamToolEvent {
+                            event: "tool_result".to_string(),
+                            tool_use_id: call.id.clone(),
+                            name: call.name.clone(),
+                            input: None,
+                            content: Some(result.content.clone()),
+                            is_error: Some(result.is_error),
+                        });
+                    }
                     results.push(result);
                 }
                 results

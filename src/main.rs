@@ -88,6 +88,7 @@ async fn process_input(
             .process_message_with_stream(
                 &input,
                 Some(Arc::clone(&stream_callback)),
+                None,
                 cancellation_flag.clone(),
             )
             .await;
@@ -918,6 +919,7 @@ async fn handle_slash_command(
                             .process_message_with_stream(
                                 &message,
                                 Some(Arc::clone(&stream_callback)),
+                                None,
                                 cancellation_flag,
                             )
                             .await;
@@ -2162,6 +2164,7 @@ async fn main() -> Result<()> {
                 .process_message_with_stream(
                     &message,
                     Some(Arc::clone(&stream_callback)),
+                    None,
                     cancellation_flag,
                 )
                 .await;
@@ -2197,6 +2200,7 @@ async fn main() -> Result<()> {
                 .process_message_with_stream(
                     trimmed_input,
                     Some(Arc::clone(&stream_callback)),
+                    None,
                     cancellation_flag,
                 )
                 .await;
