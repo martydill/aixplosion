@@ -1,6 +1,6 @@
 # AIxplosion
 
-I used AI to build an AI coding agent and then used the AI coding agent to keep building the AI coding agent.
+The hybrid cli/web coding agent that works your way.
 
 <img width="898" height="571" alt="image" src="https://github.com/user-attachments/assets/324128e6-9bcd-4e78-bb5a-a0657ed23d64" />
 
@@ -22,7 +22,10 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
  - Plan mode and /plan command support for managing plans and toggling plan mode
  - Subagent support via /agent
  - Command line history navigation with up and down arrow keys and Ctrl-R search
- 
+
+## Web interface
+
+The optional web UI provides a ChatGPT-style browser-based interface for chats, as well as plan, agent, and MCP server management.
 
 ## Todo 
  - Git worktrees
@@ -42,7 +45,11 @@ I used AI to build an AI coding agent and then used the AI coding agent to keep 
 export ANTHROPIC_AUTH_TOKEN="your-api-key"
 export ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic" 
 
+# CLI version
 cargo run -- --stream
+
+# Web version
+cargo run -- --web
 ```
 
 

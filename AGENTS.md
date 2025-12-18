@@ -82,6 +82,15 @@ aixplosion
 > ESC                     # Cancel current AI conversation
 ```
 
+### Web App
+
+- Launch with `aixplosion --web [--web-port 3000]` (or `cargo run -- --web ...`) to start the local UI at `http://127.0.0.1:<port>`; when `--web` is supplied, `-m/--message` and `--non-interactive` flags are ignored.
+- Chats tab lists conversations, supports message sending with streaming on/off, lets you switch the active agent from the dropdown, and includes a context modal showing files, the system prompt, and recent messages.
+- Plans tab lists, creates, edits, and deletes plans (title, user request, markdown) that stay tied to a conversation.
+- MCP Servers tab manages command- or WebSocket-based servers with args, env pairs, enabled flag, and connect/disconnect actions, and shows status per server.
+- Agents tab creates/updates/deletes agents (system prompt, model, temperature, max tokens, allow/deny lists). New agents default to read-only tools (`search_in_files`, `glob`); activate via the header dropdown to switch subagents and conversations.
+- UI controls include a light/dark toggle, stream toggle, and tab persistence via localStorage; the web app reads/writes the same SQLite data the CLI uses.
+
 ### System Prompts
 
 System prompts allow you to control the AI's behavior, personality, and response style. They are set at the beginning of the conversation and influence all subsequent responses.
