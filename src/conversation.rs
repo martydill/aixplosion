@@ -19,6 +19,13 @@ pub struct ConversationManager {
     pub subagent: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+enum TimelineEntry {
+    Message(StoredMessage),
+    ToolCall(crate::database::ToolCallRecord),
+    ToolResult(crate::database::ToolCallRecord),
+}
+
 impl ConversationManager {
     pub fn new(
         system_prompt: Option<String>,
@@ -219,14 +226,69 @@ impl ConversationManager {
         model: String,
         subagent: Option<String>,
         messages: &[StoredMessage],
+        tool_calls: &[crate::database::ToolCallRecord],
     ) {
         self.conversation.clear();
+        let mut timeline: Vec<(chrono::DateTime<chrono::Utc>, i32, TimelineEntry)> = Vec::new();
 
         for message in messages {
-            self.conversation.push(crate::anthropic::Message {
-                role: message.role.clone(),
-                content: vec![ContentBlock::text(message.content.clone())],
-            });
+            timeline.push((
+                message.created_at,
+                0,
+                TimelineEntry::Message(message.clone()),
+            ));
+        }
+
+        for tool_call in tool_calls {
+            timeline.push((
+                tool_call.created_at,
+                1,
+                TimelineEntry::ToolCall(tool_call.clone()),
+            ));
+            if tool_call.result_content.is_some() {
+                timeline.push((
+                    tool_call.created_at + chrono::Duration::milliseconds(1),
+                    2,
+                    TimelineEntry::ToolResult(tool_call.clone()),
+                ));
+            }
+        }
+
+        timeline.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+        for (_ts, _order, entry) in timeline {
+            match entry {
+                TimelineEntry::Message(message) => {
+                    self.conversation.push(crate::anthropic::Message {
+                        role: message.role.clone(),
+                        content: vec![ContentBlock::text(message.content.clone())],
+                    });
+                }
+                TimelineEntry::ToolCall(tc) => {
+                    let input_value: serde_json::Value =
+                        serde_json::from_str(&tc.tool_arguments).unwrap_or_else(|_| {
+                            serde_json::Value::String(tc.tool_arguments.clone())
+                        });
+                    self.conversation.push(crate::anthropic::Message {
+                        role: "assistant".to_string(),
+                        content: vec![ContentBlock::tool_use(
+                            tc.id.clone(),
+                            tc.tool_name.clone(),
+                            input_value,
+                        )],
+                    });
+                }
+                TimelineEntry::ToolResult(tc) => {
+                    self.conversation.push(crate::anthropic::Message {
+                        role: "user".to_string(),
+                        content: vec![ContentBlock::tool_result(
+                            tc.id.clone(),
+                            tc.result_content.clone().unwrap_or_default(),
+                            Some(tc.is_error),
+                        )],
+                    });
+                }
+            }
         }
 
         self.current_conversation_id = Some(conversation_id);

@@ -107,15 +107,14 @@ function renderBlock(block) {
     const title = document.createElement("div");
     title.className = "tool-title";
     title.textContent = `🔧 ${block.name || "tool call"}`;
-    const meta = document.createElement("div");
-    meta.className = "tool-meta";
-    meta.textContent = block.id ? `Tool use id: ${block.id}` : "Tool input";
     const toggle = document.createElement("button");
     toggle.className = "tool-toggle";
     toggle.textContent = "Expand";
     head.appendChild(title);
-    head.appendChild(meta);
     head.appendChild(toggle);
+    const details = document.createElement("div");
+    details.className = "tool-details tool-details-row";
+    details.textContent = summarizeToolInput(block.name, block.input);
     const body = document.createElement("div");
     body.className = "tool-body";
     const pre = document.createElement("pre");
@@ -132,25 +131,23 @@ function renderBlock(block) {
       toggleOpen();
     });
     wrapper.appendChild(head);
+    wrapper.appendChild(details);
     wrapper.appendChild(body);
     return wrapper;
   }
 
   if (blockType === "tool_result") {
     wrapper.className = "tool-block tool-result" + (block.is_error ? " error" : "");
+    
     const head = document.createElement("div");
     head.className = "tool-head";
     const title = document.createElement("div");
     title.className = "tool-title";
     title.textContent = block.is_error ? "⚠️ Tool error" : "📤 Tool result";
-    const meta = document.createElement("div");
-    meta.className = "tool-meta";
-    meta.textContent = block.tool_use_id ? `For: ${block.tool_use_id}` : "Result";
     const toggle = document.createElement("button");
     toggle.className = "tool-toggle";
     toggle.textContent = "Expand";
     head.appendChild(title);
-    head.appendChild(meta);
     head.appendChild(toggle);
     const body = document.createElement("div");
     body.className = "tool-body";
@@ -181,6 +178,21 @@ function renderMessageBubble(msg) {
   const bubble = document.createElement("div");
   bubble.className = `bubble ${msg.role}`;
   const blocks = normalizeBlocks(msg.blocks, msg.content);
+  const hasToolResult = blocks.some((b) => (b.type || b.block_type) === "tool_result");
+  if (!blocks.length) return null;
+  const hasVisible = blocks.some(
+    (b) =>
+      (b.text && b.text.trim()) ||
+      (b.content && b.content.trim()) ||
+      b.type === "tool_use" ||
+      b.type === "tool_result",
+  );
+  if (!hasVisible && !(msg.content && msg.content.trim())) {
+    return null;
+  }
+  if (hasToolResult) {
+    bubble.classList.add("tool-result-bubble");
+  }
   blocks.forEach((block) => bubble.appendChild(renderBlock(block)));
   return bubble;
 }
@@ -189,7 +201,8 @@ function renderMessages(messages) {
   const container = document.getElementById("messages");
   container.innerHTML = "";
   messages.forEach((msg) => {
-    container.appendChild(renderMessageBubble(msg));
+    const bubble = renderMessageBubble(msg);
+    if (bubble) container.appendChild(bubble);
   });
   container.scrollTop = container.scrollHeight;
 }
@@ -197,15 +210,73 @@ function renderMessages(messages) {
 function appendMessage(role, content, blocks = null) {
   const container = document.getElementById("messages");
   const bubble = renderMessageBubble({ role, content, blocks });
-  container.appendChild(bubble);
-  container.scrollTop = container.scrollHeight;
+  if (bubble) {
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
+  }
   return bubble;
 }
 
+function summarizeToolInput(name, input) {
+  let parsed = input;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch (_) {
+      // keep string
+    }
+  }
+
+  const safeVal = (v) => {
+    if (v === null || v === undefined) return "";
+    if (typeof v === "string") return v;
+    try {
+      return JSON.stringify(v);
+    } catch (_) {
+      return String(v);
+    }
+  };
+
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const obj = parsed;
+    if (name === "search_in_files") {
+      const path = obj.path || ".";
+      const query = obj.query || obj.pattern || "";
+      return `path=${safeVal(path)} query=${safeVal(query)}`.trim();
+    }
+    if (name === "read_file") {
+      return `path=${safeVal(obj.path || obj.file || "")}`;
+    }
+    if (name === "write_file" || name === "edit_file") {
+      const path = obj.path || obj.file || "";
+      const desc = obj.content ? "content=…" : obj.changes ? "changes=…" : "";
+      return `path=${safeVal(path)} ${desc}`.trim();
+    }
+    if (name === "list_directory") {
+      return `path=${safeVal(obj.path || ".")}`;
+    }
+    const keys = Object.keys(obj);
+    if (keys.length) {
+      return keys
+        .slice(0, 3)
+        .map((k) => `${k}=${safeVal(obj[k])}`)
+        .join(" ");
+    }
+  }
+  return safeVal(parsed) || "(no input)";
+}
+
 function updateBubbleContent(bubble, text) {
-  bubble.innerHTML = "";
-  bubble.appendChild(renderBlock({ type: "text", text }));
-  bubble.scrollIntoView({ block: "end" });
+  let target = bubble;
+  if (!target) {
+    target = document.createElement("div");
+    target.className = "bubble assistant";
+    const container = document.getElementById("messages");
+    container.appendChild(target);
+  }
+  target.innerHTML = "";
+  target.appendChild(renderBlock({ type: "text", text }));
+  target.scrollIntoView({ block: "end" });
 }
 
 async function loadConversations() {
@@ -404,7 +475,9 @@ function updateConversationPreview(id, lastMessage) {
   const existing = state.conversations.find((c) => c.id === id);
   const now = new Date().toISOString();
   if (existing) {
-    existing.last_message = lastMessage;
+    if (!existing.last_message) {
+      existing.last_message = lastMessage;
+    }
     existing.updated_at = now;
   } else {
     state.conversations.unshift({
@@ -917,3 +990,6 @@ async function showContextModal() {
 function closeContextModal() {
   document.getElementById("context-modal").classList.remove("open");
 }
+
+
+

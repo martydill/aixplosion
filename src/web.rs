@@ -1,7 +1,7 @@
 use crate::agent::{Agent, ConversationSnapshot, StreamToolEvent};
 use crate::anthropic::ContentBlock;
 use crate::conversation::ConversationManager;
-use crate::database::{Conversation, DatabaseManager};
+use crate::database::{Conversation, DatabaseManager, ToolCallRecord};
 use crate::mcp::{McpManager, McpServerConfig};
 use crate::subagent::{SubagentConfig, SubagentManager};
 use anyhow::Result;
@@ -12,7 +12,7 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -335,19 +335,8 @@ async fn get_conversation(
                 meta.model = snapshot.model.clone();
                 snapshot_messages_to_dto(&snapshot)
             } else {
-                match db.get_conversation_messages(&id).await {
-                    Ok(messages) => messages
-                        .into_iter()
-                        .map(|m| {
-                            let blocks = vec![ContentBlock::text(m.content.clone())];
-                            build_message_dto(
-                                m.id,
-                                m.role,
-                                m.created_at.to_rfc3339(),
-                                blocks,
-                            )
-                        })
-                        .collect::<Vec<_>>(),
+                let raw_messages = match db.get_conversation_messages(&id).await {
+                    Ok(messages) => messages,
                     Err(e) => {
                         return (
                             StatusCode::INTERNAL_SERVER_ERROR,
@@ -355,10 +344,37 @@ async fn get_conversation(
                         )
                             .into_response()
                     }
-                }
+                };
+                let tool_calls = match db.get_conversation_tool_calls(&id).await {
+                    Ok(calls) => calls,
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Failed to load tool calls: {}", e),
+                        )
+                            .into_response()
+                    }
+                };
+                timeline_messages_to_dto(raw_messages.clone(), tool_calls)
             };
 
-            let mut context_files = extract_context_files_from_messages(&messages);
+            let raw_context_messages: Vec<MessageDto> = match db.get_conversation_messages(&id).await {
+                Ok(msgs) => msgs
+                    .into_iter()
+                    .map(|m| {
+                        let blocks = vec![ContentBlock::text(m.content.clone())];
+                        build_message_dto(
+                            m.id,
+                            m.role,
+                            m.created_at.to_rfc3339(),
+                            blocks,
+                        )
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+
+            let mut context_files = extract_context_files_from_messages(&raw_context_messages);
             for f in ConversationManager::default_agents_files() {
                 if !context_files.contains(&f) {
                     context_files.push(f);
@@ -987,6 +1003,14 @@ fn block_to_dto(block: &ContentBlock) -> ContentBlockDto {
     }
 }
 
+fn is_context_block(block: &ContentBlock) -> bool {
+    block
+        .text
+        .as_ref()
+        .map(|t| t.starts_with("Context from file '"))
+        .unwrap_or(false)
+}
+
 fn block_text_summary(block: &ContentBlockDto) -> String {
     match block.block_type.as_str() {
         "text" => block.text.clone().unwrap_or_default(),
@@ -1031,6 +1055,28 @@ fn build_message_dto(
     }
 }
 
+fn build_visible_message_dto(
+    id: String,
+    role: String,
+    created_at: String,
+    blocks: Vec<ContentBlock>,
+) -> Option<MessageDto> {
+    let filtered_blocks: Vec<ContentBlock> = blocks
+        .into_iter()
+        .filter(|b| !is_context_block(b))
+        .collect();
+    if filtered_blocks.is_empty() {
+        None
+    } else {
+        Some(build_message_dto(
+            id,
+            role,
+            created_at,
+            filtered_blocks,
+        ))
+    }
+}
+
 fn extract_context_files_from_messages(messages: &[MessageDto]) -> Vec<String> {
     let mut files: Vec<String> = Vec::new();
     for msg in messages {
@@ -1059,13 +1105,79 @@ fn snapshot_messages_to_dto(snapshot: &ConversationSnapshot) -> Vec<MessageDto> 
         .messages
         .iter()
         .enumerate()
-        .map(|(idx, m)| {
-            build_message_dto(
+        .filter_map(|(idx, m)| {
+            build_visible_message_dto(
                 format!("snapshot-{}", idx),
                 m.role.clone(),
                 chrono::Utc::now().to_rfc3339(),
                 m.content.clone(),
             )
+        })
+        .collect()
+}
+
+fn parse_tool_arguments(arg_text: &str) -> serde_json::Value {
+    serde_json::from_str(arg_text).unwrap_or_else(|_| serde_json::Value::String(arg_text.to_string()))
+}
+
+fn timeline_messages_to_dto(
+    messages: Vec<crate::database::Message>,
+    tool_calls: Vec<ToolCallRecord>,
+) -> Vec<MessageDto> {
+    enum Entry {
+        Message(crate::database::Message),
+        ToolCall(ToolCallRecord),
+        ToolResult(ToolCallRecord),
+    }
+
+    let mut timeline: Vec<(chrono::DateTime<chrono::Utc>, i32, Entry)> = Vec::new();
+
+    for m in messages {
+        timeline.push((m.created_at, 0, Entry::Message(m)));
+    }
+
+    for tc in tool_calls {
+        timeline.push((tc.created_at, 1, Entry::ToolCall(tc.clone())));
+        if tc.result_content.is_some() {
+            timeline.push((
+                tc.created_at + Duration::milliseconds(1),
+                2,
+                Entry::ToolResult(tc.clone()),
+            ));
+        }
+    }
+
+    timeline.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+    timeline
+        .into_iter()
+        .filter_map(|(_ts, _order, entry)| match entry {
+            Entry::Message(m) => build_visible_message_dto(
+                m.id,
+                m.role,
+                m.created_at.to_rfc3339(),
+                vec![ContentBlock::text(m.content)],
+            ),
+            Entry::ToolCall(tc) => build_visible_message_dto(
+                tc.id.clone(),
+                "assistant".to_string(),
+                tc.created_at.to_rfc3339(),
+                vec![ContentBlock::tool_use(
+                    tc.id,
+                    tc.tool_name,
+                    parse_tool_arguments(&tc.tool_arguments),
+                )],
+            ),
+            Entry::ToolResult(tc) => build_visible_message_dto(
+                format!("{}-result", tc.id),
+                "assistant".to_string(),
+                tc.created_at.to_rfc3339(),
+                vec![ContentBlock::tool_result(
+                    tc.id,
+                    tc.result_content.unwrap_or_default(),
+                    Some(tc.is_error),
+                )],
+            ),
         })
         .collect()
 }

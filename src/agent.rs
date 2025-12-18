@@ -735,6 +735,28 @@ impl Agent {
 
                     debug!("Executing tool: {} with ID: {}", call.name, call.id);
 
+                    if let (Some(db), Some(conversation_id)) = (
+                        self.conversation_manager.database_manager.clone(),
+                        self.conversation_manager.current_conversation_id.clone(),
+                    ) {
+                        let args_str =
+                            serde_json::to_string(&call.arguments).unwrap_or_else(|_| {
+                                call.arguments.to_string()
+                            });
+                        if let Err(e) = db
+                            .add_tool_call(
+                                &conversation_id,
+                                None,
+                                &call.id,
+                                &call.name,
+                                &args_str,
+                            )
+                            .await
+                        {
+                            warn!("Failed to record tool call {}: {}", call.name, e);
+                        }
+                    }
+
                     if let Some(callback) = &on_tool_event {
                         callback(StreamToolEvent {
                             event: "tool_call".to_string(),
@@ -765,6 +787,17 @@ impl Agent {
 
                     // Use the new display system and execute tool
                     let result = self.execute_tool_with_display(call).await;
+                    if let (Some(db), Some(conversation_id)) = (
+                        self.conversation_manager.database_manager.clone(),
+                        self.conversation_manager.current_conversation_id.clone(),
+                    ) {
+                        if let Err(e) = db
+                            .complete_tool_call(&call.id, &result.content, result.is_error)
+                            .await
+                        {
+                            warn!("Failed to record tool result {}: {}", call.name, e);
+                        }
+                    }
                     if let Some(callback) = &on_tool_event {
                         callback(StreamToolEvent {
                             event: "tool_result".to_string(),
@@ -809,7 +842,7 @@ impl Agent {
             // Add tool results to conversation
             for result in tool_results {
                 self.conversation_manager.conversation.push(Message {
-                    role: "user".to_string(),
+                    role: "assistant".to_string(),
                     content: vec![ContentBlock::tool_result(
                         result.tool_use_id,
                         result.content,
@@ -941,6 +974,9 @@ impl Agent {
         let messages = database_manager
             .get_conversation_messages(conversation_id)
             .await?;
+        let tool_calls = database_manager
+            .get_conversation_tool_calls(conversation_id)
+            .await?;
 
         self.model = conversation.model.clone();
         self.conversation_manager.set_conversation_from_records(
@@ -949,6 +985,7 @@ impl Agent {
             conversation.model.clone(),
             conversation.subagent.clone(),
             &messages,
+            &tool_calls,
         );
 
         Ok(())

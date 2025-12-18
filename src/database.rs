@@ -326,6 +326,19 @@ pub struct Message {
     pub created_at: DateTime<Utc>,
 }
 
+/// Represents a tool call tied to a conversation
+#[derive(Debug, Clone)]
+pub struct ToolCallRecord {
+    pub id: String,
+    pub conversation_id: String,
+    pub message_id: Option<String>,
+    pub tool_name: String,
+    pub tool_arguments: String,
+    pub result_content: Option<String>,
+    pub is_error: bool,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Represents a saved plan
 #[derive(Debug, Clone)]
 pub struct Plan {
@@ -619,6 +632,89 @@ impl DatabaseManager {
             .collect();
 
         Ok(messages)
+    }
+
+    /// Save a tool call for a conversation
+    pub async fn add_tool_call(
+        &self,
+        conversation_id: &str,
+        message_id: Option<&str>,
+        tool_use_id: &str,
+        tool_name: &str,
+        tool_arguments: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO tool_calls (id, conversation_id, message_id, tool_name, tool_arguments, is_error)
+            VALUES (?, ?, ?, ?, ?, false)
+            "#,
+        )
+        .bind(tool_use_id)
+        .bind(conversation_id)
+        .bind(message_id)
+        .bind(tool_name)
+        .bind(tool_arguments)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Update a tool call with its result content
+    pub async fn complete_tool_call(
+        &self,
+        tool_use_id: &str,
+        result_content: &str,
+        is_error: bool,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE tool_calls
+            SET result_content = ?, is_error = ?, created_at = created_at
+            WHERE id = ?
+            "#,
+        )
+        .bind(result_content)
+        .bind(is_error)
+        .bind(tool_use_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Fetch all tool calls for a conversation
+    pub async fn get_conversation_tool_calls(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<ToolCallRecord>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, conversation_id, message_id, tool_name, tool_arguments, result_content, is_error, created_at
+            FROM tool_calls
+            WHERE conversation_id = ?
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(conversation_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let calls = rows
+            .into_iter()
+            .map(|row| ToolCallRecord {
+                id: row.get("id"),
+                conversation_id: row.get("conversation_id"),
+                message_id: row.get("message_id"),
+                tool_name: row.get("tool_name"),
+                tool_arguments: row.get("tool_arguments"),
+                result_content: row.get("result_content"),
+                is_error: row.get("is_error"),
+                created_at: row.get("created_at"),
+            })
+            .collect();
+
+        Ok(calls)
     }
 
     /// Get recent conversations, optionally filtered by message content
