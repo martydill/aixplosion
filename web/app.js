@@ -296,6 +296,10 @@ async function selectConversation(id) {
   const meta = detail.conversation;
   setStatus(`${detail.messages.length} messages • ${meta.model}`);
   renderMessages(detail.messages);
+  const select = document.getElementById("agent-selector");
+  if (select) {
+    select.value = meta.subagent || "";
+  }
 }
 
 async function createConversation() {
@@ -735,8 +739,12 @@ async function saveAgent() {
 }
 
 async function activateAgent(name) {
-  await api("/api/agents/active", { method: "POST", body: { name } });
+  const res = await api("/api/agents/active", { method: "POST", body: { name } });
   await loadAgents();
+  if (res.conversation_id) {
+    state.activeConversationId = res.conversation_id;
+    await selectConversation(res.conversation_id);
+  }
 }
 
 async function deleteAgent() {

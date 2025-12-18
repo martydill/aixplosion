@@ -956,17 +956,17 @@ async fn set_active_agent(
             None => return (StatusCode::NOT_FOUND, "Agent not found".to_string()).into_response(),
         };
 
-        match state
-            .agent
-            .lock_owned()
-            .await
-            .switch_to_subagent(&config)
-            .await
-        {
+        let mut agent = state.agent.lock_owned().await;
+        match agent.switch_to_subagent(&config).await {
             Ok(_) => {
                 let mut manager = state.subagent_manager.lock().await;
                 manager.set_active_subagent(Some(name.clone()));
-                Json(HashMap::from([("active", Some(name))])).into_response()
+                let conversation_id = agent.current_conversation_id();
+                Json(HashMap::from([
+                    ("active", Some(name)),
+                    ("conversation_id", conversation_id),
+                ]))
+                .into_response()
             }
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -975,11 +975,17 @@ async fn set_active_agent(
                 .into_response(),
         }
     } else {
-        match state.agent.lock().await.exit_subagent().await {
+        let mut agent = state.agent.lock_owned().await;
+        match agent.exit_subagent().await {
             Ok(_) => {
                 let mut manager = state.subagent_manager.lock().await;
                 manager.set_active_subagent(None);
-                Json(HashMap::from([("active", Option::<String>::None)])).into_response()
+                let conversation_id = agent.current_conversation_id();
+                Json(HashMap::from([
+                    ("active", Option::<String>::None),
+                    ("conversation_id", conversation_id),
+                ]))
+                .into_response()
             }
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
