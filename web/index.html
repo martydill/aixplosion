@@ -7,37 +7,41 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/modern-normalize/modern-normalize.css">
   <style>
     :root {
-      --bg: #04060c;
-      --surface: #0b0e19;
-      --panel: #0f1222;
-      --border: #1c2236;
-      --accent: #31dca2;
-      --accent-2: #f59f0b;
-      --text: #e9edf7;
-      --muted: #97a1ba;
+      --bg: #181C14;
+      --surface: #1f241c;
+      --panel: #3C3D37;
+      --border: #697565;
+      --accent: #ECDFCC;
+      --accent-2: #697565;
+      --accent-soft: rgba(236, 223, 204, 0.14);
+      --accent-2-soft: rgba(105, 117, 101, 0.18);
+      --text: #ECDFCC;
+      --muted: #c5bfb1;
       --danger: #ef4444;
-      --shadow: 0 12px 26px rgba(0,0,0,0.32);
+      --shadow: 0 10px 24px rgba(0,0,0,0.3);
     }
     :root.light {
-      --bg: #f5f7fb;
-      --surface: #ffffff;
-      --panel: #eef1f5;
-      --border: #c5cedf;
-      --accent: #0a8ddf;
-      --accent-2: #e08a00;
-      --text: #0c162c;
-      --muted: #4c5569;
-      --danger: #dc2626;
-      --shadow: 0 10px 22px rgba(15,23,42,0.08);
+      --bg: #ECDFCC;
+      --surface: #f4ede2;
+      --panel: #ede2d2;
+      --border: #697565;
+      --accent: #181C14;
+      --accent-2: #3C3D37;
+      --accent-soft: rgba(24, 28, 20, 0.1);
+      --accent-2-soft: rgba(60, 61, 55, 0.12);
+      --text: #181C14;
+      --muted: #3C3D37;
+      --danger: #c24141;
+      --shadow: 0 8px 20px rgba(24,28,20,0.12);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Space Grotesk", "DM Sans", sans-serif;
+      font-family: "Instrument Sans", "DM Sans", sans-serif;
       font-size: 14px;
       background: var(--bg);
       color: var(--text);
@@ -46,6 +50,7 @@
       align-items: stretch;
       overflow: hidden;
     }
+    h1, h2, h3, h4, h5, h6, .brand { font-family: "Instrument Sans", "DM Sans", sans-serif; }
     .app-shell, .tab-content, .split-layout, .chat-layout, aside, .panel, .chat { min-height: 0; }
     .app-shell {
       display: flex;
@@ -58,33 +63,38 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 16px;
+      padding: 10px 12px;
       border-bottom: 1px solid var(--border);
       background: var(--surface);
       box-shadow: var(--shadow);
     }
     .top-tabs {
-      display: inline-flex;
-      gap: 8px;
+      display: flex;
+      flex: 1;
+      max-width: 700px;
+      gap: 6px;
       background: var(--panel);
-      padding: 6px;
+      padding: 4px 6px;
       border: 1px solid var(--border);
       box-shadow: var(--shadow);
     }
     .top-tab {
       background: var(--surface);
       color: var(--text);
-      padding: 9px 14px;
+      padding: 7px 12px;
       border: 1px solid var(--border);
       cursor: pointer;
       font-weight: 700;
       transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
       box-shadow: none;
       border-radius: 0;
+      flex: 1 1 0;
+      min-width: 0;
+      text-align: center;
     }
     .top-tab.active {
       background: var(--accent);
-      color: #04131c;
+      color: var(--bg);
       border: 1px solid var(--accent);
       box-shadow: none;
     }
@@ -93,7 +103,7 @@
       opacity: 1;
       background: var(--accent-2);
       border: 1px solid var(--accent-2);
-      color: #0a0a0a;
+      color: #ECDFCC;
     }
     .top-actions {
       display: inline-flex;
@@ -104,11 +114,11 @@
       background: var(--panel);
       border: 1px solid var(--border);
       color: var(--text);
-      padding: 8px 10px;
-      border-radius: 0;
+      padding: 6px 8px;
+      border-radius: 6px;
       cursor: pointer;
-      width: 40px;
-      height: 36px;
+      width: 36px;
+      height: 32px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -119,21 +129,21 @@
       flex: 1;
       min-height: 0;
       display: none;
-      padding: 14px 16px;
+      padding: 12px 14px;
       overflow: hidden;
     }
     .tab-content.active { display: block; }
     .chat-layout, .split-layout {
       display: grid;
       grid-template-columns: 320px 1fr;
-      gap: 14px;
+      gap: 12px;
       height: 100%;
       min-height: 0;
     }
     aside {
       background: var(--panel);
       border: 1px solid var(--border);
-      padding: 16px;
+      padding: 14px;
       display: flex;
       flex-direction: column;
       gap: 16px;
@@ -165,9 +175,9 @@
     .pill {
       display: inline-flex;
       padding: 4px 10px;
-      background: rgba(77,212,172,0.12);
+      background: var(--accent-soft);
       color: var(--accent);
-      border-radius: 0;
+      border-radius: 8px;
       font-size: 12px;
       letter-spacing: 0.04em;
     }
@@ -187,7 +197,7 @@
     }
     button.primary {
       background: var(--accent);
-      color: #04131c;
+      color: var(--bg);
       border-color: var(--accent);
       box-shadow: none;
     }
@@ -195,7 +205,7 @@
       background: var(--surface);
       color: var(--text);
     }
-    button:hover { background: var(--accent-2); color: #0a0a0a; border-color: var(--accent-2); }
+    button:hover { background: var(--accent-2); color: #ECDFCC; border-color: var(--accent-2); }
     button:active { opacity: 0.9; }
     .list {
       display: flex;
@@ -206,15 +216,18 @@
     }
     .list-item {
       padding: 12px;
-      border: 1px solid var(--border);
+      border: none;
       background: var(--surface);
       cursor: pointer;
-      transition: border-color 0.2s ease, background 0.2s ease;
+      transition: background 0.2s ease, box-shadow 0.15s ease;
+      box-shadow: none;
     }
     .list-item.active {
-      border-color: var(--accent);
-      background: rgba(49, 220, 162, 0.12);
+      background: var(--accent-soft);
+      box-shadow: inset 0 0 0 1px var(--accent);
     }
+    .list-item:hover { background: var(--accent-2-soft); box-shadow: inset 0 0 0 1px var(--border); }
+    .list-item.active:hover { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
     .list-item small { color: var(--muted); }
     .panel {
       background: var(--panel);
@@ -238,7 +251,7 @@
       min-height: 0;
     }
     .chat-header {
-      padding: 16px;
+      padding: 12px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -247,9 +260,9 @@
     }
     .status-dot {
       width: 8px; height: 8px;
-      border-radius: 0;
+      border-radius: 4px;
       background: var(--accent);
-      box-shadow: 0 0 12px rgba(77,212,172,0.9);
+      box-shadow: 0 0 10px var(--accent-soft);
       margin-right: 8px;
     }
     #messages {
@@ -271,8 +284,8 @@
     }
     .bubble.user {
       margin-left: auto;
-      background: rgba(77,212,172,0.1);
-      border-color: rgba(77,212,172,0.4);
+      background: var(--accent-soft);
+      border-color: var(--accent-2);
     }
     .bubble.assistant {
       margin-right: auto;
@@ -289,8 +302,8 @@
       background: rgba(255,255,255,0.03);
       cursor: pointer;
     }
-    .tool-block.tool-call { border-color: var(--accent); background: rgba(49,220,162,0.08); }
-    .tool-block.tool-result { border-color: var(--accent-2); background: rgba(245,159,11,0.08); }
+    .tool-block.tool-call { border-color: var(--accent); background: var(--accent-soft); }
+    .tool-block.tool-result { border-color: var(--accent-2); background: var(--accent-2-soft); }
     .tool-block.tool-result.error { border-color: var(--danger); background: rgba(239,68,68,0.12); }
     .tool-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
     .tool-title { font-weight: 700; display: flex; gap: 6px; align-items: center; }
@@ -319,6 +332,8 @@
       display: block;
       overflow-x: auto;
       background: transparent;
+      font-family: "Spline Sans Mono", "Instrument Sans", monospace;
+      font-size: 13px;
     }
     .composer {
       border-top: 1px solid var(--border);
@@ -409,6 +424,16 @@
       outline: none;
       transition: border-color 0.15s ease, background 0.15s ease;
     }
+    .control-compact {
+      padding: 8px 12px;
+      height: 36px;
+    }
+    select.control-compact:hover {
+      background: var(--accent-2);
+      border-color: var(--accent-2);
+      color: #ECDFCC;
+      cursor: pointer;
+    }
     input:focus, select:focus, textarea:focus {
       border-color: var(--accent);
       background: var(--surface);
@@ -458,7 +483,7 @@
       grid-template-rows: auto 1fr;
     }
     .modal-header {
-      padding: 12px 14px;
+      padding: 10px 12px;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
@@ -473,7 +498,7 @@
     .modal pre {
       margin: 0;
       white-space: pre-wrap;
-      font-family: "Space Grotesk", "DM Sans", sans-serif;
+      font-family: "Spline Sans Mono", "Instrument Sans", monospace;
       font-size: 13px;
       line-height: 1.5;
       color: var(--text);
@@ -489,7 +514,6 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="brand">
-        <span class="pill">WEB</span>
         <span>AIxplosion</span>
       </div>
       <div class="top-tabs">
@@ -506,10 +530,10 @@
     <div class="tab-content active" id="tab-chats">
       <div class="chat-layout">
         <aside class="chat-sidebar">
-          <div class="sidebar-actions">
+          <div class="stack" style="justify-content: space-between; align-items: center;">
+            <div class="muted">Conversations</div>
             <button class="primary" id="new-conversation">New Chat</button>
           </div>
-          <div class="muted">Conversations</div>
           <div class="list" id="conversation-list"></div>
         </aside>
         <section class="chat">
@@ -524,9 +548,8 @@
               </div>
             </div>
             <div class="stack" style="gap:8px; align-items:center;">
-              <span class="muted" style="font-weight:600;">Agent</span>
-              <select id="agent-selector" style="width:auto; min-width:160px;"></select>
-              <button class="secondary" id="show-context">Context</button>
+              <select id="agent-selector" class="control-compact" style="width:auto; min-width:160px;"></select>
+              <button class="secondary control-compact" id="show-context">Context</button>
             </div>
           </div>
           <div id="messages"></div>
@@ -547,9 +570,8 @@
     <div class="tab-content" id="tab-plans">
       <div class="split-layout">
         <aside class="sidebar-panel">
-          <div class="section-title">Plans</div>
           <div class="stack" style="justify-content: space-between; align-items: center;">
-            <div class="muted">All saved plans</div>
+            <div class="muted" style="font-weight:600;">Plans</div>
             <button class="secondary" id="create-plan-sidebar">New</button>
           </div>
           <div class="list" id="plan-list"></div>
@@ -565,7 +587,6 @@
             <textarea id="plan-markdown" class="small" placeholder="Plan markdown"></textarea>
             <div class="stack" style="margin-top:8px;">
               <button class="primary" id="save-plan">Save Plan</button>
-              <button class="secondary" id="create-plan">Create New Plan</button>
               <button class="secondary danger" id="delete-plan">Delete Plan</button>
             </div>
           </div>
@@ -576,9 +597,8 @@
     <div class="tab-content" id="tab-mcp">
       <div class="split-layout">
         <aside class="sidebar-panel">
-          <div class="section-title">MCP Servers</div>
           <div class="stack" style="justify-content: space-between; align-items: center;">
-            <div class="muted">Configured servers</div>
+            <div class="muted" style="font-weight:600;">MCP Servers</div>
             <button class="secondary" id="new-mcp">New</button>
           </div>
           <div class="list" id="mcp-list"></div>
@@ -600,9 +620,9 @@
             </div>
             <div class="stack" style="margin-top:8px; flex-wrap: wrap; gap:8px;">
               <button class="primary" id="save-mcp-detail">Save Server</button>
+              <button class="secondary danger" id="delete-mcp-detail" style="display:none">Delete</button>
               <button class="secondary" id="connect-mcp-detail" style="display:none">Connect</button>
               <button class="secondary" id="disconnect-mcp-detail" style="display:none">Disconnect</button>
-              <button class="secondary danger" id="delete-mcp-detail" style="display:none">Delete</button>
             </div>
           </div>
         </section>
@@ -612,9 +632,8 @@
     <div class="tab-content" id="tab-agents">
       <div class="split-layout">
         <aside class="sidebar-panel">
-          <div class="section-title">Agents</div>
           <div class="stack" style="justify-content: space-between; align-items: center;">
-            <div class="muted">All agents</div>
+            <div class="muted" style="font-weight:600;">Agents</div>
             <button class="secondary" id="new-agent">New</button>
           </div>
           <div class="list" id="agent-list"></div>
@@ -634,8 +653,6 @@
             <textarea id="agent-prompt" class="small" placeholder="System prompt"></textarea>
             <div class="stack" style="margin-top:8px;">
               <button class="primary" id="save-agent">Save Agent</button>
-              <button class="secondary" id="activate-agent" style="display:none">Activate</button>
-              <button class="secondary" id="deactivate-agent" style="display:none">Deactivate</button>
               <button class="secondary danger" id="delete-agent" style="display:none">Delete</button>
             </div>
           </div>

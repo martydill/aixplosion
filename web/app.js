@@ -707,9 +707,8 @@ function resetAgentForm() {
   document.getElementById("agent-allowed").value = READONLY_TOOLS.join(", ");
   document.getElementById("agent-denied").value = "";
   document.getElementById("agent-prompt").value = "";
-  document.getElementById("activate-agent").style.display = "none";
-  document.getElementById("deactivate-agent").style.display = "none";
-  document.getElementById("delete-agent").style.display = "none";
+  const deleteBtn = document.getElementById("delete-agent");
+  if (deleteBtn) deleteBtn.style.display = "none";
   renderAgents();
 }
 
@@ -722,9 +721,8 @@ function setAgentForm(agent) {
   document.getElementById("agent-allowed").value = agent.allowed_tools.join(", ");
   document.getElementById("agent-denied").value = agent.denied_tools.join(", ");
   document.getElementById("agent-prompt").value = agent.system_prompt;
-  document.getElementById("activate-agent").style.display = "";
-  document.getElementById("deactivate-agent").style.display = "";
-  document.getElementById("delete-agent").style.display = "";
+  const deleteBtn = document.getElementById("delete-agent");
+  if (deleteBtn) deleteBtn.style.display = "";
 }
 
 function selectFirstConversation() {
@@ -897,7 +895,8 @@ function bindEvents() {
   document.getElementById("new-conversation").addEventListener("click", createConversation);
 
   document.getElementById("save-plan").addEventListener("click", savePlan);
-  document.getElementById("create-plan").addEventListener("click", createPlan);
+  const createPlanBtn = document.getElementById("create-plan");
+  if (createPlanBtn) createPlanBtn.addEventListener("click", createPlan);
   document.getElementById("create-plan-sidebar").addEventListener("click", createPlan);
   document.getElementById("delete-plan").addEventListener("click", deletePlan);
 
@@ -915,28 +914,27 @@ function bindEvents() {
     await api(`/api/mcp/servers/${name}/disconnect`, { method: "POST" });
     await loadMcp();
   });
-  document.getElementById("delete-mcp-detail").addEventListener("click", async () => {
-    const name = document.getElementById("mcp-name").value.trim();
-    if (!name) return;
-    const idx = state.mcpServers.findIndex((s) => s.name === name);
-    await api(`/api/mcp/servers/${name}`, { method: "DELETE" });
-    await loadMcp();
-    if (state.mcpServers.length > 0) {
-      const next = state.mcpServers[Math.min(Math.max(idx, 0), state.mcpServers.length - 1)];
-      setMcpForm(next);
-      renderMcpList();
-    } else {
-      resetMcpForm();
-    }
-  });
+  const deleteMcpBtn = document.getElementById("delete-mcp-detail");
+  if (deleteMcpBtn) {
+    deleteMcpBtn.addEventListener("click", async () => {
+      const name = document.getElementById("mcp-name").value.trim();
+      if (!name) return;
+      const idx = state.mcpServers.findIndex((s) => s.name === name);
+      await api(`/api/mcp/servers/${name}`, { method: "DELETE" });
+      await loadMcp();
+      if (state.mcpServers.length > 0) {
+        const next = state.mcpServers[Math.min(Math.max(idx, 0), state.mcpServers.length - 1)];
+        setMcpForm(next);
+        renderMcpList();
+      } else {
+        resetMcpForm();
+      }
+    });
+  }
 
   document.getElementById("save-agent").addEventListener("click", saveAgent);
-  document.getElementById("activate-agent").addEventListener("click", () => {
-    const name = document.getElementById("agent-name").value.trim();
-    if (name) activateAgent(name);
-  });
-  document.getElementById("deactivate-agent").addEventListener("click", () => activateAgent(null));
-  document.getElementById("delete-agent").addEventListener("click", deleteAgent);
+  const deleteAgentBtn = document.getElementById("delete-agent");
+  if (deleteAgentBtn) deleteAgentBtn.addEventListener("click", deleteAgent);
   document.getElementById("new-agent").addEventListener("click", resetAgentForm);
   document.getElementById("agent-selector").addEventListener("change", (e) => {
     const name = e.target.value || null;
