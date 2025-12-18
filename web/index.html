@@ -51,6 +51,26 @@
       overflow: hidden;
     }
     h1, h2, h3, h4, h5, h6, .brand { font-family: "Instrument Sans", "DM Sans", sans-serif; }
+    * {
+      scrollbar-color: var(--border) var(--panel);
+      scrollbar-width: thin;
+    }
+    *::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    *::-webkit-scrollbar-track {
+      background: var(--panel);
+    }
+    *::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border: 2px solid var(--panel);
+      border-radius: 8px;
+    }
+    *::-webkit-scrollbar-thumb:hover {
+      background: var(--accent-2);
+      border-color: var(--panel);
+    }
     .app-shell, .tab-content, .split-layout, .chat-layout, aside, .panel, .chat { min-height: 0; }
     .app-shell {
       display: flex;

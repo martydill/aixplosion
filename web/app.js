@@ -2,14 +2,14 @@ const READONLY_TOOLS = ["search_in_files", "glob"];
 
 const state = {
   conversations: [],
-  activeConversationId: null,
+  activeConversationId: localStorage.getItem("aixplosion-active-conversation"),
   plans: [],
-  activePlanId: null,
+  activePlanId: localStorage.getItem("aixplosion-active-plan"),
   mcpServers: [],
-  activeServer: null,
+  activeServer: localStorage.getItem("aixplosion-active-mcp"),
   agents: [],
   activeAgent: null,
-  activeAgentEditing: null,
+  activeAgentEditing: localStorage.getItem("aixplosion-active-agent-edit"),
   theme: "dark",
   activeTab: "chats",
   streaming: localStorage.getItem("aixplosion-stream") === "true",
@@ -17,6 +17,7 @@ const state = {
 
 function setPlanForm(plan) {
   state.activePlanId = plan.id;
+  localStorage.setItem("aixplosion-active-plan", String(plan.id));
   document.getElementById("plan-title").value = plan.title || "";
   document.getElementById("plan-user-request").value = plan.user_request || "";
   document.getElementById("plan-markdown").value = plan.plan_markdown || "";
@@ -66,7 +67,8 @@ function renderConversationList() {
   list.innerHTML = "";
   state.conversations.forEach((conv) => {
     const item = document.createElement("div");
-    item.className = "list-item" + (conv.id === state.activeConversationId ? " active" : "");
+    const isActive = String(conv.id) === String(state.activeConversationId);
+    item.className = "list-item" + (isActive ? " active" : "");
     item.innerHTML = `
       <div style="font-weight:600;">${conv.last_message ? conv.last_message.slice(0, 50) : "new chat"}</div>
       <small>${new Date(conv.updated_at).toLocaleString()} • ${conv.model}</small>
@@ -332,6 +334,7 @@ async function loadConversations() {
 
 async function selectConversation(id) {
   state.activeConversationId = id;
+  localStorage.setItem("aixplosion-active-conversation", String(id));
   renderConversationList();
   setStatus("Loading conversation...");
   const detail = await api(`/api/conversations/${id}`);
@@ -483,6 +486,10 @@ async function loadPlans() {
   const plans = await api("/api/plans");
   state.plans = plans;
   renderPlanList();
+  if (state.activePlanId) {
+    const current = state.plans.find((p) => String(p.id) === String(state.activePlanId));
+    if (current) setPlanForm(current);
+  }
 }
 
 function renderPlanList() {
@@ -490,7 +497,8 @@ function renderPlanList() {
   list.innerHTML = "";
   state.plans.forEach((plan) => {
     const item = document.createElement("div");
-    item.className = "list-item" + (plan.id === state.activePlanId ? " active" : "");
+    const isActive = String(plan.id) === String(state.activePlanId);
+    item.className = "list-item" + (isActive ? " active" : "");
     item.innerHTML = `
       <div style="font-weight:600;">${plan.title || "Untitled plan"}</div>
       <small>${new Date(plan.created_at).toLocaleString()}</small>
@@ -518,7 +526,7 @@ function mergeConversations(incoming) {
 
 function updateConversationPreview(id, lastMessage) {
   if (!id) return;
-  const existing = state.conversations.find((c) => c.id === id);
+  const existing = state.conversations.find((c) => String(c.id) === String(id));
   const now = new Date().toISOString();
   if (existing) {
     if (!existing.last_message) {
@@ -539,6 +547,7 @@ function updateConversationPreview(id, lastMessage) {
 
 function resetPlanForm() {
   state.activePlanId = null;
+  localStorage.removeItem("aixplosion-active-plan");
   document.getElementById("plan-title").value = "";
   document.getElementById("plan-user-request").value = "";
   document.getElementById("plan-markdown").value = "";
@@ -546,6 +555,7 @@ function resetPlanForm() {
 
 function resetMcpForm() {
   state.activeServer = null;
+  localStorage.removeItem("aixplosion-active-mcp");
   document.getElementById("mcp-name").value = "";
   document.getElementById("mcp-command").value = "";
   document.getElementById("mcp-args").value = "";
@@ -564,6 +574,7 @@ function setMcpForm(server) {
     return;
   }
   state.activeServer = server.name;
+  localStorage.setItem("aixplosion-active-mcp", server.name);
   document.getElementById("mcp-name").value = server.name;
   document.getElementById("mcp-command").value = server.config.command || "";
   document.getElementById("mcp-args").value = (server.config.args || []).join(" ");
@@ -598,6 +609,7 @@ async function createPlan() {
   };
   const res = await api("/api/plans", { method: "POST", body: payload });
   state.activePlanId = res.id;
+  localStorage.setItem("aixplosion-active-plan", String(res.id));
   await loadPlans();
 }
 
@@ -700,6 +712,7 @@ function renderAgents() {
 
 function resetAgentForm() {
   state.activeAgentEditing = null;
+  localStorage.removeItem("aixplosion-active-agent-edit");
   document.getElementById("agent-name").value = "";
   document.getElementById("agent-model").value = "";
   document.getElementById("agent-temp").value = "";
@@ -714,6 +727,7 @@ function resetAgentForm() {
 
 function setAgentForm(agent) {
   state.activeAgentEditing = agent.name;
+  localStorage.setItem("aixplosion-active-agent-edit", agent.name);
   document.getElementById("agent-name").value = agent.name;
   document.getElementById("agent-model").value = agent.model || "";
   document.getElementById("agent-temp").value = agent.temperature ?? "";
@@ -726,35 +740,42 @@ function setAgentForm(agent) {
 }
 
 function selectFirstConversation() {
-  if (state.conversations.length > 0) {
-    selectConversation(state.conversations[0].id);
-  }
+  if (state.conversations.length === 0) return;
+  const saved = state.conversations.find((c) => String(c.id) === String(state.activeConversationId));
+  const target = saved ? saved.id : state.conversations[0].id;
+  selectConversation(target);
 }
 
 function selectFirstPlan() {
-  if (state.plans.length > 0) {
-    setPlanForm(state.plans[0]);
-  } else {
+  if (state.plans.length === 0) {
     resetPlanForm();
+    return;
   }
+  const saved = state.plans.find((p) => String(p.id) === String(state.activePlanId));
+  const target = saved || state.plans[0];
+  setPlanForm(target);
 }
 
 function selectFirstMcp() {
-  if (state.mcpServers.length > 0) {
-    setMcpForm(state.mcpServers[0]);
-    renderMcpList();
-  } else {
+  if (state.mcpServers.length === 0) {
     resetMcpForm();
+    return;
   }
+  const saved = state.mcpServers.find((s) => s.name === state.activeServer);
+  const target = saved || state.mcpServers[0];
+  setMcpForm(target);
+  renderMcpList();
 }
 
 function selectFirstAgent() {
-  if (state.agents.length > 0) {
-    setAgentForm(state.agents[0]);
-    renderAgents();
-  } else {
+  if (state.agents.length === 0) {
     resetAgentForm();
+    return;
   }
+  const saved = state.agents.find((a) => a.name === state.activeAgentEditing);
+  const target = saved || state.agents[0];
+  setAgentForm(target);
+  renderAgents();
 }
 
 async function saveAgent() {
@@ -830,6 +851,31 @@ function renderAgentSelector() {
     select.appendChild(opt);
   });
   select.value = state.activeAgent || "";
+}
+
+async function restoreSelections() {
+  const savedConv = localStorage.getItem("aixplosion-active-conversation");
+  if (savedConv && state.conversations.some((c) => String(c.id) === String(savedConv))) {
+    await selectConversation(savedConv);
+  }
+
+  const savedPlan = localStorage.getItem("aixplosion-active-plan");
+  const planMatch = savedPlan && state.plans.find((p) => String(p.id) === String(savedPlan));
+  if (planMatch) {
+    setPlanForm(planMatch);
+  }
+
+  const savedMcp = localStorage.getItem("aixplosion-active-mcp");
+  const mcpMatch = savedMcp && state.mcpServers.find((s) => s.name === savedMcp);
+  if (mcpMatch) {
+    setMcpForm(mcpMatch);
+  }
+
+  const savedAgentEdit = localStorage.getItem("aixplosion-active-agent-edit");
+  const agentMatch = savedAgentEdit && state.agents.find((a) => a.name === savedAgentEdit);
+  if (agentMatch) {
+    setAgentForm(agentMatch);
+  }
 }
 
 // Tabs
@@ -967,6 +1013,7 @@ async function bootstrap() {
     await loadPlans();
     await loadMcp();
     await loadAgents();
+    await restoreSelections();
     switch (state.activeTab) {
       case "plans":
         selectFirstPlan();
