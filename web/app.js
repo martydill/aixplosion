@@ -170,8 +170,40 @@ function renderBlock(block) {
   }
 
   wrapper.className = "text-block";
-  wrapper.textContent = block.text || block.content || "";
+  const text = block.text || block.content || "";
+  wrapper.appendChild(renderTextContent(text));
   return wrapper;
+}
+
+function renderTextContent(text) {
+  const container = document.createElement("div");
+  const regex = /```(\w+)?\n([\s\S]*?)```/g;
+  let lastIndex = 0;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const preceding = text.slice(lastIndex, match.index);
+    if (preceding.trim()) {
+      const p = document.createElement("div");
+      p.textContent = preceding;
+      container.appendChild(p);
+    }
+    const lang = match[1] || "";
+    const codeContent = match[2];
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.className = `language-${lang || "plaintext"}`;
+    code.textContent = codeContent;
+    pre.appendChild(code);
+    container.appendChild(pre);
+    lastIndex = regex.lastIndex;
+  }
+  const tail = text.slice(lastIndex);
+  if (tail.trim() || (!match && text)) {
+    const p = document.createElement("div");
+    p.textContent = tail;
+    container.appendChild(p);
+  }
+  return container;
 }
 
 function renderMessageBubble(msg) {
@@ -205,6 +237,7 @@ function renderMessages(messages) {
     if (bubble) container.appendChild(bubble);
   });
   container.scrollTop = container.scrollHeight;
+  highlightCodes(container);
 }
 
 function appendMessage(role, content, blocks = null) {
@@ -213,6 +246,7 @@ function appendMessage(role, content, blocks = null) {
   if (bubble) {
     container.appendChild(bubble);
     container.scrollTop = container.scrollHeight;
+    highlightCodes(bubble);
   }
   return bubble;
 }
@@ -277,6 +311,14 @@ function updateBubbleContent(bubble, text) {
   target.innerHTML = "";
   target.appendChild(renderBlock({ type: "text", text }));
   target.scrollIntoView({ block: "end" });
+  highlightCodes(target);
+}
+
+function highlightCodes(scope) {
+  if (!scope || !window.hljs) return;
+  scope.querySelectorAll("pre code").forEach((code) => {
+    window.hljs.highlightElement(code);
+  });
 }
 
 async function loadConversations() {

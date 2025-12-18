@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AIxplosion Web UI</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -313,6 +314,11 @@
       padding: 8px;
       color: var(--text);
       white-space: pre-wrap;
+    }
+    pre code {
+      display: block;
+      overflow-x: auto;
+      background: transparent;
     }
     .composer {
       border-top: 1px solid var(--border);
@@ -649,6 +655,7 @@
       </div>
     </div>
   </div>
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
