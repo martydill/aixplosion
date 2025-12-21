@@ -44,10 +44,11 @@ pub struct ConversationSnapshot {
     pub messages: Vec<SnapshotMessage>,
 }
 
-use crate::anthropic::{AnthropicClient, ContentBlock, Message, Usage};
-use crate::config::Config;
+use crate::anthropic::{ContentBlock, Message, Usage};
+use crate::config::{Config, Provider};
 use crate::conversation::ConversationManager;
 use crate::database::{Conversation as StoredConversation, DatabaseManager};
+use crate::llm::LlmClient;
 use crate::subagent;
 use crate::tools::{
     bash, create_bash_tool, create_create_directory_tool, create_delete_file_tool,
@@ -89,7 +90,7 @@ impl TokenUsage {
 }
 
 pub struct Agent {
-    client: AnthropicClient,
+    client: LlmClient,
     model: String,
     tools: Arc<RwLock<HashMap<String, Tool>>>,
     conversation_manager: ConversationManager,
@@ -105,6 +106,8 @@ pub struct Agent {
     saved_conversation_context: Option<SavedConversationContext>,
     // New display system components
     pub tool_registry: Arc<RwLock<ToolRegistry>>,
+    provider: Provider,
+    base_url: String,
 }
 
 impl Agent {
@@ -127,7 +130,8 @@ impl Agent {
         }
     }
     pub fn new(config: Config, model: String, yolo_mode: bool, plan_mode: bool) -> Self {
-        let client = AnthropicClient::new(config.api_key, config.base_url);
+        let base_url = config.base_url.clone();
+        let client = LlmClient::new(config.provider, config.api_key, base_url.clone());
         let tools = get_builtin_tools()
             .into_iter()
             .map(|tool| (tool.name.clone(), tool))
@@ -165,6 +169,8 @@ impl Agent {
             plan_mode_saved_system_prompt: None,
             saved_conversation_context: None,
             tool_registry,
+            provider: config.provider,
+            base_url,
         }
     }
 
@@ -899,6 +905,14 @@ impl Agent {
         self.file_security_manager.clone()
     }
 
+    /// Display the active LLM provider info
+    pub fn display_provider(&self) {
+        println!("{}", "LLM Provider".cyan().bold());
+        println!("  Provider: {}", self.provider);
+        println!("  Model: {}", self.model);
+        println!("  Base URL: {}", self.base_url);
+    }
+
     /// Get current configuration (for saving permissions)
     pub async fn get_config_for_save(&self) -> crate::config::Config {
         use crate::config::Config;
@@ -910,7 +924,8 @@ impl Agent {
         // Create a basic config with the current bash security settings
         Config {
             api_key: "".to_string(), // Don't save API key from this method
-            base_url: "".to_string(),
+            provider: self.provider,
+            base_url: self.base_url.clone(),
             default_model: self.model.clone(),
             max_tokens: 4096,
             temperature: 0.7,

@@ -22,6 +22,7 @@ The hybrid cli/web coding agent that works your way.
  - Plan mode and /plan command support for managing plans and toggling plan mode
  - Subagent support via /agent
  - Command line history navigation with up and down arrow keys and Ctrl-R search
+ - Support for different LLM APIs (Anthropic, Gemini)
 
 ## Web interface
 
@@ -44,6 +45,9 @@ The optional web UI provides a ChatGPT-style browser-based interface for chats, 
 ```
 export ANTHROPIC_AUTH_TOKEN="your-api-key"
 export ANTHROPIC_BASE_URL="https://api.z.ai/api/anthropic" 
+# Or switch to Gemini
+# export GEMINI_API_KEY="your-gemini-key"
+# aixplosion --provider gemini --model gemini-flash-latest
 
 # CLI version
 cargo run -- --stream

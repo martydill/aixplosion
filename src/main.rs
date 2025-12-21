@@ -21,6 +21,7 @@ mod autocomplete;
 mod config;
 mod conversation;
 mod database;
+mod gemini;
 mod formatter;
 mod help;
 mod input;
@@ -30,13 +31,14 @@ mod security;
 mod subagent;
 mod web;
 
+mod llm;
 mod tools;
 
 #[cfg(test)]
 mod formatter_tests;
 
 use agent::Agent;
-use config::Config;
+use config::{Config, Provider};
 use database::{
     get_database_path, Conversation as StoredConversation, DatabaseManager,
     Message as StoredMessage,
@@ -831,6 +833,10 @@ async fn handle_slash_command(
         "/context" => {
             agent.display_context();
             Ok(true) // Command was handled
+        }
+        "/provider" => {
+            agent.display_provider();
+            Ok(true)
         }
         "/search" => {
             let search_text = command.trim_start_matches("/search").trim();
@@ -1877,7 +1883,7 @@ async fn save_file_permissions_to_config(agent: &Agent) -> Result<()> {
 
 #[derive(Parser)]
 #[command(name = "aixplosion")]
-#[command(about = "A CLI coding agent powered by Anthropic AI")]
+#[command(about = "A CLI coding agent with pluggable LLM providers")]
 #[command(version)]
 struct Cli {
     /// The message to send to the agent
@@ -1888,9 +1894,13 @@ struct Cli {
     #[arg(short = 'k', long)]
     api_key: Option<String>,
 
+    /// LLM provider to use (anthropic or gemini)
+    #[arg(long)]
+    provider: Option<config::Provider>,
+
     /// Specify the model to use
-    #[arg(long, default_value = "glm-4.6")]
-    model: String,
+    #[arg(long)]
+    model: Option<String>,
 
     /// Configuration file path
     #[arg(short, long)]
@@ -1937,7 +1947,7 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    debug!("Starting AIxplosion with model: {}", cli.model);
+    debug!("Starting AIxplosion");
 
     // Display large red warning if yolo mode is enabled
     if cli.yolo {
@@ -1946,6 +1956,11 @@ async fn main() -> Result<()> {
 
     // Load configuration
     let mut config = Config::load(cli.config.as_deref()).await?;
+    if let Some(provider) = cli.provider {
+        if provider != config.provider {
+            config.set_provider(provider);
+        }
+    }
 
     // Initialize database
     info!("Initializing database...");
@@ -1960,13 +1975,19 @@ async fn main() -> Result<()> {
     if let Some(api_key) = cli.api_key {
         config.api_key = api_key;
     } else if config.api_key.is_empty() {
-        // If no API key from config, try environment variable
-        config.api_key = std::env::var("ANTHROPIC_AUTH_TOKEN").unwrap_or_default();
+        // If no API key from config, try environment variable for the selected provider
+        config.api_key = config::provider_default_api_key(config.provider);
     }
 
+    let model = cli
+        .model
+        .clone()
+        .unwrap_or_else(|| config.default_model.clone());
+
     println!("Using configuration:");
+    println!("  Provider: {}", config.provider);
     println!("  Base URL: {}", config.base_url);
-    println!("  Model: {}", cli.model);
+    println!("  Model: {}", model);
 
     // Show yolo mode status
     if cli.yolo {
@@ -1978,10 +1999,22 @@ async fn main() -> Result<()> {
 
     // Validate API key without exposing it
     if config.api_key.is_empty() {
-        eprintln!("{}", "Error: API key is required. Set it via environment variable ANTHROPIC_AUTH_TOKEN or use --api-key".red());
+        let env_hint = match config.provider {
+            Provider::Anthropic => "ANTHROPIC_AUTH_TOKEN",
+            Provider::Gemini => "GEMINI_API_KEY or GOOGLE_API_KEY",
+        };
         eprintln!(
-            "Create a config file at {} or set ANTHROPIC_AUTH_TOKEN environment variable",
-            Config::default_config_path().display()
+            "{}",
+            format!(
+                "Error: API key is required for {}. Set {} or use --api-key",
+                config.provider, env_hint
+            )
+            .red()
+        );
+        eprintln!(
+            "Create a config file at {} or set {}",
+            Config::default_config_path().display(),
+            env_hint
         );
         std::process::exit(1);
     } else {
@@ -2004,7 +2037,7 @@ async fn main() -> Result<()> {
 
     // Create and run agent using the new async constructor
     let mut agent =
-        Agent::new_with_plan_mode(config.clone(), cli.model, cli.yolo, cli.plan_mode).await;
+        Agent::new_with_plan_mode(config.clone(), model.clone(), cli.yolo, cli.plan_mode).await;
 
     // Initialize MCP manager
     let mcp_manager = Arc::new(McpManager::new());

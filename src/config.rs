@@ -6,6 +6,40 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::fs;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Provider {
+    Anthropic,
+    Gemini,
+}
+
+impl Default for Provider {
+    fn default() -> Self {
+        Provider::Anthropic
+    }
+}
+
+impl std::str::FromStr for Provider {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "anthropic" => Ok(Provider::Anthropic),
+            "gemini" => Ok(Provider::Gemini),
+            other => Err(format!("Unsupported provider '{}'", other)),
+        }
+    }
+}
+
+impl std::fmt::Display for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Provider::Anthropic => write!(f, "anthropic"),
+            Provider::Gemini => write!(f, "gemini"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
     pub name: String,
@@ -33,6 +67,8 @@ impl Default for McpConfig {
 pub struct Config {
     #[serde(skip)]
     pub api_key: String,
+    #[serde(default)]
+    pub provider: Provider,
     pub base_url: String,
     pub default_model: String,
     pub max_tokens: u32,
@@ -55,13 +91,39 @@ Generate a chain of thought, explaining your reasoning step-by-step before givin
 When making tool calls, you must explain why you are making them, and what you hope to accomplish.
 "#;
 
+pub fn provider_default_api_key(provider: Provider) -> String {
+    match provider {
+        Provider::Anthropic => std::env::var("ANTHROPIC_AUTH_TOKEN").unwrap_or_default(),
+        Provider::Gemini => std::env::var("GEMINI_API_KEY")
+            .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+            .unwrap_or_default(),
+    }
+}
+
+pub fn provider_default_base_url(provider: Provider) -> String {
+    match provider {
+        Provider::Anthropic => std::env::var("ANTHROPIC_BASE_URL")
+            .unwrap_or_else(|_| "https://api.anthropic.com/v1".to_string()),
+        Provider::Gemini => std::env::var("GEMINI_BASE_URL")
+            .unwrap_or_else(|_| "https://generativelanguage.googleapis.com/v1beta".to_string()),
+    }
+}
+
+pub fn provider_default_model(provider: Provider) -> String {
+    match provider {
+        Provider::Anthropic => "glm-4.6".to_string(),
+        Provider::Gemini => "gemini-flash-latest".to_string(),
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
+        let provider = Provider::default();
         Self {
-            api_key: std::env::var("ANTHROPIC_AUTH_TOKEN").unwrap_or_default(),
-            base_url: std::env::var("ANTHROPIC_BASE_URL")
-                .unwrap_or_else(|_| "https://api.anthropic.com/v1".to_string()),
-            default_model: "glm-4.6".to_string(),
+            api_key: provider_default_api_key(provider),
+            provider,
+            base_url: provider_default_base_url(provider),
+            default_model: provider_default_model(provider),
             max_tokens: 4096,
             temperature: 0.7,
             default_system_prompt: DEFAULT_SYSTEM_PROMPT.to_string().into(),
@@ -105,8 +167,16 @@ impl Config {
             Config::default()
         };
 
-        // Always prioritize environment variables for API key
-        config.api_key = std::env::var("ANTHROPIC_AUTH_TOKEN").unwrap_or_default();
+        // Ensure provider defaults when missing from older config files
+        if config.base_url.is_empty() {
+            config.base_url = provider_default_base_url(config.provider);
+        }
+        if config.default_model.is_empty() {
+            config.default_model = provider_default_model(config.provider);
+        }
+
+        // Always prioritize environment variables for API key based on provider
+        config.api_key = provider_default_api_key(config.provider);
 
         Ok(config)
     }
@@ -133,5 +203,13 @@ impl Config {
             config_path.display()
         );
         Ok(())
+    }
+
+    /// Update provider and refresh provider-specific defaults
+    pub fn set_provider(&mut self, provider: Provider) {
+        self.provider = provider;
+        self.base_url = provider_default_base_url(provider);
+        self.default_model = provider_default_model(provider);
+        self.api_key = provider_default_api_key(provider);
     }
 }

@@ -155,6 +155,7 @@ pub fn print_help() {
     println!("  /stats        - Show token usage statistics");
     println!("  /usage        - Show token usage statistics (alias for /stats)");
     println!("  /context      - Show current conversation context");
+    println!("  /provider     - Show active LLM provider, model, and base URL");
     println!("  /search <q>   - Search previous conversations");
     println!("  /resume       - Resume a previous conversation");
     println!("  /clear        - Clear all conversation context (keeps AGENTS.md if it exists)");
