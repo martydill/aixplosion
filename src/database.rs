@@ -86,6 +86,7 @@ impl DatabaseManager {
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 system_prompt TEXT,
+                provider TEXT NOT NULL DEFAULT 'anthropic',
                 model TEXT NOT NULL,
                 subagent TEXT,
                 total_tokens INTEGER DEFAULT 0,
@@ -107,6 +108,16 @@ impl DatabaseManager {
         .await
         .ok(); // Ignore error if column already exists
 
+        // Add provider column to existing conversations table if it doesn't exist
+        sqlx::query(
+            r#"
+            ALTER TABLE conversations ADD COLUMN provider TEXT NOT NULL DEFAULT 'anthropic'
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .ok(); // Ignore error if column already exists
+
         // Create messages table
         sqlx::query(
             r#"
@@ -115,6 +126,7 @@ impl DatabaseManager {
                 conversation_id TEXT NOT NULL,
                 role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
                 content TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT '',
                 tokens INTEGER DEFAULT 0,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
@@ -123,6 +135,16 @@ impl DatabaseManager {
         )
         .execute(&self.pool)
         .await?;
+
+        // Add model column to existing messages table if it doesn't exist
+        sqlx::query(
+            r#"
+            ALTER TABLE messages ADD COLUMN model TEXT NOT NULL DEFAULT ''
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .ok(); // Ignore error if column already exists
 
         // Create context_files table
         sqlx::query(
@@ -309,6 +331,7 @@ pub struct Conversation {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub system_prompt: Option<String>,
+    pub provider: String,
     pub model: String,
     pub subagent: Option<String>,
     pub total_tokens: i32,
@@ -322,6 +345,7 @@ pub struct Message {
     pub conversation_id: String,
     pub role: String,
     pub content: String,
+    pub model: String,
     pub tokens: i32,
     pub created_at: DateTime<Utc>,
 }
@@ -355,6 +379,7 @@ impl DatabaseManager {
     pub async fn create_conversation(
         &self,
         system_prompt: Option<String>,
+        provider: &str,
         model: &str,
         subagent: Option<&str>,
     ) -> Result<String> {
@@ -362,20 +387,21 @@ impl DatabaseManager {
         let now = Utc::now();
 
         debug!(
-            "Creating new conversation: {} with model: {} and subagent: {:?}",
-            conversation_id, model, subagent
+            "Creating new conversation: {} with provider: {} model: {} and subagent: {:?}",
+            conversation_id, provider, model, subagent
         );
 
         sqlx::query(
             r#"
-            INSERT INTO conversations (id, created_at, updated_at, system_prompt, model, subagent, total_tokens, request_count)
-            VALUES (?, ?, ?, ?, ?, ?, 0, 0)
+            INSERT INTO conversations (id, created_at, updated_at, system_prompt, provider, model, subagent, total_tokens, request_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
             "#
         )
         .bind(&conversation_id)
         .bind(now)
         .bind(now)
         .bind(&system_prompt)
+        .bind(provider)
         .bind(model)
         .bind(subagent)
         .execute(&self.pool)
@@ -391,6 +417,7 @@ impl DatabaseManager {
         conversation_id: &str,
         role: &str,
         content: &str,
+        model: &str,
         tokens: i32,
     ) -> Result<String> {
         let message_id = Uuid::new_v4().to_string();
@@ -407,14 +434,15 @@ impl DatabaseManager {
         // Insert the message
         sqlx::query(
             r#"
-            INSERT INTO messages (id, conversation_id, role, content, tokens, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO messages (id, conversation_id, role, content, model, tokens, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&message_id)
         .bind(conversation_id)
         .bind(role)
         .bind(content)
+        .bind(model)
         .bind(tokens)
         .bind(now)
         .execute(&mut *tx)
@@ -580,7 +608,7 @@ impl DatabaseManager {
     pub async fn get_conversation(&self, conversation_id: &str) -> Result<Option<Conversation>> {
         let row = sqlx::query(
             r#"
-            SELECT id, created_at, updated_at, system_prompt, model, subagent, total_tokens, request_count
+            SELECT id, created_at, updated_at, system_prompt, provider, model, subagent, total_tokens, request_count
             FROM conversations
             WHERE id = ?
             "#,
@@ -595,6 +623,7 @@ impl DatabaseManager {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 system_prompt: row.get("system_prompt"),
+                provider: row.get("provider"),
                 model: row.get("model"),
                 subagent: row.get("subagent"),
                 total_tokens: row.get("total_tokens"),
@@ -609,7 +638,7 @@ impl DatabaseManager {
     pub async fn get_conversation_messages(&self, conversation_id: &str) -> Result<Vec<Message>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, conversation_id, role, content, tokens, created_at
+            SELECT id, conversation_id, role, content, model, tokens, created_at
             FROM messages
             WHERE conversation_id = ?
             ORDER BY created_at ASC
@@ -626,6 +655,7 @@ impl DatabaseManager {
                 conversation_id: row.get("conversation_id"),
                 role: row.get("role"),
                 content: row.get("content"),
+                model: row.get("model"),
                 tokens: row.get("tokens"),
                 created_at: row.get("created_at"),
             })
@@ -726,7 +756,7 @@ impl DatabaseManager {
         // Base query is shared with /resume; optional filter narrows by message content
         let mut query = String::from(
             r#"
-            SELECT id, created_at, updated_at, system_prompt, model, subagent, total_tokens, request_count
+            SELECT id, created_at, updated_at, system_prompt, provider, model, subagent, total_tokens, request_count
             FROM conversations c
             WHERE EXISTS (
                 SELECT 1 FROM messages m WHERE m.conversation_id = c.id
@@ -763,6 +793,7 @@ impl DatabaseManager {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 system_prompt: row.get("system_prompt"),
+                provider: row.get("provider"),
                 model: row.get("model"),
                 subagent: row.get("subagent"),
                 total_tokens: row.get("total_tokens"),
@@ -771,6 +802,28 @@ impl DatabaseManager {
             .collect();
 
         Ok(conversations)
+    }
+
+    /// Update the model for a conversation
+    pub async fn update_conversation_model(
+        &self,
+        conversation_id: &str,
+        model: &str,
+    ) -> Result<()> {
+        let now = Utc::now();
+        sqlx::query(
+            r#"
+            UPDATE conversations
+            SET model = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(model)
+        .bind(now)
+        .bind(conversation_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     /// Update daily usage statistics

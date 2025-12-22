@@ -838,6 +838,63 @@ async fn handle_slash_command(
             agent.display_provider();
             Ok(true)
         }
+        "/model" => {
+            let provider = agent.provider();
+            let available = config::provider_models(provider);
+            if parts.len() == 1 {
+                println!("{}", "LLM Model".cyan().bold());
+                println!("  Provider: {}", provider);
+                println!("  Current: {}", agent.model());
+                if !available.is_empty() {
+                    println!("  Available:");
+                    for model in available {
+                        println!("    - {}", model);
+                    }
+                }
+                println!("  Usage: /model <name> | /model list | /model pick");
+                return Ok(true);
+            }
+
+            match parts[1] {
+                "list" => {
+                    println!("{}", "Available Models".cyan().bold());
+                    println!("  Provider: {}", provider);
+                    if available.is_empty() {
+                        println!("  (no default models configured)");
+                    } else {
+                        for model in available {
+                            println!("  - {}", model);
+                        }
+                    }
+                }
+                "pick" => {
+                    if available.is_empty() {
+                        println!("{} No default models configured for {}", "??".yellow(), provider);
+                        return Ok(true);
+                    }
+                    let selected = Select::new()
+                        .with_prompt("Select a model")
+                        .items(available)
+                        .default(0)
+                        .interact_opt()?;
+                    if let Some(index) = selected {
+                        let new_model = available[index].to_string();
+                        agent.set_model(new_model.clone()).await?;
+                        println!("{} Active model set to {}", "??".green(), new_model);
+                    }
+                }
+                _ => {
+                    let new_model = parts[1..].join(" ");
+                    if new_model.is_empty() {
+                        println!("{} Usage: /model <name>", "??".yellow());
+                        return Ok(true);
+                    }
+                    agent.set_model(new_model.clone()).await?;
+                    println!("{} Active model set to {}", "??".green(), new_model);
+                }
+            }
+            Ok(true)
+        }
         "/search" => {
             let search_text = command.trim_start_matches("/search").trim();
             handle_search_command(agent, search_text).await?;
@@ -1894,7 +1951,7 @@ struct Cli {
     #[arg(short = 'k', long)]
     api_key: Option<String>,
 
-    /// LLM provider to use (anthropic or gemini)
+    /// LLM provider to use (anthropic, gemini, or z.ai)
     #[arg(long)]
     provider: Option<config::Provider>,
 
@@ -2002,6 +2059,7 @@ async fn main() -> Result<()> {
         let env_hint = match config.provider {
             Provider::Anthropic => "ANTHROPIC_AUTH_TOKEN",
             Provider::Gemini => "GEMINI_API_KEY or GOOGLE_API_KEY",
+            Provider::Zai => "ZAI_API_KEY",
         };
         eprintln!(
             "{}",

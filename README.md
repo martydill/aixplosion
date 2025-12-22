@@ -22,7 +22,9 @@ The hybrid cli/web coding agent that works your way.
  - Plan mode and /plan command support for managing plans and toggling plan mode
  - Subagent support via /agent
  - Command line history navigation with up and down arrow keys and Ctrl-R search
- - Support for different LLM APIs (Anthropic, Gemini)
+ - Support for different LLM APIs (Anthropic, Gemini) with the --provider arg
+ - Support for different models for each provider with /model
+
 
 ## Web interface
 

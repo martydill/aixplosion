@@ -11,6 +11,8 @@ use tokio::fs;
 pub enum Provider {
     Anthropic,
     Gemini,
+    #[serde(rename = "z.ai")]
+    Zai,
 }
 
 impl Default for Provider {
@@ -26,6 +28,7 @@ impl std::str::FromStr for Provider {
         match s.to_lowercase().as_str() {
             "anthropic" => Ok(Provider::Anthropic),
             "gemini" => Ok(Provider::Gemini),
+            "z.ai" | "zai" => Ok(Provider::Zai),
             other => Err(format!("Unsupported provider '{}'", other)),
         }
     }
@@ -36,6 +39,7 @@ impl std::fmt::Display for Provider {
         match self {
             Provider::Anthropic => write!(f, "anthropic"),
             Provider::Gemini => write!(f, "gemini"),
+            Provider::Zai => write!(f, "z.ai"),
         }
     }
 }
@@ -97,6 +101,7 @@ pub fn provider_default_api_key(provider: Provider) -> String {
         Provider::Gemini => std::env::var("GEMINI_API_KEY")
             .or_else(|_| std::env::var("GOOGLE_API_KEY"))
             .unwrap_or_default(),
+        Provider::Zai => std::env::var("ZAI_API_KEY").unwrap_or_default(),
     }
 }
 
@@ -106,13 +111,35 @@ pub fn provider_default_base_url(provider: Provider) -> String {
             .unwrap_or_else(|_| "https://api.anthropic.com/v1".to_string()),
         Provider::Gemini => std::env::var("GEMINI_BASE_URL")
             .unwrap_or_else(|_| "https://generativelanguage.googleapis.com/v1beta".to_string()),
+        Provider::Zai => std::env::var("ZAI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.z.ai/api/anthropic".to_string()),
     }
 }
 
 pub fn provider_default_model(provider: Provider) -> String {
     match provider {
-        Provider::Anthropic => "glm-4.6".to_string(),
+        Provider::Anthropic => "claude-3-5-sonnet-20240620".to_string(),
         Provider::Gemini => "gemini-flash-latest".to_string(),
+        Provider::Zai => "glm-4.7".to_string(),
+    }
+}
+
+pub fn provider_models(provider: Provider) -> &'static [&'static str] {
+    match provider {
+        Provider::Anthropic => &[
+            "claude-3-5-sonnet-20240620",
+            "claude-3-5-haiku-20241022",
+        ],
+        Provider::Gemini => &[
+            "gemini-flash-latest",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+            "gemini-2.5-flash",
+            "gemini-3-flash-preview",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-pro",
+        ],
+        Provider::Zai => &["glm-4.7", "glm-4.6", "glm-4.5"],
     }
 }
 

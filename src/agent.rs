@@ -148,8 +148,12 @@ impl Agent {
         )));
 
         // Create conversation manager
-        let conversation_manager =
-            ConversationManager::new(config.default_system_prompt, None, model.clone());
+        let conversation_manager = ConversationManager::new(
+            config.default_system_prompt,
+            None,
+            config.provider,
+            model.clone(),
+        );
 
         // Initialize the new tool registry
         let tool_registry = Arc::new(RwLock::new(ToolRegistry::with_builtin_tools()));
@@ -913,6 +917,27 @@ impl Agent {
         println!("  Base URL: {}", self.base_url);
     }
 
+    /// Get the active LLM provider
+    pub fn provider(&self) -> Provider {
+        self.provider
+    }
+
+    /// Get the active model name
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// Update the active model for this session
+    pub async fn set_model(&mut self, model: String) -> Result<()> {
+        self.model = model.clone();
+        self.conversation_manager.update_conversation_model(model).await
+    }
+
+    fn set_model_local(&mut self, model: String) {
+        self.model = model.clone();
+        self.conversation_manager.model = model;
+    }
+
     /// Get current configuration (for saving permissions)
     pub async fn get_config_for_save(&self) -> crate::config::Config {
         use crate::config::Config;
@@ -997,6 +1022,10 @@ impl Agent {
         self.conversation_manager.set_conversation_from_records(
             conversation.id.clone(),
             conversation.system_prompt.clone(),
+            conversation
+                .provider
+                .parse::<Provider>()
+                .unwrap_or(self.provider),
             conversation.model.clone(),
             conversation.subagent.clone(),
             &messages,
@@ -1054,7 +1083,7 @@ impl Agent {
 
         // Update model if specified
         if let Some(ref new_model) = subagent_config.model {
-            self.model = new_model.clone();
+            self.set_model_local(new_model.clone());
         }
 
         // Start a new conversation for the subagent
@@ -1093,7 +1122,7 @@ impl Agent {
             self.conversation_manager.system_prompt = saved_context.system_prompt;
             self.conversation_manager.current_conversation_id =
                 saved_context.current_conversation_id;
-            self.model = saved_context.model;
+            self.set_model_local(saved_context.model);
         } else {
             // Reset to default configuration if no saved context
             self.conversation_manager.system_prompt = None;

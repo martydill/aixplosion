@@ -28,6 +28,11 @@ impl LlmClient {
                 anthropic: None,
                 gemini: Some(GeminiClient::new(api_key, base_url)),
             },
+            Provider::Zai => Self {
+                provider,
+                anthropic: Some(AnthropicClient::new(api_key, base_url)),
+                gemini: None,
+            },
         }
     }
 
@@ -76,6 +81,21 @@ impl LlmClient {
                     )
                     .await
             }
+            Provider::Zai => {
+                self.anthropic
+                    .as_ref()
+                    .expect("Z.ai client should be initialized")
+                    .create_message(
+                        model,
+                        messages,
+                        tools,
+                        max_tokens,
+                        temperature,
+                        system_prompt,
+                        cancellation_flag,
+                    )
+                    .await
+            }
         }
     }
 
@@ -111,6 +131,22 @@ impl LlmClient {
                 self.gemini
                     .as_ref()
                     .expect("Gemini client should be initialized")
+                    .create_message_stream(
+                        model,
+                        messages,
+                        tools,
+                        max_tokens,
+                        temperature,
+                        system_prompt,
+                        on_content,
+                        cancellation_flag,
+                    )
+                    .await
+            }
+            Provider::Zai => {
+                self.anthropic
+                    .as_ref()
+                    .expect("Z.ai client should be initialized")
                     .create_message_stream(
                         model,
                         messages,
