@@ -2234,6 +2234,7 @@ async fn main() -> Result<()> {
             database: database_manager.clone(),
             mcp_manager: mcp_manager.clone(),
             subagent_manager,
+            permission_hub: Arc::new(web::PermissionHub::new()),
         };
 
         web::launch_web_ui(state, cli.web_port).await?;

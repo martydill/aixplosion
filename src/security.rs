@@ -1,10 +1,12 @@
 use anyhow::Result;
 use colored::Colorize;
 use dialoguer::Select;
+use futures_util::future::BoxFuture;
 use glob::Pattern;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BashSecurity {
@@ -125,15 +127,37 @@ pub enum FilePermissionResult {
 
 pub struct BashSecurityManager {
     security: BashSecurity,
+    permission_handler: Option<PermissionHandler>,
 }
 
 pub struct FileSecurityManager {
     security: FileSecurity,
+    permission_handler: Option<PermissionHandler>,
 }
+
+#[derive(Debug, Clone)]
+pub enum PermissionKind {
+    Bash,
+    File,
+}
+
+#[derive(Debug, Clone)]
+pub struct PermissionPrompt {
+    pub kind: PermissionKind,
+    pub summary: String,
+    pub detail: String,
+    pub options: Vec<String>,
+}
+
+pub type PermissionHandler =
+    Arc<dyn Fn(PermissionPrompt) -> BoxFuture<'static, Option<usize>> + Send + Sync>;
 
 impl FileSecurityManager {
     pub fn new(security: FileSecurity) -> Self {
-        Self { security }
+        Self {
+            security,
+            permission_handler: None,
+        }
     }
 
     /// Check if a file operation is allowed
@@ -181,18 +205,48 @@ impl FileSecurityManager {
             return Ok(Some(true));
         }
 
-        println!();
-        println!("{}", "🔒 File Operation Security Check".yellow().bold());
-        println!("The following file operation requires permission:");
-        println!("  Operation: {}", operation.cyan());
-        println!("  Path: {}", path.cyan());
-        println!();
-
         let options = vec![
             "Allow this operation only".to_string(),
             "Allow all file operations this session".to_string(),
             "Deny this operation".to_string(),
         ];
+
+        if let Some(handler) = &self.permission_handler {
+            let prompt = PermissionPrompt {
+                kind: PermissionKind::File,
+                summary: "File operation requires permission".to_string(),
+                detail: format!("Operation: {}
+Path: {}", operation, path),
+                options,
+            };
+            let handler = handler.clone();
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                (handler)(prompt),
+            )
+            .await;
+
+            return match result {
+                Ok(selection) => match selection {
+                    Some(idx) => {
+                        self.handle_file_permission_selection(idx, operation, path)
+                            .await
+                    }
+                    None => Ok(None),
+                },
+                Err(_) => {
+                    error!("Permission handler timed out after 30 seconds");
+                    Ok(None)
+                }
+            };
+        }
+
+        println!();
+        println!("{}", "?? File Operation Security Check".yellow().bold());
+        println!("The following file operation requires permission:");
+        println!("  Operation: {}", operation.cyan());
+        println!("  Path: {}", path.cyan());
+        println!();
 
         // Use tokio::task::spawn_blocking with timeout to prevent hanging
         let options_clone = options.clone();
@@ -217,7 +271,7 @@ impl FileSecurityManager {
                 error!("Failed to get user input: {}", e);
                 println!(
                     "{} Failed to get user input, denying file operation for safety",
-                    "⚠️".yellow()
+                    "??".yellow()
                 );
                 Ok(None) // Deny for safety
             }
@@ -225,7 +279,7 @@ impl FileSecurityManager {
                 error!("Task join error: {}", e);
                 println!(
                     "{} Failed to get user input, denying file operation for safety",
-                    "⚠️".yellow()
+                    "??".yellow()
                 );
                 Ok(None) // Deny for safety
             }
@@ -233,7 +287,7 @@ impl FileSecurityManager {
                 error!("Permission dialog timed out after 30 seconds");
                 println!(
                     "{} Permission dialog timed out, denying file operation for safety",
-                    "⚠️".yellow()
+                    "??".yellow()
                 );
                 Ok(None) // Deny for safety
             }
@@ -287,6 +341,10 @@ impl FileSecurityManager {
         self.security = security;
     }
 
+    pub fn set_permission_handler(&mut self, handler: Option<PermissionHandler>) {
+        self.permission_handler = handler;
+    }
+
     /// Reset allow all session flag
     pub fn reset_session_permissions(&mut self) {
         self.security.allow_all_session = false;
@@ -335,7 +393,10 @@ impl FileSecurityManager {
 
 impl BashSecurityManager {
     pub fn new(security: BashSecurity) -> Self {
-        Self { security }
+        Self {
+            security,
+            permission_handler: None,
+        }
     }
 
     /// Check if a command is allowed to execute
@@ -396,14 +457,38 @@ impl BashSecurityManager {
             return Ok(None);
         }
 
+        let options = self.generate_permission_options(command);
+        if let Some(handler) = &self.permission_handler {
+            let prompt = PermissionPrompt {
+                kind: PermissionKind::Bash,
+                summary: "Command requires permission".to_string(),
+                detail: command.to_string(),
+                options,
+            };
+            let handler = handler.clone();
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                (handler)(prompt),
+            )
+            .await;
+
+            return match result {
+                Ok(selection) => match selection {
+                    Some(idx) => self.handle_permission_selection(idx, command).await,
+                    None => Ok(None),
+                },
+                Err(_) => {
+                    error!("Permission handler timed out after 30 seconds");
+                    Ok(None)
+                }
+            };
+        }
+
         println!();
-        println!("{}", "🔒 Security Check".yellow().bold());
+        println!("{}", "?? Security Check".yellow().bold());
         println!("The following command is not in the allowlist:");
         println!("  {}", command.cyan());
         println!();
-
-        // Generate options based on whether command has parameters
-        let options = self.generate_permission_options(command);
 
         // Use tokio::task::spawn_blocking with timeout to prevent hanging
         let options_clone = options.clone();
@@ -425,7 +510,7 @@ impl BashSecurityManager {
                 error!("Failed to get user input: {}", e);
                 println!(
                     "{} Failed to get user input, denying command for safety",
-                    "⚠️".yellow()
+                    "??".yellow()
                 );
                 Ok(None) // Deny for safety
             }
@@ -433,7 +518,7 @@ impl BashSecurityManager {
                 error!("Task join error: {}", e);
                 println!(
                     "{} Failed to get user input, denying command for safety",
-                    "⚠️".yellow()
+                    "??".yellow()
                 );
                 Ok(None) // Deny for safety
             }
@@ -441,7 +526,7 @@ impl BashSecurityManager {
                 error!("Permission dialog timed out after 30 seconds");
                 println!(
                     "{} Permission dialog timed out, denying command for safety",
-                    "⚠️".yellow()
+                    "??".yellow()
                 );
                 Ok(None) // Deny for safety
             }
@@ -460,7 +545,7 @@ impl BashSecurityManager {
             let wildcard_pattern = self.generate_wildcard_pattern(command);
             options.push(format!(
                 "Allow and add to allowlist with wildcard: '{}'",
-                wildcard_pattern.cyan()
+                wildcard_pattern
             ));
         }
 
@@ -562,6 +647,10 @@ impl BashSecurityManager {
     /// Update security settings
     pub fn update_security(&mut self, security: BashSecurity) {
         self.security = security;
+    }
+
+    pub fn set_permission_handler(&mut self, handler: Option<PermissionHandler>) {
+        self.permission_handler = handler;
     }
 
     /// Check if a command matches a pattern (supports wildcards)

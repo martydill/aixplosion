@@ -4,6 +4,7 @@ use crate::config;
 use crate::conversation::ConversationManager;
 use crate::database::{Conversation, DatabaseManager, ToolCallRecord};
 use crate::mcp::{McpManager, McpServerConfig};
+use crate::security::{PermissionHandler, PermissionKind, PermissionPrompt};
 use crate::subagent::{SubagentConfig, SubagentManager};
 use anyhow::Result;
 use axum::body::Body;
@@ -21,8 +22,9 @@ use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct WebState {
@@ -30,6 +32,7 @@ pub struct WebState {
     pub database: Arc<DatabaseManager>,
     pub mcp_manager: Arc<McpManager>,
     pub subagent_manager: Arc<Mutex<SubagentManager>>,
+    pub permission_hub: Arc<PermissionHub>,
 }
 
 #[derive(Serialize)]
@@ -190,8 +193,145 @@ struct ActivateAgentRequest {
     name: Option<String>,
 }
 
+#[derive(Serialize, Clone)]
+struct PermissionRequestDto {
+    id: String,
+    kind: String,
+    title: String,
+    detail: String,
+    options: Vec<String>,
+    conversation_id: Option<String>,
+    created_at: String,
+}
+
+#[derive(Deserialize)]
+struct PermissionResolveRequest {
+    id: String,
+    selection: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct PermissionPendingQuery {
+    conversation_id: Option<String>,
+}
+
+pub struct PermissionHub {
+    pending: Mutex<HashMap<String, PermissionRequestDto>>,
+    responders: Mutex<HashMap<String, oneshot::Sender<Option<usize>>>>,
+}
+
+impl PermissionHub {
+    pub fn new() -> Self {
+        Self {
+            pending: Mutex::new(HashMap::new()),
+            responders: Mutex::new(HashMap::new()),
+        }
+    }
+
+    async fn create_request(
+        &self,
+        request: PermissionRequestDto,
+    ) -> oneshot::Receiver<Option<usize>> {
+        let (tx, rx) = oneshot::channel();
+        let request_id = request.id.clone();
+        self.pending
+            .lock()
+            .await
+            .insert(request_id.clone(), request);
+        self.responders.lock().await.insert(request_id, tx);
+        rx
+    }
+
+    async fn list_pending(
+        &self,
+        conversation_id: Option<&str>,
+    ) -> Vec<PermissionRequestDto> {
+        let pending = self.pending.lock().await;
+        pending
+            .values()
+            .filter(|req| {
+                if let Some(cid) = conversation_id {
+                    req.conversation_id.as_deref() == Some(cid)
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect()
+    }
+
+    async fn resolve(&self, id: &str, selection: Option<usize>) -> bool {
+        let sender = self.responders.lock().await.remove(id);
+        self.pending.lock().await.remove(id);
+        if let Some(sender) = sender {
+            let _ = sender.send(selection);
+            true
+        } else {
+            false
+        }
+    }
+}
+
 const INDEX_HTML: &str = include_str!("../web/index.html");
 const APP_JS: &str = include_str!("../web/app.js");
+
+fn permission_kind_label(kind: &PermissionKind) -> &'static str {
+    match kind {
+        PermissionKind::Bash => "bash",
+        PermissionKind::File => "file",
+    }
+}
+
+fn build_permission_handler(
+    hub: Arc<PermissionHub>,
+    conversation_id: Option<String>,
+    stream_sender: Option<mpsc::Sender<Result<Bytes, Infallible>>>,
+) -> PermissionHandler {
+    Arc::new(move |prompt: PermissionPrompt| {
+        let hub = hub.clone();
+        let conversation_id = conversation_id.clone();
+        let stream_sender = stream_sender.clone();
+        Box::pin(async move {
+            let request_id = Uuid::new_v4().to_string();
+            let request_conversation_id = conversation_id.clone();
+            let request = PermissionRequestDto {
+                id: request_id.clone(),
+                kind: permission_kind_label(&prompt.kind).to_string(),
+                title: prompt.summary,
+                detail: prompt.detail,
+                options: prompt.options,
+                conversation_id: request_conversation_id,
+                created_at: Utc::now().to_rfc3339(),
+            };
+
+            let pending = request.clone();
+            let receiver = hub.create_request(request).await;
+
+            if let Some(sender) = &stream_sender {
+                if let Ok(text) = serde_json::to_string(&serde_json::json!({
+                    "type": "permission_request",
+                    "id": pending.id,
+                    "kind": pending.kind,
+                    "title": pending.title,
+                    "detail": pending.detail,
+                    "options": pending.options,
+                    "conversation_id": pending.conversation_id,
+                    "created_at": pending.created_at,
+                })) {
+                    let _ = sender.try_send(Ok(Bytes::from(text + "\n")));
+                }
+            }
+
+            match tokio::time::timeout(std::time::Duration::from_secs(30), receiver).await {
+                Ok(Ok(selection)) => selection,
+                _ => {
+                    let _ = hub.resolve(&request_id, None).await;
+                    None
+                }
+            }
+        })
+    })
+}
 
 pub async fn launch_web_ui(state: WebState, port: u16) -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -247,6 +387,14 @@ pub async fn launch_web_ui(state: WebState, port: u16) -> Result<()> {
             get(get_agent).put(update_agent).delete(delete_agent),
         )
         .route("/api/agents/active", get(get_active_agent).post(set_active_agent))
+        .route(
+            "/api/permissions/pending",
+            get(list_pending_permissions),
+        )
+        .route(
+            "/api/permissions/respond",
+            post(resolve_permission_request),
+        )
         .with_state(state);
 
     axum::serve(tokio::net::TcpListener::bind(addr).await?, router).await?;
@@ -458,6 +606,10 @@ async fn send_message_to_conversation(
         }
     }
 
+    let permission_handler =
+        build_permission_handler(state.permission_hub.clone(), Some(id.clone()), None);
+    agent.set_permission_handler(Some(permission_handler)).await;
+
     let cancellation_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     match agent
@@ -532,6 +684,8 @@ async fn stream_message_to_conversation(
     let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(32);
     let cancellation_flag = Arc::new(AtomicBool::new(false));
     let message = payload.message.clone();
+    let permission_hub = state.permission_hub.clone();
+    let conversation_id = id.clone();
 
     tokio::spawn(async move {
         let stream_sender = tx.clone();
@@ -556,6 +710,13 @@ async fn stream_message_to_conversation(
                 );
             })
         };
+
+        let permission_handler = build_permission_handler(
+            permission_hub,
+            Some(conversation_id),
+            Some(stream_sender.clone()),
+        );
+        agent.set_permission_handler(Some(permission_handler)).await;
 
         let result = agent
             .process_message_with_stream(
@@ -1045,6 +1206,35 @@ async fn set_active_agent(
             )
                 .into_response(),
         }
+    }
+}
+
+async fn list_pending_permissions(
+    State(state): State<WebState>,
+    axum::extract::Query(query): axum::extract::Query<PermissionPendingQuery>,
+) -> impl IntoResponse {
+    let pending = state
+        .permission_hub
+        .list_pending(query.conversation_id.as_deref())
+        .await;
+    Json(pending).into_response()
+}
+
+async fn resolve_permission_request(
+    State(state): State<WebState>,
+    Json(payload): Json<PermissionResolveRequest>,
+) -> impl IntoResponse {
+    if payload.id.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "id is required".to_string()).into_response();
+    }
+    let resolved = state
+        .permission_hub
+        .resolve(&payload.id, payload.selection)
+        .await;
+    if resolved {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "Permission request not found".to_string()).into_response()
     }
 }
 

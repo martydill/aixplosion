@@ -905,6 +905,16 @@ impl Agent {
         self.file_security_manager.clone()
     }
 
+    pub async fn set_permission_handler(
+        &mut self,
+        handler: Option<crate::security::PermissionHandler>,
+    ) {
+        let mut bash = self.bash_security_manager.write().await;
+        bash.set_permission_handler(handler.clone());
+        let mut file = self.file_security_manager.write().await;
+        file.set_permission_handler(handler);
+    }
+
     /// Display the active LLM provider info
     pub fn display_provider(&self) {
         println!("{}", "LLM Provider".cyan().bold());

@@ -348,6 +348,42 @@
       color: var(--text);
       white-space: pre-wrap;
     }
+    .permission-block {
+      border: 1px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .permission-title {
+      font-weight: 700;
+    }
+    .permission-detail {
+      white-space: pre-wrap;
+      font-family: "Spline Sans Mono", "Instrument Sans", monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .permission-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .permission-option {
+      text-align: left;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+    }
+    .permission-option:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .permission-status {
+      font-size: 12px;
+      color: var(--muted);
+    }
     pre code {
       display: block;
       overflow-x: auto;

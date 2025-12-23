@@ -16,6 +16,7 @@ const state = {
   theme: "dark",
   activeTab: "chats",
   streaming: localStorage.getItem("aixplosion-stream") === "true",
+  pendingPermissions: new Set(),
 };
 
 function setPlanForm(plan) {
@@ -174,6 +175,39 @@ function renderBlock(block) {
     return wrapper;
   }
 
+  if (blockType === "permission_request") {
+    wrapper.className = "permission-block";
+    if (block.id) {
+      wrapper.dataset.permissionId = block.id;
+    }
+    const title = document.createElement("div");
+    title.className = "permission-title";
+    title.textContent = block.title || "Permission request";
+    const detail = document.createElement("div");
+    detail.className = "permission-detail";
+    detail.textContent = block.detail || "";
+    const actions = document.createElement("div");
+    actions.className = "permission-actions";
+    const options = Array.isArray(block.options) ? block.options : [];
+    options.forEach((option, idx) => {
+      const btn = document.createElement("button");
+      btn.className = "permission-option";
+      btn.textContent = option;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        submitPermissionSelection(block.id, idx, wrapper);
+      });
+      actions.appendChild(btn);
+    });
+    const status = document.createElement("div");
+    status.className = "permission-status muted";
+    wrapper.appendChild(title);
+    if (detail.textContent) wrapper.appendChild(detail);
+    wrapper.appendChild(actions);
+    wrapper.appendChild(status);
+    return wrapper;
+  }
+
   wrapper.className = "text-block";
   const text = block.text || block.content || "";
   wrapper.appendChild(renderTextContent(text));
@@ -222,7 +256,8 @@ function renderMessageBubble(msg) {
       (b.text && b.text.trim()) ||
       (b.content && b.content.trim()) ||
       b.type === "tool_use" ||
-      b.type === "tool_result",
+      b.type === "tool_result" ||
+      b.type === "permission_request",
   );
   if (!hasVisible && !(msg.content && msg.content.trim())) {
     return null;
@@ -254,6 +289,80 @@ function appendMessage(role, content, blocks = null) {
     highlightCodes(bubble);
   }
   return bubble;
+}
+
+function renderPermissionRequest(request) {
+  if (!request || !request.id) return;
+  if (state.pendingPermissions.has(request.id)) return;
+  state.pendingPermissions.add(request.id);
+  appendMessage("assistant", "", [
+    {
+      type: "permission_request",
+      id: request.id,
+      title: request.title,
+      detail: request.detail,
+      options: request.options || [],
+    },
+  ]);
+}
+
+async function submitPermissionSelection(id, selection, wrapper) {
+  if (!id) return;
+  const status = wrapper ? wrapper.querySelector(".permission-status") : null;
+  const buttons = wrapper ? wrapper.querySelectorAll(".permission-option") : [];
+  buttons.forEach((btn) => (btn.disabled = true));
+  if (status) status.textContent = "Submitting response...";
+  try {
+    await api("/api/permissions/respond", {
+      method: "POST",
+      body: { id, selection },
+    });
+    if (status) status.textContent = "Response sent.";
+    state.pendingPermissions.delete(id);
+  } catch (err) {
+    if (status) status.textContent = `Failed: ${err.message}`;
+    buttons.forEach((btn) => (btn.disabled = false));
+  }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function startPermissionPolling() {
+  if (!state.activeConversationId) return null;
+  const controller = { stopped: false };
+  const conversationId = state.activeConversationId;
+  (async () => {
+    while (!controller.stopped) {
+      try {
+        const pending = await api(
+          `/api/permissions/pending?conversation_id=${encodeURIComponent(conversationId)}`,
+        );
+        if (Array.isArray(pending)) {
+          pending.forEach(renderPermissionRequest);
+        }
+      } catch (_) {
+        // ignore polling errors
+      }
+      await delay(1000);
+    }
+  })();
+  return controller;
+}
+
+async function loadPendingPermissions() {
+  if (!state.activeConversationId) return;
+  try {
+    const pending = await api(
+      `/api/permissions/pending?conversation_id=${encodeURIComponent(state.activeConversationId)}`,
+    );
+    if (Array.isArray(pending)) {
+      pending.forEach(renderPermissionRequest);
+    }
+  } catch (_) {
+    // ignore load errors
+  }
 }
 
 function summarizeToolInput(name, input) {
@@ -338,6 +447,7 @@ async function loadConversations() {
 async function selectConversation(id) {
   state.activeConversationId = id;
   localStorage.setItem("aixplosion-active-conversation", String(id));
+  state.pendingPermissions.clear();
   renderConversationList();
   setStatus("Loading conversation...");
   const detail = await api(`/api/conversations/${id}`);
@@ -351,6 +461,7 @@ async function selectConversation(id) {
   await loadModels();
   state.activeModel = meta.model;
   renderModelSelector();
+  await loadPendingPermissions();
 }
 
 async function createConversation() {
@@ -392,6 +503,7 @@ async function sendMessage() {
 
 async function sendMessageOnce(text) {
   setStatus("Waiting for response...");
+  const poller = startPermissionPolling();
   try {
     const result = await api(`/api/conversations/${state.activeConversationId}/message`, {
       method: "POST",
@@ -403,6 +515,8 @@ async function sendMessageOnce(text) {
   } catch (err) {
     appendMessage("assistant", `Error: ${err.message}`);
     setStatus("Error");
+  } finally {
+    if (poller) poller.stopped = true;
   }
 }
 
@@ -411,6 +525,7 @@ async function sendMessageStreaming(text) {
   const bubble = appendMessage("assistant", "");
   let buffer = "";
   let currentText = "";
+  const poller = startPermissionPolling();
 
   try {
     const res = await fetch(`/api/conversations/${state.activeConversationId}/message/stream`, {
@@ -471,6 +586,8 @@ async function sendMessageStreaming(text) {
               is_error: !!evt.is_error,
             },
           ]);
+        } else if (evt.type === "permission_request") {
+          renderPermissionRequest(evt);
         } else if (evt.type === "error") {
           updateBubbleContent(bubble, `Error: ${evt.error || "stream error"}`);
           setStatus("Error");
@@ -485,6 +602,8 @@ async function sendMessageStreaming(text) {
   } catch (err) {
     updateBubbleContent(bubble, `Error: ${err.message}`);
     setStatus("Error");
+  } finally {
+    if (poller) poller.stopped = true;
   }
 }
 
