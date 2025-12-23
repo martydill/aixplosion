@@ -459,8 +459,6 @@ async function selectConversation(id) {
     select.value = meta.subagent || "";
   }
   await loadModels();
-  state.activeModel = meta.model;
-  renderModelSelector();
   await loadPendingPermissions();
 }
 
