@@ -86,7 +86,6 @@ impl DatabaseManager {
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 system_prompt TEXT,
-                provider TEXT NOT NULL DEFAULT 'anthropic',
                 model TEXT NOT NULL,
                 subagent TEXT,
                 total_tokens INTEGER DEFAULT 0,
@@ -108,15 +107,6 @@ impl DatabaseManager {
         .await
         .ok(); // Ignore error if column already exists
 
-        // Add provider column to existing conversations table if it doesn't exist
-        sqlx::query(
-            r#"
-            ALTER TABLE conversations ADD COLUMN provider TEXT NOT NULL DEFAULT 'anthropic'
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .ok(); // Ignore error if column already exists
 
         // Create messages table
         sqlx::query(
@@ -331,7 +321,6 @@ pub struct Conversation {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub system_prompt: Option<String>,
-    pub provider: String,
     pub model: String,
     pub subagent: Option<String>,
     pub total_tokens: i32,
@@ -379,7 +368,6 @@ impl DatabaseManager {
     pub async fn create_conversation(
         &self,
         system_prompt: Option<String>,
-        provider: &str,
         model: &str,
         subagent: Option<&str>,
     ) -> Result<String> {
@@ -387,21 +375,20 @@ impl DatabaseManager {
         let now = Utc::now();
 
         debug!(
-            "Creating new conversation: {} with provider: {} model: {} and subagent: {:?}",
-            conversation_id, provider, model, subagent
+            "Creating new conversation: {} with model: {} and subagent: {:?}",
+            conversation_id, model, subagent
         );
 
         sqlx::query(
             r#"
-            INSERT INTO conversations (id, created_at, updated_at, system_prompt, provider, model, subagent, total_tokens, request_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
+            INSERT INTO conversations (id, created_at, updated_at, system_prompt, model, subagent, total_tokens, request_count)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 0)
             "#
         )
         .bind(&conversation_id)
         .bind(now)
         .bind(now)
         .bind(&system_prompt)
-        .bind(provider)
         .bind(model)
         .bind(subagent)
         .execute(&self.pool)
@@ -608,7 +595,7 @@ impl DatabaseManager {
     pub async fn get_conversation(&self, conversation_id: &str) -> Result<Option<Conversation>> {
         let row = sqlx::query(
             r#"
-            SELECT id, created_at, updated_at, system_prompt, provider, model, subagent, total_tokens, request_count
+            SELECT id, created_at, updated_at, system_prompt, model, subagent, total_tokens, request_count
             FROM conversations
             WHERE id = ?
             "#,
@@ -623,7 +610,6 @@ impl DatabaseManager {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 system_prompt: row.get("system_prompt"),
-                provider: row.get("provider"),
                 model: row.get("model"),
                 subagent: row.get("subagent"),
                 total_tokens: row.get("total_tokens"),
@@ -756,7 +742,7 @@ impl DatabaseManager {
         // Base query is shared with /resume; optional filter narrows by message content
         let mut query = String::from(
             r#"
-            SELECT id, created_at, updated_at, system_prompt, provider, model, subagent, total_tokens, request_count
+            SELECT id, created_at, updated_at, system_prompt, model, subagent, total_tokens, request_count
             FROM conversations c
             WHERE EXISTS (
                 SELECT 1 FROM messages m WHERE m.conversation_id = c.id
@@ -793,7 +779,6 @@ impl DatabaseManager {
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 system_prompt: row.get("system_prompt"),
-                provider: row.get("provider"),
                 model: row.get("model"),
                 subagent: row.get("subagent"),
                 total_tokens: row.get("total_tokens"),

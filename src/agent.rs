@@ -148,12 +148,8 @@ impl Agent {
         )));
 
         // Create conversation manager
-        let conversation_manager = ConversationManager::new(
-            config.default_system_prompt,
-            None,
-            config.provider,
-            model.clone(),
-        );
+        let conversation_manager =
+            ConversationManager::new(config.default_system_prompt, None, model.clone());
 
         // Initialize the new tool registry
         let tool_registry = Arc::new(RwLock::new(ToolRegistry::with_builtin_tools()));
@@ -1022,10 +1018,6 @@ impl Agent {
         self.conversation_manager.set_conversation_from_records(
             conversation.id.clone(),
             conversation.system_prompt.clone(),
-            conversation
-                .provider
-                .parse::<Provider>()
-                .unwrap_or(self.provider),
             conversation.model.clone(),
             conversation.subagent.clone(),
             &messages,

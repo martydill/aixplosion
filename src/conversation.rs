@@ -15,7 +15,6 @@ pub struct ConversationManager {
     pub system_prompt: Option<String>,
     pub current_conversation_id: Option<String>,
     pub database_manager: Option<Arc<DatabaseManager>>,
-    pub provider: crate::config::Provider,
     pub model: String,
     pub subagent: Option<String>,
 }
@@ -31,7 +30,6 @@ impl ConversationManager {
     pub fn new(
         system_prompt: Option<String>,
         database_manager: Option<Arc<DatabaseManager>>,
-        provider: crate::config::Provider,
         model: String,
     ) -> Self {
         Self {
@@ -39,7 +37,6 @@ impl ConversationManager {
             system_prompt,
             current_conversation_id: None,
             database_manager,
-            provider,
             model,
             subagent: None,
         }
@@ -49,11 +46,9 @@ impl ConversationManager {
     pub async fn start_new_conversation(&mut self) -> Result<String> {
         if let Some(database_manager) = &self.database_manager {
             // Create new conversation in database
-            let provider = self.provider.to_string();
             let conversation_id = database_manager
                 .create_conversation(
                     self.system_prompt.clone(),
-                    &provider,
                     &self.model,
                     self.subagent.as_deref(),
                 )
@@ -241,7 +236,6 @@ impl ConversationManager {
         &mut self,
         conversation_id: String,
         system_prompt: Option<String>,
-        provider: crate::config::Provider,
         model: String,
         subagent: Option<String>,
         messages: &[StoredMessage],
@@ -312,7 +306,6 @@ impl ConversationManager {
 
         self.current_conversation_id = Some(conversation_id);
         self.system_prompt = system_prompt;
-        self.provider = provider;
         self.model = model;
         self.subagent = subagent;
     }

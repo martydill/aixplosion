@@ -1,5 +1,6 @@
 use crate::agent::{Agent, ConversationSnapshot, StreamToolEvent};
 use crate::anthropic::ContentBlock;
+use crate::config;
 use crate::conversation::ConversationManager;
 use crate::database::{Conversation, DatabaseManager, ToolCallRecord};
 use crate::mcp::{McpManager, McpServerConfig};
@@ -93,6 +94,18 @@ struct NewConversationRequest {
 #[derive(Deserialize)]
 struct MessageRequest {
     message: String,
+}
+
+#[derive(Serialize)]
+struct ModelListResponse {
+    provider: String,
+    active_model: String,
+    models: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ModelUpdateRequest {
+    model: String,
 }
 
 #[derive(Serialize)]
@@ -204,6 +217,7 @@ pub async fn launch_web_ui(state: WebState, port: u16) -> Result<()> {
             "/api/conversations/:id/message/stream",
             post(stream_message_to_conversation),
         )
+        .route("/api/models", get(get_models).post(set_model))
         .route("/api/plans", get(list_plans).post(create_plan))
         .route(
             "/api/plans/:id",
@@ -454,6 +468,44 @@ async fn send_message_to_conversation(
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to process message: {}", e),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_models(State(state): State<WebState>) -> impl IntoResponse {
+    let agent = state.agent.lock().await;
+    let provider = agent.provider();
+    let models = config::provider_models(provider)
+        .iter()
+        .map(|m| m.to_string())
+        .collect::<Vec<_>>();
+    Json(ModelListResponse {
+        provider: provider.to_string(),
+        active_model: agent.model().to_string(),
+        models,
+    })
+    .into_response()
+}
+
+async fn set_model(
+    State(state): State<WebState>,
+    Json(payload): Json<ModelUpdateRequest>,
+) -> impl IntoResponse {
+    let model = payload.model.trim().to_string();
+    if model.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Model is required".to_string(),
+        )
+            .into_response();
+    }
+    let mut agent = state.agent.lock_owned().await;
+    match agent.set_model(model.clone()).await {
+        Ok(_) => Json(HashMap::from([("model", model)])).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to set model: {}", e),
         )
             .into_response(),
     }

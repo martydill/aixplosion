@@ -10,6 +10,9 @@ const state = {
   agents: [],
   activeAgent: null,
   activeAgentEditing: localStorage.getItem("aixplosion-active-agent-edit"),
+  provider: null,
+  models: [],
+  activeModel: null,
   theme: "dark",
   activeTab: "chats",
   streaming: localStorage.getItem("aixplosion-stream") === "true",
@@ -345,6 +348,9 @@ async function selectConversation(id) {
   if (select) {
     select.value = meta.subagent || "";
   }
+  await loadModels();
+  state.activeModel = meta.model;
+  renderModelSelector();
 }
 
 async function createConversation() {
@@ -355,7 +361,7 @@ async function createConversation() {
     id: newId,
     last_message: null,
     updated_at: new Date().toISOString(),
-    model: res.model || state.conversations[0]?.model || "glm-4.6",
+    model: res.model || state.activeModel || state.conversations[0]?.model || "unknown",
     created_at: new Date().toISOString(),
   };
   state.activeConversationId = newId;
@@ -366,6 +372,7 @@ async function createConversation() {
   const input = document.getElementById("message-input");
   if (input) input.focus();
   await loadConversations();
+  await loadModels();
 }
 
 async function sendMessage() {
@@ -539,7 +546,7 @@ function updateConversationPreview(id, lastMessage) {
       last_message: lastMessage,
       updated_at: now,
       created_at: now,
-      model: "glm-4.6",
+      model: state.activeModel || "unknown",
     });
   }
   renderConversationList();
@@ -690,6 +697,7 @@ async function loadAgents() {
   state.activeAgent = active.active;
   renderAgents();
   renderAgentSelector();
+  await loadModels();
 }
 
 function renderAgents() {
@@ -853,6 +861,38 @@ function renderAgentSelector() {
   select.value = state.activeAgent || "";
 }
 
+async function loadModels() {
+  const data = await api("/api/models");
+  state.provider = data.provider;
+  state.models = Array.isArray(data.models) ? data.models : [];
+  state.activeModel = data.active_model;
+  renderModelSelector();
+}
+
+function renderModelSelector() {
+  const select = document.getElementById("model-selector");
+  if (!select) return;
+  select.innerHTML = "";
+  const current = state.activeModel;
+  if (current && !state.models.includes(current)) {
+    const optCurrent = document.createElement("option");
+    optCurrent.value = current;
+    optCurrent.textContent = `${current} (current)`;
+    select.appendChild(optCurrent);
+  }
+  state.models.forEach((model) => {
+    const opt = document.createElement("option");
+    opt.value = model;
+    opt.textContent = model;
+    select.appendChild(opt);
+  });
+  if (current) {
+    select.value = current;
+  } else if (state.models.length) {
+    select.value = state.models[0];
+  }
+}
+
 async function restoreSelections() {
   const savedConv = localStorage.getItem("aixplosion-active-conversation");
   if (savedConv && state.conversations.some((c) => String(c.id) === String(savedConv))) {
@@ -985,6 +1025,21 @@ function bindEvents() {
   document.getElementById("agent-selector").addEventListener("change", (e) => {
     const name = e.target.value || null;
     activateAgent(name);
+  });
+  document.getElementById("model-selector").addEventListener("change", async (e) => {
+    const model = e.target.value;
+    if (!model) return;
+    try {
+      await api("/api/models", { method: "POST", body: { model } });
+      state.activeModel = model;
+      await loadConversations();
+      if (state.activeConversationId) {
+        await selectConversation(state.activeConversationId);
+      }
+      setStatus(`Model set to ${model}`);
+    } catch (err) {
+      setStatus(`Model update failed: ${err.message}`);
+    }
   });
   document.getElementById("show-context").addEventListener("click", showContextModal);
   document.getElementById("close-context").addEventListener("click", closeContextModal);
