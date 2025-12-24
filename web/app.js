@@ -706,7 +706,7 @@ function setMcpForm(server) {
   const env = server.config.env || {};
   document.getElementById("mcp-env").value = Object.entries(env)
     .map(([k, v]) => `${k}=${v}`)
-    .join(", ");
+    .join("\n");
   document.getElementById("mcp-enabled").value = String(server.config.enabled);
   document.getElementById("connect-mcp-detail").style.display = "";
   document.getElementById("disconnect-mcp-detail").style.display = "";
@@ -797,12 +797,16 @@ async function saveMcpServer() {
 function parseEnv(text) {
   const env = {};
   text
+    .replace(/\r?\n/g, ",")
     .split(",")
     .map((p) => p.trim())
     .filter(Boolean)
     .forEach((pair) => {
-      const [k, v] = pair.split("=");
-      if (k && v !== undefined) env[k.trim()] = v.trim();
+      const idx = pair.indexOf("=");
+      if (idx <= 0) return;
+      const key = pair.slice(0, idx).trim();
+      const value = pair.slice(idx + 1).trim();
+      if (key) env[key] = value;
     });
   return env;
 }
